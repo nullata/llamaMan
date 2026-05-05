@@ -11,7 +11,7 @@ from sqlalchemy import (
     create_engine, Column, String, Integer, Float, Boolean, Text, func,
     BigInteger, SmallInteger, DateTime, text,
 )
-from sqlalchemy.dialects.mysql import MEDIUMTEXT
+from sqlalchemy.dialects.mysql import DATETIME as MYSQL_DATETIME, MEDIUMTEXT
 from sqlalchemy.orm import declarative_base, scoped_session, sessionmaker
 
 from core.timeutil import to_iso, parse_iso
@@ -83,7 +83,7 @@ class RequestLogRow(Base):
     model = Column(String(255), index=True, default="")
     endpoint = Column(String(32), default="")
     path = Column(String(128), default="")
-    created_at = Column(DateTime(fsp=3), index=True)
+    created_at = Column(MYSQL_DATETIME(fsp=3), index=True)
     duration_ms = Column(Integer, nullable=True)
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
