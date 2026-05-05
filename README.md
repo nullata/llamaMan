@@ -611,3 +611,9 @@ LlamaMan is licensed under the [Elastic License 2.0](LICENSE). You may use, copy
 
 - You may not provide the software to third parties as a hosted or managed service where the service gives users access to a substantial set of its features or functionality.
 - You may not remove or obscure any licensing, copyright, or other notices of the licensor.
+
+### Third-party licenses
+
+LlamaMan bundles the following third-party assets, each under their own license:
+
+- **[Font Awesome Free 7.1.0](https://fontawesome.com/)** by Fonticons, Inc. - icons (CC BY 4.0), fonts (SIL OFL 1.1), and code (MIT). The full license text ships in [`static/fontawesome-free-7.1.0-web/LICENSE.txt`](static/fontawesome-free-7.1.0-web/LICENSE.txt).
