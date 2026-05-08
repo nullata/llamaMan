@@ -800,6 +800,21 @@ select option {
   text-overflow: ellipsis;
 }
 
+.gpu-bar-label-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 60px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.gpu-bar-temp {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .gpu-bar-track {
   flex: 1;
   height: 14px;

@@ -89,6 +89,12 @@ def query_nvidia_pynvml() -> list[dict] | None:
                 utilization_pct = util.gpu
             except Exception:
                 utilization_pct = 0
+            try:
+                temperature_c = pynvml.nvmlDeviceGetTemperature(
+                    handle, pynvml.NVML_TEMPERATURE_GPU
+                )
+            except Exception:
+                temperature_c = None
             gpus.append({
                 "index": i,
                 "name": name,
@@ -96,10 +102,43 @@ def query_nvidia_pynvml() -> list[dict] | None:
                 "memory_total_mb": mem.total // (1024 * 1024),
                 "memory_free_mb": mem.free // (1024 * 1024),
                 "utilization_pct": utilization_pct,
+                "temperature_c": temperature_c,
             })
         return gpus if gpus else None
     except Exception:
         return None
+
+
+def _read_hwmon_temp_c(device_dir: str) -> int | None:
+    """Read GPU edge temperature in C from a DRM device's hwmon sensor.
+
+    The kernel exposes temps under /sys/class/drm/card*/device/hwmon/hwmon*/
+    with files like `temp1_input` (millidegrees C) and `temp1_label` ("edge",
+    "junction", "mem"). We prefer the `edge` sensor because it's the one
+    vendor tools display by default."""
+    candidates = []
+    for hwmon_dir in glob.glob(os.path.join(device_dir, "hwmon", "hwmon*")):
+        for input_file in sorted(glob.glob(os.path.join(hwmon_dir, "temp*_input"))):
+            label_file = input_file.replace("_input", "_label")
+            label = ""
+            try:
+                with open(label_file) as f:
+                    label = f.read().strip().lower()
+            except OSError:
+                pass
+            try:
+                with open(input_file) as f:
+                    millideg = int(f.read().strip())
+            except (OSError, ValueError):
+                continue
+            candidates.append((label, millideg // 1000))
+    if not candidates:
+        return None
+    for preferred in ("edge", ""):
+        for label, temp in candidates:
+            if label == preferred:
+                return temp
+    return candidates[0][1]
 
 
 def _read_drm_sysfs(vendor_filter: str) -> list[dict] | None:
@@ -151,6 +190,7 @@ def _read_drm_sysfs(vendor_filter: str) -> list[dict] | None:
             "memory_total_mb": vram_total_mb,
             "memory_free_mb": max(vram_total_mb - vram_used_mb, 0),
             "utilization_pct": utilization_pct,
+            "temperature_c": _read_hwmon_temp_c(device_dir),
         })
 
     return gpus if gpus else None

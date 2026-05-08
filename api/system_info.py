@@ -156,7 +156,7 @@ def _query_via_container_exec() -> list[dict] | None:
     # Try nvidia-smi
     output = _exec_in_container(
         container,
-        "nvidia-smi --query-gpu=index,name,memory.used,memory.total,memory.free,utilization.gpu"
+        "nvidia-smi --query-gpu=index,name,memory.used,memory.total,memory.free,utilization.gpu,temperature.gpu"
         " --format=csv,noheader,nounits",
     )
     if output:
@@ -165,6 +165,12 @@ def _query_via_container_exec() -> list[dict] | None:
             parts = [p.strip() for p in line.split(",")]
             if len(parts) >= 6:
                 try:
+                    temp = None
+                    if len(parts) >= 7 and parts[6] not in ("", "[N/A]", "N/A"):
+                        try:
+                            temp = int(parts[6])
+                        except ValueError:
+                            pass
                     gpus.append({
                         "index": int(parts[0]),
                         "name": parts[1],
@@ -172,6 +178,7 @@ def _query_via_container_exec() -> list[dict] | None:
                         "memory_total_mb": int(parts[3]),
                         "memory_free_mb": int(parts[4]),
                         "utilization_pct": int(parts[5]),
+                        "temperature_c": temp,
                     })
                 except (ValueError, IndexError):
                     continue
@@ -181,13 +188,18 @@ def _query_via_container_exec() -> list[dict] | None:
     # Try rocm-smi
     output = _exec_in_container(
         container,
-        "rocm-smi --showmeminfo vram --showuse --showproductname --csv",
+        "rocm-smi --showmeminfo vram --showuse --showproductname --showtemp --csv",
     )
     if output:
         lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
         if len(lines) >= 2:
             header = [h.strip().lower() for h in lines[0].split(",")]
             gpus = []
+            # Find a temperature column - rocm-smi names it "temperature (sensor edge) (c)"
+            # but exposes per-sensor variants too; prefer "edge", fall back to first match.
+            temp_keys = [h for h in header if "temperature" in h and "(c)" in h]
+            edge_keys = [h for h in temp_keys if "edge" in h]
+            temp_key = (edge_keys or temp_keys)[0] if temp_keys else None
             for line in lines[1:]:
                 cols = [c.strip() for c in line.split(",")]
                 if len(cols) < len(header):
@@ -206,6 +218,12 @@ def _query_via_container_exec() -> list[dict] | None:
                 if total > 1_000_000:
                     used = used // (1024 * 1024)
                     total = total // (1024 * 1024)
+                temp = None
+                if temp_key:
+                    try:
+                        temp = int(float(row.get(temp_key, "")))
+                    except ValueError:
+                        temp = None
                 gpus.append({
                     "index": int(idx) if str(idx).isdigit() else len(gpus),
                     "name": name,
@@ -213,6 +231,7 @@ def _query_via_container_exec() -> list[dict] | None:
                     "memory_total_mb": total,
                     "memory_free_mb": total - used,
                     "utilization_pct": int(gpu_use.replace("%", "")) if gpu_use.replace("%", "").isdigit() else 0,
+                    "temperature_c": temp,
                 })
             if gpus:
                 return gpus

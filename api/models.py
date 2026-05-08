@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import struct
+import threading
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request
@@ -115,55 +116,139 @@ def _read_gguf_value(f, vtype: int):
     raise ValueError(f"Unknown GGUF type: {vtype}")
 
 
-def get_gguf_metadata(filepath: str) -> dict:
-    """Read key architecture metadata from a GGUF file for layer/VRAM calculation.
+_GGUF_FIXED_WIDTHS = {0: 1, 1: 1, 7: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 10: 8, 11: 8, 12: 8}
 
-    Returns a dict with fields: block_count, embedding_length, feed_forward_length,
-    head_count, head_count_kv, vocab_size (all int or None if not found).
+
+def _skip_gguf_value(f, vtype: int) -> None:
+    """Advance past a GGUF value without materializing it. Used to step over
+    huge tokenizer arrays (tokens/merges/scores) so trailing scalar keys
+    (bos/eos token ids, chat_template) remain reachable."""
+    width = _GGUF_FIXED_WIDTHS.get(vtype)
+    if width is not None:
+        f.read(width)
+        return
+    if vtype == 8:  # string
+        length = struct.unpack("<Q", f.read(8))[0]
+        f.read(length)
+        return
+    if vtype == 9:  # array
+        elem_type = struct.unpack("<I", f.read(4))[0]
+        count = struct.unpack("<Q", f.read(8))[0]
+        elem_width = _GGUF_FIXED_WIDTHS.get(elem_type)
+        if elem_width is not None:
+            f.read(elem_width * count)
+        else:
+            for _ in range(count):
+                _skip_gguf_value(f, elem_type)
+        return
+    raise ValueError(f"Unknown GGUF type: {vtype}")
+
+
+def get_gguf_full_metadata(filepath: str) -> dict:
+    """Read all scalar/string GGUF metadata key-value pairs into a flat dict.
+
+    Tokenizer array values (tokens/merges/scores/token_type) are skipped
+    without being parsed into Python lists - they can be 100k+ entries and
+    are not useful for our /api/ps and /api/show responses. Other tokenizer
+    scalars (bos_token_id, eos_token_id, chat_template, ...) are kept.
     """
-    meta: dict = {
-        "block_count": None,
-        "embedding_length": None,
-        "feed_forward_length": None,
-        "head_count": None,
-        "head_count_kv": None,
-        "vocab_size": None,
-    }
-    _required = {"block_count", "embedding_length", "feed_forward_length", "head_count"}
-    _wanted = _required | {"head_count_kv", "vocab_size"}
-    _found: set[str] = set()
+    out: dict = {}
     try:
         with open(filepath, "rb") as f:
             if f.read(4) != b"GGUF":
-                return meta
+                return out
             struct.unpack("<I", f.read(4))   # version
             struct.unpack("<Q", f.read(8))   # tensor_count
             kv_count = struct.unpack("<Q", f.read(8))[0]
             for _ in range(kv_count):
                 key = _read_gguf_string(f)
                 vtype = struct.unpack("<I", f.read(4))[0]
-                value = _read_gguf_value(f, vtype)
-                if key.endswith(".block_count"):
-                    meta["block_count"] = int(value); _found.add("block_count")
-                elif key.endswith(".embedding_length"):
-                    meta["embedding_length"] = int(value); _found.add("embedding_length")
-                elif key.endswith(".feed_forward_length"):
-                    meta["feed_forward_length"] = int(value); _found.add("feed_forward_length")
-                elif key.endswith(".attention.head_count"):
-                    meta["head_count"] = int(value); _found.add("head_count")
-                elif key.endswith(".attention.head_count_kv"):
-                    meta["head_count_kv"] = int(value); _found.add("head_count_kv")
-                elif key.endswith(".vocab_size"):
-                    meta["vocab_size"] = int(value); _found.add("vocab_size")
-                if _found >= _wanted:
-                    break
-                # Once past architecture keys into tokenizer arrays, stop if
-                # all required fields are already found.
-                if key.startswith("tokenizer.") and _required <= _found:
+                if vtype == 9 and key.startswith("tokenizer."):
+                    try:
+                        _skip_gguf_value(f, vtype)
+                    except Exception:
+                        break
+                    continue
+                try:
+                    out[key] = _read_gguf_value(f, vtype)
+                except Exception:
                     break
     except Exception:
         pass
+    return out
+
+
+_gguf_cache_lock = threading.Lock()
+_gguf_cache: dict[str, tuple[float, int, dict]] = {}
+
+
+def get_cached_gguf_metadata(filepath: str) -> dict:
+    """Cached wrapper for get_gguf_full_metadata. Cache entries auto-invalidate
+    when the file's mtime or size changes."""
+    try:
+        st = os.stat(filepath)
+    except OSError:
+        return {}
+    mtime, size = st.st_mtime, st.st_size
+    with _gguf_cache_lock:
+        cached = _gguf_cache.get(filepath)
+        if cached and cached[0] == mtime and cached[1] == size:
+            return cached[2]
+    meta = get_gguf_full_metadata(filepath)
+    with _gguf_cache_lock:
+        _gguf_cache[filepath] = (mtime, size, meta)
     return meta
+
+
+def get_gguf_metadata(filepath: str) -> dict:
+    """Architecture metadata used by the layer-fit calculator. Backed by the
+    cached full reader so /api/model-layers and /api/ps share one parse."""
+    full = get_cached_gguf_metadata(filepath)
+    arch = full.get("general.architecture", "") or ""
+
+    def _intish(value):
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "block_count": _intish(full.get(f"{arch}.block_count") if arch else None),
+        "embedding_length": _intish(full.get(f"{arch}.embedding_length") if arch else None),
+        "feed_forward_length": _intish(full.get(f"{arch}.feed_forward_length") if arch else None),
+        "head_count": _intish(full.get(f"{arch}.attention.head_count") if arch else None),
+        "head_count_kv": _intish(full.get(f"{arch}.attention.head_count_kv") if arch else None),
+        "vocab_size": _intish(full.get(f"{arch}.vocab_size") if arch else None),
+    }
+
+
+def format_param_count(n: int) -> str:
+    """Render a parameter count the way Ollama's `parameter_size` displays it."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return ""
+    if n <= 0:
+        return ""
+    if n >= 1_000_000_000_000:
+        return f"{n / 1e12:.1f}T"
+    if n >= 1_000_000_000:
+        return f"{n / 1e9:.1f}B"
+    if n >= 1_000_000:
+        return f"{n / 1e6:.0f}M"
+    return f"{n}"
+
+
+def estimate_model_vram(size_bytes: int, n_gpu_layers: int, block_count: int | None) -> int:
+    """Approximate the VRAM footprint of a model based on how many layers were
+    requested on GPU. -1 (default) means "all"; 0 means CPU-only. For partial
+    offload we scale by block_count when known. Excludes KV cache - this is
+    weight-only, the same convention Ollama's size_vram uses."""
+    if n_gpu_layers == 0:
+        return 0
+    if n_gpu_layers == -1 or not block_count or n_gpu_layers >= block_count:
+        return int(size_bytes)
+    return int(size_bytes * n_gpu_layers / block_count)
 
 
 # ---------------------------------------------------------------------------

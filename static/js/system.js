@@ -70,10 +70,21 @@ async function loadGpuInfo() {
       const vramColor = vramPct > 90 ? 'var(--red)' : vramPct > 70 ? 'var(--yellow)' : 'var(--green)';
       const corePct = gpu.utilization_pct ?? 0;
       const coreColor = corePct > 90 ? 'var(--red)' : corePct > 70 ? 'var(--yellow)' : 'var(--green)';
+      const tempVal = Number.isFinite(gpu.temperature_c) ? gpu.temperature_c : null;
+      const tempColor = tempVal == null ? 'var(--muted)'
+        : tempVal >= 85 ? 'var(--red)'
+        : tempVal >= 75 ? 'var(--yellow)'
+        : 'var(--muted)';
+      const tempHtml = tempVal == null
+        ? '<span class="gpu-bar-temp" style="color:var(--muted);">-</span>'
+        : `<span class="gpu-bar-temp" style="color:${tempColor};">${tempVal}&deg;C</span>`;
       const row = document.createElement('div');
       row.className = 'gpu-bar-row';
       row.innerHTML = `
-        <span class="gpu-bar-label" title="${escHtml(gpu.name)}">GPU ${gpu.index}</span>
+        <div class="gpu-bar-label-col" title="${escHtml(gpu.name)}">
+          <span class="gpu-bar-label">GPU ${gpu.index}</span>
+          ${tempHtml}
+        </div>
         <div style="flex:1;display:flex;flex-direction:column;gap:3px;">
           <div style="display:flex;align-items:center;gap:6px;">
             <span style="font-size:0.75em;width:3em;color:var(--muted);">core</span>

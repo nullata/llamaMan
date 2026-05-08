@@ -600,6 +600,7 @@ Leave `filename` blank to download the full repository.
 | OpenWebUI gets 401 errors | `require_auth` is on (default). Create an API key in the UI and set `OPENAI_API_KEYS` in OpenWebUI's environment. |
 | _"API key required"_ on all requests | Either create an API key, or turn off the "Require authentication" toggle in the API Keys section. |
 | Containers not cleaned up after stop | LlamaMan stops and removes containers when instances are stopped. If containers are orphaned after a crash, run `docker ps --filter name=llamaman-` to find and remove them manually, or restart LlamaMan (orphan adoption runs on startup). |
+| Client (Hermes / OpenWebUI / etc.) reports the trained context window instead of the preset cap | Upgrade to 1.1.2+. `/api/ps` now includes a `context_length` field set to the runtime ctx the instance was launched with, and `/api/show`'s `model_info["<arch>.context_length"]` is overridden with the *effective* cap (running instance > preset > GGUF default). Clients reading either will see the preset value (e.g. 64K) instead of the GGUF's trained max (e.g. 256K). |
 
 ## Credits
 

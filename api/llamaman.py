@@ -27,7 +27,13 @@ from core.helpers import (
 )
 from core.proxy_sampling import apply_proxy_sampling_overrides
 from core.request_log import record_request, SSEAccumulator
-from api.models import detect_quant, discover_models
+from api.models import (
+    detect_quant,
+    discover_models,
+    estimate_model_vram,
+    format_param_count,
+    get_cached_gguf_metadata,
+)
 from storage import get_storage
 from core.state import instances, instances_lock, update_instance_stats
 from proxy import get_gate
@@ -287,6 +293,39 @@ def _ensure_model_running(
     return inst, None
 
 
+def _gguf_meta_for(model_path: str, model_type: str | None) -> dict:
+    if model_type and model_type != "gguf":
+        return {}
+    return get_cached_gguf_metadata(model_path)
+
+
+def _details_from_gguf(model_path: str, model_type: str | None,
+                       fallback_quant: str, gguf_meta: dict | None = None) -> dict:
+    """Build the Ollama-style `details` block, sourcing family/parameter_size
+    from GGUF metadata when available and falling back to filename heuristics."""
+    name = model_name_from_path(model_path)
+    if gguf_meta is None:
+        gguf_meta = _gguf_meta_for(model_path, model_type)
+    arch = (gguf_meta.get("general.architecture") or "").strip()
+    if arch:
+        family = arch
+        families = [arch]
+    else:
+        family = name.split("-")[0] if "-" in name else name
+        families = [family]
+    size_label = (gguf_meta.get("general.size_label") or "").strip()
+    if not size_label:
+        size_label = format_param_count(gguf_meta.get("general.parameter_count"))
+    return {
+        "parent_model": "",
+        "format": model_type or "gguf",
+        "family": family,
+        "families": families,
+        "parameter_size": size_label,
+        "quantization_level": fallback_quant or "",
+    }
+
+
 def _llamaman_model_entry(m: dict) -> dict:
     name = model_name_from_path(m["path"])
     mtime = datetime.fromtimestamp(
@@ -299,14 +338,7 @@ def _llamaman_model_entry(m: dict) -> dict:
         "modified_at": mtime,
         "size": m["size_bytes"],
         "digest": f"sha256:{uuid.uuid5(uuid.NAMESPACE_URL, m['path']).hex}",
-        "details": {
-            "parent_model": "",
-            "format": m["type"],
-            "family": name.split("-")[0] if "-" in name else name,
-            "families": [name.split("-")[0]] if "-" in name else [name],
-            "parameter_size": "",
-            "quantization_level": m.get("quant", ""),
-        },
+        "details": _details_from_gguf(m["path"], m.get("type"), m.get("quant", "")),
     }
 
 
@@ -328,9 +360,15 @@ def _probe_server_ready(host: str, port: int) -> bool:
         return False
 
 
+_NEVER_EXPIRES_TS = 4102444800  # 2100-01-01, sentinel for instances with idle_timeout=0
+
+
 def _llamaman_ps_entry(model_path: str, model_meta: dict | None = None,
-                       started_at: float | None = None) -> dict:
+                       started_at: float | None = None,
+                       inst_config: dict | None = None,
+                       last_request_at: float | None = None) -> dict:
     model_meta = model_meta or {}
+    inst_config = inst_config or {}
     model_name = model_name_from_path(model_path)
     size_bytes = model_meta.get("size_bytes")
     if size_bytes is None:
@@ -339,24 +377,51 @@ def _llamaman_ps_entry(model_path: str, model_meta: dict | None = None,
         except OSError:
             size_bytes = 0
 
+    gguf_meta = _gguf_meta_for(model_path, model_meta.get("type"))
+    arch = (gguf_meta.get("general.architecture") or "").strip()
+
+    # Active runtime context for this instance, baked at launch via --ctx-size.
+    # Falls back to the model's trained max if config is somehow missing.
+    ctx_size = inst_config.get("ctx_size")
+    if not ctx_size and arch:
+        ctx_size = gguf_meta.get(f"{arch}.context_length")
+    try:
+        context_length = int(ctx_size) if ctx_size else 0
+    except (TypeError, ValueError):
+        context_length = 0
+
+    # Approximate VRAM from layer offload + GGUF block_count when partial.
+    block_count = gguf_meta.get(f"{arch}.block_count") if arch else None
+    try:
+        block_count = int(block_count) if block_count else None
+    except (TypeError, ValueError):
+        block_count = None
+    n_gpu_layers = inst_config.get("n_gpu_layers", -1)
+    size_vram = estimate_model_vram(size_bytes, n_gpu_layers, block_count)
+
+    # Honor the configured idle timeout for the unload deadline; if it's 0
+    # (never reaped) emit a far-future sentinel so clients don't think the
+    # model is about to disappear.
+    idle_min = int(inst_config.get("idle_timeout_min") or 0)
+    base_ts = last_request_at or started_at or time.time()
+    expires_ts = base_ts + idle_min * 60 if idle_min > 0 else _NEVER_EXPIRES_TS
+
+    details = _details_from_gguf(
+        model_path,
+        model_meta.get("type"),
+        model_meta.get("quant", detect_quant(Path(model_path).stem)),
+        gguf_meta=gguf_meta,
+    )
+
     return {
         "name": model_name,
         "model": model_name,
         "size": size_bytes,
         "digest": f"sha256:{uuid.uuid5(uuid.NAMESPACE_URL, model_path).hex}",
-        "details": {
-            "parent_model": "",
-            "format": model_meta.get("type", "gguf"),
-            "family": model_name.split("-")[0] if "-" in model_name else model_name,
-            "families": [model_name.split("-")[0]] if "-" in model_name else [model_name],
-            "parameter_size": "",
-            "quantization_level": model_meta.get("quant", detect_quant(Path(model_path).stem)),
-        },
-        "expires_at": datetime.fromtimestamp(
-            (started_at or time.time()) + 300,
-            tz=timezone.utc,
-        ).isoformat(),
-        "size_vram": 0,
+        "details": details,
+        "expires_at": datetime.fromtimestamp(expires_ts, tz=timezone.utc).isoformat(),
+        "size_vram": size_vram,
+        "context_length": context_length,
     }
 
 
@@ -388,6 +453,8 @@ def _list_loaded_models() -> list[dict]:
             "model_path": model_path,
             "started_at": inst.get("started_at"),
             "ready": ready,
+            "config": inst.get("config") or {},
+            "last_request_at": inst.get("_last_request_at"),
         }
 
     loaded = [
@@ -395,6 +462,8 @@ def _list_loaded_models() -> list[dict]:
             entry["model_path"],
             model_meta=model_index.get(os.path.realpath(entry["model_path"])),
             started_at=entry.get("started_at"),
+            inst_config=entry.get("config"),
+            last_request_at=entry.get("last_request_at"),
         )
         for entry in live_by_path.values()
     ]
@@ -770,6 +839,38 @@ def llamaman_version():
     return jsonify({"version": VERSION})
 
 
+def _effective_ctx_for_model(model_path: str, gguf_meta: dict) -> int:
+    """Resolve the context size a client would actually get for this model:
+    a running instance's runtime ctx wins, then the saved preset, then the
+    model's trained context_length from GGUF metadata."""
+    with instances_lock:
+        for inst in instances.values():
+            if inst.get("model_path") != model_path:
+                continue
+            if inst.get("status") in ("stopped",):
+                continue
+            ctx = (inst.get("config") or {}).get("ctx_size")
+            if ctx:
+                try:
+                    return int(ctx)
+                except (TypeError, ValueError):
+                    pass
+    preset = get_storage().get_preset(model_path) or {}
+    ctx = preset.get("ctx_size")
+    if ctx:
+        try:
+            return int(ctx)
+        except (TypeError, ValueError):
+            pass
+    arch = (gguf_meta.get("general.architecture") or "").strip()
+    if arch:
+        try:
+            return int(gguf_meta.get(f"{arch}.context_length") or 0)
+        except (TypeError, ValueError):
+            pass
+    return 0
+
+
 @bp.route("/api/show", methods=["POST"])
 def llamaman_show():
     body = request.get_json(force=True)
@@ -779,16 +880,27 @@ def llamaman_show():
         return jsonify({"error": f"model '{model_name}' not found"}), 404
 
     entry = _llamaman_model_entry(model)
+    gguf_meta = _gguf_meta_for(model["path"], model.get("type"))
+    arch = (gguf_meta.get("general.architecture") or "").strip()
+
+    # model_info mirrors the GGUF header, but we override <arch>.context_length
+    # to the size a client would actually get (preset cap or running instance
+    # ctx) so callers like hermes don't read the trained max and over-allocate.
+    model_info = dict(gguf_meta)
+    effective_ctx = _effective_ctx_for_model(model["path"], gguf_meta)
+    if arch and effective_ctx:
+        model_info[f"{arch}.context_length"] = effective_ctx
+    if "general.architecture" not in model_info:
+        model_info["general.architecture"] = entry["details"]["family"]
+
+    template = gguf_meta.get("tokenizer.chat_template", "") or ""
+
     return jsonify({
         "modelfile": f"FROM {model['path']}",
         "parameters": "",
-        "template": "",
+        "template": template,
         "details": entry["details"],
-        "model_info": {
-            "general.architecture": entry["details"]["family"],
-            "general.file_type": 0,
-            "general.parameter_count": 0,
-        },
+        "model_info": model_info,
     })
 
 
