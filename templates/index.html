@@ -309,6 +309,16 @@
                 <input id="s-inst-cleanup-age" class="cleanup-settings-input" type="number" value="24" min="1" />
                 <p class="hint-text cleanup-last-ran">Last ran: <span id="s-inst-cleanup-last-ran">Never</span></p>
               </div>
+              <div class="form-group cleanup-toggle-grid">
+                <label for="s-orphan-containers-enabled">Remove orphaned stopped containers</label>
+                <label class="toggle-switch" for="s-orphan-containers-enabled" aria-label="Remove orphaned stopped containers">
+                  <input id="s-orphan-containers-enabled" type="checkbox" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="form-group cleanup-input-row">
+                <p class="hint-text cleanup-last-ran">Deletes exited llama-server containers with no matching instance record. Last ran: <span id="s-orphan-containers-last-ran">Never</span></p>
+              </div>
               <div class="cleanup-section-divider" aria-hidden="true"></div>
               <div class="form-group cleanup-toggle-grid">
                 <label for="s-stale-records-enabled">Auto-remove stale instance records</label>
@@ -547,7 +557,8 @@
       <div class="modal-header">
         <h3 id="log-modal-title">Logs</h3>
         <div class="modal-header-controls">
-          <label class="checkbox-label">
+          <button class="btn-xs" id="btn-toggle-raw-log" hidden><i class="fa-solid fa-terminal"></i> Raw log</button>
+          <label class="checkbox-label" id="log-autoscroll-label">
             <input type="checkbox" id="log-autoscroll" checked class="checkbox-accent" />
             Auto-scroll
           </label>
@@ -555,6 +566,7 @@
         </div>
       </div>
       <div class="modal-body">
+        <div id="log-progress" hidden></div>
         <pre id="log-output">Loading…</pre>
       </div>
     </div>

@@ -147,7 +147,7 @@ function updateDownloadItem(item, dl) {
   const logsBtn = document.createElement('button');
   logsBtn.className = 'btn-xs btn-dl-logs';
   logsBtn.dataset.id = dl.id;
-  logsBtn.innerHTML = '<i class="fa-solid fa-terminal"></i> Logs';
+  logsBtn.innerHTML = '<i class="fa-solid fa-chart-line"></i> Progress';
   actions.appendChild(logsBtn);
 
   if (dl.status === 'downloading') {

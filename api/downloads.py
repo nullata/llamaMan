@@ -21,7 +21,12 @@ from storage import get_storage
 bp = Blueprint("downloads", __name__)
 
 
-def _build_download_env(repo_id: str, dest_path: str, filename: str, token: str, per_model_mbps: float) -> dict:
+def _download_progress_path(dl_id: str) -> str:
+    return os.path.join(LOGS_DIR, f"dl-{dl_id}.progress.json")
+
+
+def _build_download_env(repo_id: str, dest_path: str, filename: str, token: str,
+                        per_model_mbps: float, progress_file: str = "") -> dict:
     global_mbps = float(get_storage().get_settings().get("global_speed_limit_mbps", 0) or 0)
     effective_mbps = global_mbps if global_mbps > 0 else per_model_mbps
     return {
@@ -30,6 +35,7 @@ def _build_download_env(repo_id: str, dest_path: str, filename: str, token: str,
         "HF_LOCAL_DIR": dest_path,
         "HF_FILENAME": filename,
         "HF_TOKEN": token,
+        "HF_PROGRESS_FILE": progress_file,
         "HF_SPEED_LIMIT": str(int(effective_mbps * 1_000_000 / 8)) if effective_mbps else "0",
         "HF_PER_MODEL_SPEED_LIMIT": str(int(per_model_mbps * 1_000_000 / 8)) if per_model_mbps else "0",
         "DATA_DIR": DATA_DIR,
@@ -40,10 +46,11 @@ def _build_download_env(repo_id: str, dest_path: str, filename: str, token: str,
 def _spawn_download_process(dl_id: str, repo_id: str, dest_path: str, filename: str,
                             token: str, per_model_mbps: float, log_mode: str = "w"):
     log_file = os.path.join(LOGS_DIR, f"dl-{dl_id}.log")
+    progress_file = _download_progress_path(dl_id)
     log_fh = open(log_file, log_mode, buffering=1)
     proc = subprocess.Popen(
         [sys.executable, "-u", "-m", "core.downloader"],
-        env=_build_download_env(repo_id, dest_path, filename, token, per_model_mbps),
+        env=_build_download_env(repo_id, dest_path, filename, token, per_model_mbps, progress_file),
         stdout=log_fh,
         stderr=subprocess.STDOUT,
         close_fds=True,
@@ -319,6 +326,23 @@ def api_download_logs(dl_id):
     if dl is None:
         return jsonify({"error": "Not found"}), 404
     return jsonify({"lines": read_log_file(dl["log_file"], tail=200)})
+
+
+@bp.route("/api/downloads/<dl_id>/progress")
+def api_download_progress(dl_id):
+    with downloads_lock:
+        dl = downloads.get(dl_id)
+        if dl is None:
+            return jsonify({"error": "Not found"}), 404
+        download_status = dl["status"]
+    data = {}
+    try:
+        with open(_download_progress_path(dl_id)) as f:
+            data = json.load(f)
+    except (FileNotFoundError, ValueError, OSError):
+        data = {}
+    data["download_status"] = download_status
+    return jsonify(data)
 
 
 @bp.route("/api/downloads/<dl_id>/logs/stream")

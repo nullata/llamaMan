@@ -79,6 +79,27 @@ def _run_cleanup() -> None:
         if to_remove:
             changed = True
 
+    if cleanup.get("orphan_containers_enabled"):
+        cleanup_patch["orphan_containers_last_run_at"] = now
+        try:
+            from core.helpers import list_llama_containers
+            with instances_lock:
+                tracked_cids = {
+                    inst.get("container_id") for inst in instances.values() if inst.get("container_id")
+                }
+            for container in list_llama_containers(all=True):
+                if container.id in tracked_cids:
+                    continue
+                if container.status not in ("exited", "dead", "created"):
+                    continue  # running/paused ones are left for the orphan-adoption scan
+                stop_container(container.id)
+                logger.info(
+                    "Cleanup: removed orphaned container %s (status=%s)",
+                    container.id[:12], container.status,
+                )
+        except Exception as e:
+            logger.warning("Orphan container cleanup error: %s", e)
+
     if changed:
         save_state()
     if cleanup_patch:

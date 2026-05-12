@@ -24,6 +24,38 @@ _SUBPROCESS_SETTINGS_FILE = os.path.join(
 CHUNK_SIZE = 64 * 1024  # 64 KB
 HF_API = "https://huggingface.co"
 
+progress_path = os.environ.get("HF_PROGRESS_FILE", "").strip()
+
+_PROGRESS = {
+    "repo_id": repo_id,
+    "filename": filename,
+    "status": "downloading",   # downloading | done | error
+    "error": None,
+    "started_at": time.time(),
+    "updated_at": time.time(),
+    "parts": [],               # [{name, index, total, downloaded, size, speed, status}]
+}
+_last_progress_write = 0.0
+
+
+def _write_progress(force: bool = False) -> None:
+    """Atomically write the structured progress snapshot (throttled to ~2/sec)."""
+    global _last_progress_write
+    if not progress_path:
+        return
+    now = time.monotonic()
+    if not force and now - _last_progress_write < 0.5:
+        return
+    _last_progress_write = now
+    _PROGRESS["updated_at"] = time.time()
+    try:
+        tmp = progress_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(_PROGRESS, f)
+        os.replace(tmp, progress_path)
+    except Exception:
+        pass
+
 
 def _read_global_speed_limit() -> int:
     """Read the current global speed limit from the subprocess-facing settings
@@ -140,11 +172,17 @@ def list_repo_files(rid=None, tok=None):
     return [{"name": s["rfilename"], "size": s.get("size") or s.get("lfs", {}).get("size")} for s in siblings]
 
 
-def download_file(fname, file_num=None, total_files=None):
+def download_file(fname, file_num=None, total_files=None, part_idx=None):
     """Download a single file with resume support and rate limiting."""
     local_path = os.path.join(local_dir, fname)
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
     url = f"{HF_API}/{repo_id}/resolve/main/{fname}"
+
+    part = None
+    if part_idx is not None and 0 <= part_idx < len(_PROGRESS["parts"]):
+        part = _PROGRESS["parts"][part_idx]
+        part["status"] = "downloading"
+        _write_progress(force=True)
 
     prefix = f"[{file_num}/{total_files}] " if file_num else ""
     print(f"{prefix}{fname}", flush=True)
@@ -161,6 +199,11 @@ def download_file(fname, file_num=None, total_files=None):
 
     if r.status_code == 416:
         print(f"  Already complete ({_fmt_size(existing)})", flush=True)
+        if part is not None:
+            part["downloaded"] = part.get("size") or existing
+            part["speed"] = 0
+            part["status"] = "done"
+            _write_progress(force=True)
         return
 
     if existing > 0 and r.status_code == 200:
@@ -180,6 +223,11 @@ def download_file(fname, file_num=None, total_files=None):
         existing = 0
 
     downloaded = existing
+    if part is not None:
+        if total is not None:
+            part["size"] = total
+        part["downloaded"] = downloaded
+        _write_progress(force=True)
     last_print = time.monotonic()
     start_time = last_print
 
@@ -193,11 +241,20 @@ def download_file(fname, file_num=None, total_files=None):
                 speed = (downloaded - existing) / elapsed if elapsed > 0 else 0
                 pct = f"  {downloaded * 100 / total:.0f}%" if total else ""
                 print(f"  {_fmt_size(downloaded)}{f' / {_fmt_size(total)}' if total else ''}{pct}  {_fmt_size(speed)}/s", flush=True)
+                if part is not None:
+                    part["downloaded"] = downloaded
+                    part["speed"] = speed
+                    _write_progress()
                 last_print = now
 
     elapsed = time.monotonic() - start_time
     speed = (downloaded - existing) / elapsed if elapsed > 0 else 0
     print(f"  {_fmt_size(downloaded)}{f' / {_fmt_size(total)}' if total else ''}  100%  {_fmt_size(speed)}/s  done", flush=True)
+    if part is not None:
+        part["downloaded"] = downloaded
+        part["speed"] = speed
+        part["status"] = "done"
+        _write_progress(force=True)
 
 
 def resolve_filename(requested: str, repo_files: list[dict], rid: str = "") -> list[dict]:
@@ -251,33 +308,45 @@ def main():
     print("", flush=True)
 
     try:
-        if filename:
-            print("Fetching file list...", flush=True)
-            all_files = list_repo_files()
-            if not all_files:
-                raise RuntimeError(f"No files found in {repo_id}")
-            targets = resolve_filename(filename, all_files)
-            if len(targets) == 1 and targets[0]["name"] == filename.strip().lstrip("/"):
-                download_file(targets[0]["name"])
-            else:
-                print(f"Resolved to {len(targets)} file(s)", flush=True)
-                print("", flush=True)
-                for i, finfo in enumerate(targets, 1):
-                    download_file(finfo["name"], file_num=i, total_files=len(targets))
-        else:
-            print("Fetching file list...", flush=True)
-            files = list_repo_files()
-            if not files:
-                raise RuntimeError(f"No files found in {repo_id}")
-            print(f"Found {len(files)} files", flush=True)
-            print("", flush=True)
-            for i, finfo in enumerate(files, 1):
-                download_file(finfo["name"], file_num=i, total_files=len(files))
+        print("Fetching file list...", flush=True)
+        all_files = list_repo_files()
+        if not all_files:
+            raise RuntimeError(f"No files found in {repo_id}")
 
+        targets = resolve_filename(filename, all_files) if filename else all_files
+
+        _PROGRESS["parts"] = [
+            {
+                "name": finfo["name"],
+                "index": i,
+                "total": len(targets),
+                "downloaded": 0,
+                "size": finfo.get("size"),
+                "speed": 0,
+                "status": "pending",
+            }
+            for i, finfo in enumerate(targets, 1)
+        ]
+        _write_progress(force=True)
+
+        single = bool(filename) and len(targets) == 1 and targets[0]["name"] == filename.strip().lstrip("/")
+        if single:
+            download_file(targets[0]["name"], part_idx=0)
+        else:
+            print(f"Resolved to {len(targets)} file(s)" if filename else f"Found {len(targets)} files", flush=True)
+            print("", flush=True)
+            for i, finfo in enumerate(targets, 1):
+                download_file(finfo["name"], file_num=i, total_files=len(targets), part_idx=i - 1)
+
+        _PROGRESS["status"] = "done"
+        _write_progress(force=True)
         print(f"\nCompleted: {local_dir}", flush=True)
         sys.exit(0)
 
     except Exception as e:
+        _PROGRESS["status"] = "error"
+        _PROGRESS["error"] = str(e)
+        _write_progress(force=True)
         print(f"\nError: {e}", flush=True)
         sys.exit(1)
 

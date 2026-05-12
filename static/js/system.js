@@ -134,8 +134,11 @@ async function loadSettings() {
     document.getElementById('s-dl-cleanup-age').value = c.downloads_max_age_hours ?? 24;
     document.getElementById('s-inst-cleanup-enabled').checked = !!c.instances_enabled;
     document.getElementById('s-inst-cleanup-age').value = c.instances_max_age_hours ?? 24;
+    const orphanContainers = document.getElementById('s-orphan-containers-enabled');
+    if (orphanContainers) orphanContainers.checked = !!c.orphan_containers_enabled;
     renderCleanupLastRan('s-dl-cleanup-last-ran', c.downloads_last_run_at);
     renderCleanupLastRan('s-inst-cleanup-last-ran', c.instances_last_run_at);
+    renderCleanupLastRan('s-orphan-containers-last-ran', c.orphan_containers_last_run_at);
 
     const authToggle = document.getElementById('s-require-auth');
     if (authToggle) {
@@ -194,6 +197,7 @@ async function refreshCleanupLastRan() {
     const c = s.cleanup || {};
     renderCleanupLastRan('s-dl-cleanup-last-ran', c.downloads_last_run_at);
     renderCleanupLastRan('s-inst-cleanup-last-ran', c.instances_last_run_at);
+    renderCleanupLastRan('s-orphan-containers-last-ran', c.orphan_containers_last_run_at);
   } catch (e) {}
 }
 
@@ -205,6 +209,7 @@ async function saveSettings() {
       downloads_max_age_hours: parseInt(document.getElementById('s-dl-cleanup-age').value) || 24,
       instances_enabled: document.getElementById('s-inst-cleanup-enabled').checked,
       instances_max_age_hours: parseInt(document.getElementById('s-inst-cleanup-age').value) || 24,
+      orphan_containers_enabled: document.getElementById('s-orphan-containers-enabled').checked,
       stale_records_enabled: document.getElementById('s-stale-records-enabled').checked,
       stale_records_interval_min: parseInt(document.getElementById('s-stale-records-interval').value) || 5,
     }

@@ -187,12 +187,13 @@ def is_container_running(container_id: str) -> bool:
         return False
 
 
-def list_llama_containers() -> list:
-    """Return all running containers with the llamaman label."""
+def list_llama_containers(all: bool = False) -> list:
+    """Return llamaman-labeled containers. Running only unless all=True."""
     from config import LLAMA_CONTAINER_PREFIX
     try:
         return get_docker_client().containers.list(
-            filters={"name": LLAMA_CONTAINER_PREFIX, "label": "llamaman.instance_id"}
+            all=all,
+            filters={"name": LLAMA_CONTAINER_PREFIX, "label": "llamaman.instance_id"},
         )
     except Exception:
         return []
