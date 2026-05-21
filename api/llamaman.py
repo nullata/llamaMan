@@ -950,6 +950,8 @@ def llamaman_v1_chat():
     if inst.get("config", {}).get("embedding_model"):
         return jsonify({"error": {"message": f"model '{model_name}' is embedding-only and cannot handle chat completions"}}), 422
 
+    body = apply_proxy_sampling_overrides(body, inst.get("config", {}))
+
     server_host = inst.get("_server_host", "localhost")
     server_port = inst.get("_server_port") or inst.get("_internal_port") or inst["port"]
     inst_id = inst["id"]
