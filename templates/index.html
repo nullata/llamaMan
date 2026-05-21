@@ -201,25 +201,6 @@
                   </span>
                   <input id="f-max-queue-depth" type="number" value="200" min="1" placeholder="200" />
                 </div>
-                <div class="form-group full">
-                  <span class="label-row">
-                    <label for="f-extra">Extra Args</label>
-                    <span class="info-tip" tabindex="0" role="button" aria-label="Extra Args help" data-tip="Extra command-line flags appended to the llama-server invocation (e.g. --flash-attn --mlock)."><i class="fa-solid fa-circle-info"></i></span>
-                  </span>
-                  <input id="f-extra" type="text" placeholder="--flash-attn --mlock" />
-                </div>
-                <div class="form-group full launch-toggle-table">
-                  <label for="f-share-queue">Share queue with same model</label>
-                  <label class="toggle-switch" for="f-share-queue" aria-label="Share queue with same model">
-                    <input id="f-share-queue" type="checkbox" />
-                    <span class="toggle-slider"></span>
-                  </label>
-                  <label for="f-embedding-model">Embedding Model</label>
-                  <label class="toggle-switch" for="f-embedding-model" aria-label="Embedding Model">
-                    <input id="f-embedding-model" type="checkbox" />
-                    <span class="toggle-slider"></span>
-                  </label>
-                </div>
                 <div class="form-group full launch-settings-section">
                   <div class="launch-settings-section-header">
                     <h3>Proxy-Side Sampling Overrides</h3>
@@ -267,6 +248,45 @@
                       <input id="f-proxy-sampling-repeat-penalty" class="launch-settings-input" type="number" value="0.0" min="0" max="2" step="0.01" />
                     </div>
                   </div>
+                </div>
+                <div class="form-group full launch-settings-section">
+                  <div class="launch-settings-section-header">
+                    <h3>Speculative Decoding</h3>
+                    <label class="toggle-switch" for="f-spec-enabled"
+                      aria-label="Enable speculative decoding">
+                      <input id="f-spec-enabled" type="checkbox" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                  <p class="hint-text">When enabled, runs the model with MTP speculative decoding (<code>--spec-type draft-mtp</code>). Requires a model with MTP heads (e.g. Qwen3.6). For other speculative-decoding types, set them via Extra Args instead.</p>
+                  <div class="launch-inline-settings-grid">
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-spec-draft-n-max">Draft N Max</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="Draft N Max help" data-tip="Value passed to --spec-draft-n-max: max tokens to draft per step. Leave blank to use llama.cpp's default (3)."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-spec-draft-n-max" class="launch-settings-input" type="number" min="0" step="1" placeholder="3" />
+                    </div>
+                  </div>
+                </div>
+                <div class="form-group full">
+                  <span class="label-row">
+                    <label for="f-extra">Extra Args</label>
+                    <span class="info-tip" tabindex="0" role="button" aria-label="Extra Args help" data-tip="Extra command-line flags appended to the llama-server invocation (e.g. --flash-attn --mlock)."><i class="fa-solid fa-circle-info"></i></span>
+                  </span>
+                  <input id="f-extra" type="text" placeholder="--flash-attn --mlock" />
+                </div>
+                <div class="form-group full launch-toggle-table">
+                  <label for="f-share-queue">Share queue with same model</label>
+                  <label class="toggle-switch" for="f-share-queue" aria-label="Share queue with same model">
+                    <input id="f-share-queue" type="checkbox" />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <label for="f-embedding-model">Embedding Model</label>
+                  <label class="toggle-switch" for="f-embedding-model" aria-label="Embedding Model">
+                    <input id="f-embedding-model" type="checkbox" />
+                    <span class="toggle-slider"></span>
+                  </label>
                 </div>
               </div>
               <div class="form-actions">

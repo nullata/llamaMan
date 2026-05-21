@@ -60,6 +60,8 @@ def api_preset_save(model_path):
         "memory_limit": body.get("memory_limit", ""),
         "parallel": body.get("parallel"),
         "extra_args": body.get("extra_args", ""),
+        "spec_enabled": body.get("spec_enabled", False),
+        "spec_draft_n_max": body.get("spec_draft_n_max"),
         "gpu_devices": body.get("gpu_devices", ""),
         "idle_timeout_min": body.get("idle_timeout_min", 0),
         "max_concurrent": body.get("max_concurrent", 0),

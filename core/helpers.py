@@ -61,6 +61,14 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
         cmd += ["--parallel", str(int(config["parallel"]))]
     if config.get("embedding_model"):
         cmd += ["--embeddings"]
+    if config.get("spec_enabled"):
+        cmd += ["--spec-type", "draft-mtp"]
+        try:
+            n_max = int(config.get("spec_draft_n_max") or 0)
+        except (TypeError, ValueError):
+            n_max = 0
+        if n_max > 0:
+            cmd += ["--spec-draft-n-max", str(n_max)]
     if config.get("extra_args"):
         cmd += shlex.split(config["extra_args"])
     return cmd

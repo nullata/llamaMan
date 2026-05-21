@@ -265,6 +265,8 @@ def _ensure_model_running(
             memory_limit=preset.get("memory_limit") or None,
             parallel=preset.get("parallel"),
             extra_args=preset.get("extra_args", ""),
+            spec_enabled=preset.get("spec_enabled", False),
+            spec_draft_n_max=preset.get("spec_draft_n_max"),
             gpu_devices=preset.get("gpu_devices") or None,
             idle_timeout_min=preset.get("idle_timeout_min", 0),
             max_concurrent=preset.get("max_concurrent", 0),

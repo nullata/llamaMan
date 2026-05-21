@@ -289,6 +289,14 @@ function updateProxySamplingOverrideState() {
   });
 }
 
+function updateSpecState() {
+  const enabled = !!document.getElementById('f-spec-enabled')?.checked;
+  ['f-spec-draft-n-max'].forEach((id) => {
+    const input = document.getElementById(id);
+    if (input) input.disabled = !enabled;
+  });
+}
+
 async function updatePortSuggestion() {
   const portField = document.getElementById('f-port');
   if (!portField) return;
@@ -315,6 +323,7 @@ function readLaunchForm() {
     max_queue_depth: parseInt(document.getElementById('f-max-queue-depth').value) || 200,
     share_queue: document.getElementById('f-share-queue').checked,
     embedding_model: document.getElementById('f-embedding-model').checked,
+    spec_enabled: document.getElementById('f-spec-enabled').checked,
     proxy_sampling_override_enabled: document.getElementById('f-proxy-sampling-override-enabled').checked,
     proxy_sampling_temperature: parseFloat(document.getElementById('f-proxy-sampling-temperature').value),
     proxy_sampling_top_k: parseInt(document.getElementById('f-proxy-sampling-top-k').value, 10),
@@ -343,6 +352,8 @@ function readLaunchForm() {
   if (memoryLimit) body.memory_limit = memoryLimit;
   const parallel = document.getElementById('f-parallel').value.trim();
   if (parallel) body.parallel = parseInt(parallel);
+  const specNMax = document.getElementById('f-spec-draft-n-max').value.trim();
+  if (specNMax) body.spec_draft_n_max = parseInt(specNMax, 10);
   return body;
 }
 
@@ -440,4 +451,10 @@ const proxySamplingOverrideToggle = document.getElementById('f-proxy-sampling-ov
 if (proxySamplingOverrideToggle) {
   proxySamplingOverrideToggle.addEventListener('change', updateProxySamplingOverrideState);
   updateProxySamplingOverrideState();
+}
+
+const specToggle = document.getElementById('f-spec-enabled');
+if (specToggle) {
+  specToggle.addEventListener('change', updateSpecState);
+  updateSpecState();
 }

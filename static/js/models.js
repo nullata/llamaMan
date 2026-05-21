@@ -282,6 +282,8 @@ async function selectModel(model, el) {
       document.getElementById('f-memory-limit').value = p.memory_limit || '';
       document.getElementById('f-parallel').value = p.parallel || '';
       document.getElementById('f-extra').value = p.extra_args || '';
+      document.getElementById('f-spec-enabled').checked = !!p.spec_enabled;
+      document.getElementById('f-spec-draft-n-max').value = p.spec_draft_n_max ?? '';
       document.getElementById('f-gpu-devices').value = p.gpu_devices || '';
       document.getElementById('f-idle-timeout').value = p.idle_timeout_min || 0;
       document.getElementById('f-max-concurrent').value = p.max_concurrent || 0;
@@ -296,6 +298,7 @@ async function selectModel(model, el) {
       document.getElementById('f-proxy-sampling-repeat-penalty').value = p.proxy_sampling_repeat_penalty ?? 0.0;
       document.getElementById('f-note').value = p.note || '';
       if (typeof updateProxySamplingOverrideState === 'function') updateProxySamplingOverrideState();
+      if (typeof updateSpecState === 'function') updateSpecState();
       toast('Preset loaded', 'info');
     }
   } catch (e) { /* no preset, use defaults */ }
