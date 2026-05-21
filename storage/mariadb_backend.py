@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     create_engine, Column, String, Integer, Float, Boolean, Text, func,
-    BigInteger, SmallInteger, DateTime, text,
+    BigInteger, SmallInteger, DateTime, text, case,
 )
 from sqlalchemy.dialects.mysql import DATETIME as MYSQL_DATETIME, MEDIUMTEXT
 from sqlalchemy.orm import declarative_base, scoped_session, sessionmaker
@@ -89,6 +89,8 @@ class RequestLogRow(Base):
     completion_tokens = Column(Integer, nullable=True)
     status_code = Column(SmallInteger, nullable=True)
     streamed = Column(Boolean, default=False)
+    tokens_per_sec = Column(Float, nullable=True)
+    ttft_ms = Column(Float, nullable=True)
     request_body = Column(MEDIUMTEXT, default="")
     response_body = Column(MEDIUMTEXT, nullable=True)
 
@@ -201,6 +203,18 @@ class MariaDBBackend(StorageBackend):
                 conn.execute(text(
                     "ALTER TABLE request_log ADD INDEX idx_request_log_created_at (created_at)"
                 ))
+
+    def apply_migration_002_request_metrics(self) -> None:
+        # Add tokens_per_sec / ttft_ms to existing request_log tables.
+        # create_all() only creates missing tables, never new columns, so older
+        # deployments need this ALTER; fresh ones already have them.
+        for col in ("tokens_per_sec", "ttft_ms"):
+            if self._column_type("request_log", col) is None:
+                logger.info("Migration 002: adding request_log.%s", col)
+                with self._engine.begin() as conn:
+                    conn.execute(text(
+                        f"ALTER TABLE request_log ADD COLUMN {col} FLOAT NULL"
+                    ))
 
     # -- State --
 
@@ -453,6 +467,8 @@ class MariaDBBackend(StorageBackend):
                 completion_tokens=record.get("completion_tokens"),
                 status_code=record.get("status_code"),
                 streamed=bool(record.get("streamed", False)),
+                tokens_per_sec=record.get("tokens_per_sec"),
+                ttft_ms=record.get("ttft_ms"),
                 request_body=record.get("request_body") or "",
                 response_body=record.get("response_body"),
             )
@@ -544,9 +560,59 @@ class MariaDBBackend(StorageBackend):
                 "completion_tokens": r.completion_tokens,
                 "status_code": r.status_code,
                 "streamed": bool(r.streamed),
+                "tokens_per_sec": r.tokens_per_sec,
+                "ttft_ms": r.ttft_ms,
                 "request_body": r.request_body,
                 "response_body": r.response_body,
             } for r in rows]
+        finally:
+            self._session_factory.remove()
+
+    def request_log_stats(self, inst_id: str | None = None,
+                          since=None) -> dict:
+        session = self._session()
+        try:
+            R = RequestLogRow
+            q = session.query(
+                func.count(R.id),
+                func.coalesce(func.sum(R.prompt_tokens), 0),
+                func.coalesce(func.sum(R.completion_tokens), 0),
+                func.avg(R.tokens_per_sec),
+                func.max(R.tokens_per_sec),
+                func.avg(R.ttft_ms),
+                func.avg(R.duration_ms),
+                func.coalesce(func.sum(case((R.status_code >= 400, 1), else_=0)), 0),
+                func.coalesce(func.sum(case((R.streamed.is_(True), 1), else_=0)), 0),
+                func.min(R.created_at),
+                func.max(R.created_at),
+            )
+            if inst_id is not None:
+                q = q.filter(R.inst_id == inst_id)
+            if since is not None:
+                if isinstance(since, str):
+                    cutoff = parse_iso(since).replace(tzinfo=None)
+                elif isinstance(since, datetime):
+                    cutoff = since.astimezone(timezone.utc).replace(tzinfo=None) \
+                        if since.tzinfo else since
+                else:
+                    cutoff = None
+                if cutoff is not None:
+                    q = q.filter(R.created_at >= cutoff)
+            (count, pt, ct, avg_tps, max_tps, avg_ttft, avg_dur,
+             errors, streamed, first, last) = q.one()
+            return {
+                "turn_count": int(count or 0),
+                "prompt_tokens": int(pt or 0),
+                "completion_tokens": int(ct or 0),
+                "avg_tokens_per_sec": round(float(avg_tps), 2) if avg_tps is not None else None,
+                "max_tokens_per_sec": round(float(max_tps), 2) if max_tps is not None else None,
+                "avg_ttft_ms": round(float(avg_ttft), 1) if avg_ttft is not None else None,
+                "avg_duration_ms": round(float(avg_dur), 1) if avg_dur is not None else None,
+                "error_count": int(errors or 0),
+                "streamed_count": int(streamed or 0),
+                "first_seen_at": to_iso(first) if first else None,
+                "last_seen_at": to_iso(last) if last else None,
+            }
         finally:
             self._session_factory.remove()
 

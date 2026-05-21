@@ -646,12 +646,15 @@ def _stream_llamaman(host: str, port: int, openai_body: dict, model_name: str,
     finally:
         if resp is not None:
             resp.close()
-        if inst_id and completion_tokens > 0:
+        tps = ttft = None
+        if completion_tokens > 0:
             elapsed = time.monotonic() - t_start
             tps = completion_tokens / elapsed if elapsed > 0 else None
             ttft = ((t_first_token - t_start) * 1000) if t_first_token else None
-            update_instance_stats(inst_id, tokens_per_sec=tps, ttft_ms=ttft)
+            if inst_id:
+                update_instance_stats(inst_id, tokens_per_sec=tps, ttft_ms=ttft)
         if handle is not None:
+            handle.set_metrics(tokens_per_sec=tps, ttft_ms=ttft)
             usage = final_usage or {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
@@ -713,10 +716,10 @@ def _proxy_non_streaming(host: str, port: int, openai_body: dict, model_name: st
     else:
         result["response"] = choices[0]["message"]["content"] if choices else ""
 
+    elapsed = (time.monotonic() - t_start)
+    c_tokens = usage.get("completion_tokens", 0)
+    tps = c_tokens / elapsed if elapsed > 0 and c_tokens else None
     if inst_id:
-        elapsed = (time.monotonic() - t_start)
-        c_tokens = usage.get("completion_tokens", 0)
-        tps = c_tokens / elapsed if elapsed > 0 and c_tokens else None
         update_instance_stats(inst_id, tokens_per_sec=tps)
 
     if handle is not None:
@@ -726,6 +729,7 @@ def _proxy_non_streaming(host: str, port: int, openai_body: dict, model_name: st
         else:
             resp_text = result.get("response") or ""
         handle.set_response(text=resp_text, usage=usage, status_code=200)
+        handle.set_metrics(tokens_per_sec=tps)
 
     return result
 
@@ -1015,6 +1019,8 @@ def llamaman_v1_chat():
                     for chunk in resp.iter_content(chunk_size=None):
                         if acc is not None:
                             acc.feed(chunk)
+                        if handle and chunk:
+                            handle.mark_first_token()
                         yield chunk
                 finally:
                     resp.close()
@@ -1050,6 +1056,7 @@ def llamaman_v1_chat():
                 handle.set_response(text=msg.get("content") or "",
                                     usage=usage,
                                     status_code=resp.status_code)
+                handle.set_metrics(tokens_per_sec=tps)
             return jsonify(data), resp.status_code
     except Exception as e:
         if handle:

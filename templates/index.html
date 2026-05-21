@@ -592,6 +592,19 @@
     </div>
   </div>
 
+  <!-- Stats Modal -->
+  <div class="modal-overlay" id="stats-modal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3 id="stats-modal-title">Stats</h3>
+        <button class="btn-icon" id="btn-close-stats"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <div id="stats-body">Loading…</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Confirm Modal -->
   <div class="modal-overlay" id="confirm-modal">
     <div class="modal modal-sm">
@@ -636,6 +649,7 @@
   <script src="{{ url_for('static', filename='js/utils.js') }}"></script>
   <script src="{{ url_for('static', filename='js/models.js') }}"></script>
   <script src="{{ url_for('static', filename='js/logs.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/stats.js') }}"></script>
   <script src="{{ url_for('static', filename='js/instances.js') }}"></script>
   <script src="{{ url_for('static', filename='js/downloads.js') }}"></script>
   <script src="{{ url_for('static', filename='js/system.js') }}"></script>

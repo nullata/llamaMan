@@ -117,13 +117,14 @@ class RecordingHandle:
     block that may run twice on some control paths.
     """
 
-    __slots__ = ("_record", "_mode", "_finalized", "_t_start")
+    __slots__ = ("_record", "_mode", "_finalized", "_t_start", "_t_first_token")
 
     def __init__(self, record: dict, mode: str, t_start: float):
         self._record = record
         self._mode = mode
         self._finalized = False
         self._t_start = t_start
+        self._t_first_token = None
 
     def set_response(self, *, text: str | None = None,
                      usage: dict | None = None,
@@ -140,6 +141,31 @@ class RecordingHandle:
         if status_code is not None:
             self._record["status_code"] = int(status_code)
 
+    def set_metrics(self, *, tokens_per_sec: float | None = None,
+                    ttft_ms: float | None = None) -> None:
+        """Record generation-throughput metrics computed by the caller.
+
+        Use this on paths that already measure tokens/s and time-to-first-token
+        from real generation timing (more precise than re-deriving from total
+        duration, which folds in prompt evaluation). Streaming relays that don't
+        compute these themselves can instead call mark_first_token() and let
+        finalize() derive them.
+        """
+        if tokens_per_sec is not None:
+            self._record["tokens_per_sec"] = round(float(tokens_per_sec), 2)
+        if ttft_ms is not None:
+            self._record["ttft_ms"] = round(float(ttft_ms), 1)
+
+    def mark_first_token(self) -> None:
+        """Stamp the moment the first response token/byte arrived.
+
+        finalize() uses this to derive ttft_ms and a generation-only tokens/s
+        when the caller didn't set them explicitly via set_metrics(). Only the
+        first call takes effect.
+        """
+        if self._t_first_token is None:
+            self._t_first_token = time.monotonic()
+
     def set_error(self, status_code: int, error: str) -> None:
         self._record["status_code"] = int(status_code)
         self._record["response_body"] = error
@@ -149,10 +175,23 @@ class RecordingHandle:
         if self._finalized:
             return
         self._finalized = True
+        now = time.monotonic()
         if duration_ms is None:
-            duration_ms = int((time.monotonic() - self._t_start) * 1000)
+            duration_ms = int((now - self._t_start) * 1000)
         self._record["duration_ms"] = int(duration_ms)
         self._record["streamed"] = bool(streamed)
+        # Derive accurate generation metrics from the first-token mark unless the
+        # caller already supplied them. ttft = first token - request start;
+        # tokens/s = completion tokens over the generation window only.
+        if self._t_first_token is not None:
+            if "ttft_ms" not in self._record:
+                self._record["ttft_ms"] = round(
+                    (self._t_first_token - self._t_start) * 1000, 1)
+            if "tokens_per_sec" not in self._record:
+                ct = self._record.get("completion_tokens")
+                gen_s = now - self._t_first_token
+                if isinstance(ct, int) and ct > 0 and gen_s > 0:
+                    self._record["tokens_per_sec"] = round(ct / gen_s, 2)
         try:
             get_storage().append_request_log(self._record, self._mode)
         except Exception as e:

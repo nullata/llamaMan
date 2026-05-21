@@ -1198,6 +1198,64 @@ select option {
   word-break: break-all;
 }
 
+/* Stats modal */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.stat-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.stat-sub {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.stats-span {
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.stats-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 24px 12px;
+}
+
+.stats-empty i {
+  font-size: 28px;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+
+.stats-empty p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 #log-progress:not([hidden]) + #log-output {
   margin-top: 14px;
   border-top: 1px solid var(--border);

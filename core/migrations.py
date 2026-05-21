@@ -22,7 +22,7 @@ import logging
 logger = logging.getLogger("llamaman")
 
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 
 def _migrate_001_timestamps(storage) -> None:
@@ -30,8 +30,14 @@ def _migrate_001_timestamps(storage) -> None:
     storage.apply_migration_001_timestamps()
 
 
+def _migrate_002_request_metrics(storage) -> None:
+    """Add request_log tokens_per_sec / ttft_ms columns (fixed-schema backends)."""
+    storage.apply_migration_002_request_metrics()
+
+
 MIGRATIONS = {
     1: _migrate_001_timestamps,
+    2: _migrate_002_request_metrics,
 }
 
 

@@ -139,6 +139,20 @@ class StorageBackend(ABC):
         Returns count pruned."""
         ...
 
+    @abstractmethod
+    def request_log_stats(self, inst_id: str | None = None,
+                          since=None) -> dict:
+        """Aggregate recorded turns into rollup metrics for the stats UI.
+
+        Optionally filtered to one `inst_id` and to turns at/after `since`
+        (a datetime or ISO string). Returns a dict with: turn_count,
+        prompt_tokens, completion_tokens (sums), avg_tokens_per_sec,
+        max_tokens_per_sec, avg_ttft_ms, avg_duration_ms, error_count
+        (status_code >= 400), streamed_count, first_seen_at, last_seen_at
+        (ISO or None). Token-rate fields are None when no turn carried them.
+        """
+        ...
+
     # -- Schema migrations --
 
     SCHEMA_VERSION_KEY = "_schema_version"
@@ -169,5 +183,14 @@ class StorageBackend(ABC):
         Converts legacy epoch timestamps in the request_log and api_keys
         tables (or their JSON-backend equivalents) to native datetime / ISO
         strings. Default is a no-op so backends that don't need it can omit.
+        """
+        return None
+
+    def apply_migration_002_request_metrics(self) -> None:
+        """Backend-specific implementation of migration 002.
+
+        Adds the request_log tokens_per_sec / ttft_ms metric columns where the
+        backend uses a fixed schema. The JSON backend stores schema-less
+        records so it needs nothing; default is a no-op.
         """
         return None

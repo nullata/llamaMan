@@ -26,6 +26,19 @@ def public_dict(d: dict) -> dict:
     return {k: v for k, v in d.items() if not k.startswith("_")}
 
 
+def resolve_llama_endpoint(container_name: str, published_port: int) -> tuple[str, int]:
+    """Return the (host, port) llamaman uses to reach a spawned llama-server.
+
+    Containerized llamaman shares the Docker network with the sibling
+    container and reaches it by name on the fixed in-container port. Bare-metal
+    llamaman reaches it via the host where the container's port is published.
+    """
+    from config import IN_DOCKER, LLAMA_CONTAINER_PORT, LLAMA_HOST_ADDR
+    if IN_DOCKER:
+        return container_name, LLAMA_CONTAINER_PORT
+    return LLAMA_HOST_ADDR, published_port
+
+
 def cleanup_download_dir(dest_path: str) -> None:
     """Delete a partial/failed download directory, guarded to stay inside MODELS_DIR."""
     from config import MODELS_DIR

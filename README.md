@@ -8,14 +8,18 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 
 ## Features
 
+- **Universal GPU support** - one `Dockerfile` and image flow for NVIDIA, AMD (ROCm), Intel Arc, and CPU. The GPU vendor and matching `LLAMA_IMAGE` are auto-detected at startup; `GPU_TYPE` / `LLAMA_IMAGE` override if needed.
+- **Flexible deployment** - run llamaman in Docker (default) or bare-metal on the host (e.g. under WSL). It auto-detects which and reaches spawned containers accordingly.
 - **Model library** - scans `/models` for GGUF files, shows quant type and file size
 - **One-click launch** - configure GPU layers, context size, threads, multi-GPU, extra args
-- **Preset configs** - save/load per-model launch settings
+- **Preset configs** - save/load per-model launch settings, with live updates to running instances where possible
 - **Download manager** - pull models from HuggingFace with speed throttling and auto-retry on failure
 - **Model backup and restore** - export all model metadata and presets to JSON, restore on any instance by re-queuing missing downloads automatically
 - **Instance management** - stop, restart, remove, view live-streamed logs
 - **GPU VRAM indicator** - per-GPU VRAM and utilization, queried natively (no running instance required)
 - **Container resource monitoring** - live CPU%, core quota, RAM usage with thin progress bars, and GPU assignment per running instance card
+- **Per-instance stats** - a Stats button on each instance card surfaces throughput (tokens/s), time-to-first-token, latency, and token totals rolled up from the request log
+- **Request recording** - optionally record proxied requests/responses per request or per conversation, with configurable retention
 - **Idle timeout** - auto-sleep instances after configurable idle period, wake on next request
 - **Ollama-compatible proxy** - OpenWebUI discovers models and auto-starts servers on demand
 - **Authentication** - user accounts with session login, API key management with bearer tokens
@@ -23,17 +27,8 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Persistent state** - instance history and configs survive container restarts
 - **Storage backends** - JSON files (default) or MariaDB/MySQL via SQLAlchemy
 - **Proxy sampling overrides** - force temperature, top-k, top-p, presence penalty, and repeat penalty on all proxied requests, configurable per model preset
+- **CPU quota + memory limit** - CPU Threads also applies a Docker CPU quota; a Memory Limit field caps container RAM
 - **Docker image management** - pull any llama.cpp image by name, delete old local images from the Settings UI
-
-## What's New
-
-- **Universal GPU support** - single `Dockerfile` and image for NVIDIA, AMD (ROCm), Intel Arc, and CPU. GPU vendor is auto-detected at startup; `GPU_TYPE` overrides if needed. `LLAMA_IMAGE` is also auto-selected from the detected vendor.
-- **Native GPU monitoring** - VRAM and utilization are queried inside the llamaman container directly (pynvml for NVIDIA, `/sys/class/drm` sysfs for AMD/Intel Arc), so the GPU panel works without a running llama-server instance.
-- **Container resource monitoring** - each running instance card shows live CPU%, core quota, RAM used/limit, and GPU assignment with thin usage bars under each value, updated every 3 seconds via a separate poll.
-- **Docker image management** - pull any llama.cpp image by name, delete old local images, all from the Settings UI.
-- **Model backup and restore** - export all model metadata and presets to JSON; restore on any instance with downloads queued automatically for missing models.
-- **Repeat penalty in proxy sampling overrides** - configurable per preset, default 0 (disabled).
-- **CPU quota + memory limit** - setting CPU Threads now also applies a Docker `nano_cpus` quota; a new Memory Limit field caps container RAM.
 
 ## How It Works
 
@@ -48,6 +43,8 @@ Host machine
 │   └── llamaman-<id> container   (llama.cpp:server-cuda, GPU attached)
 └── GPU hardware
 ```
+
+**Containerized vs bare-metal:** the diagram above shows the default - llamaman running as a container alongside its spawned siblings on the `llamaman-net` Docker network, reaching them by container name. llamaman can also run bare-metal directly on the host (e.g. a Python process under WSL); in that case it reaches the spawned containers via `localhost` on their published ports. The mode is auto-detected (marker files + cgroup inspection) and can be forced with `LLAMAMAN_IN_DOCKER`.
 
 **To update llama.cpp** - no llamaman rebuild needed:
 ```bash
@@ -110,6 +107,22 @@ docker compose up --build
 On first launch, visit the UI to create an admin account via `/setup`.
 
 > **Note:** LlamaMan needs access to the Docker socket (`/var/run/docker.sock`) to spawn llama-server containers. This is already configured in `docker-compose.yml`. Be aware of the security implications - a container with Docker socket access has the ability to manage other containers on the host.
+
+### Running bare-metal
+
+LlamaMan can also run directly on the host instead of in a container - useful for development or on hosts (e.g. WSL) where running the manager itself in Docker is awkward. It still spawns llama-server **containers** via the Docker socket, but talks to them over `localhost` on their published ports rather than the Docker network.
+
+```bash
+pip install -r requirements.txt
+
+# Simplest (dev): starts the UI/API on :5000 and the proxy thread on :42069
+MODELS_DIR=./models DATA_DIR=./data LOGS_DIR=./logs python app.py
+
+# Or via gunicorn (production config lives in gunicorn.conf.py; 1 worker)
+MODELS_DIR=./models DATA_DIR=./data LOGS_DIR=./logs gunicorn -c gunicorn.conf.py app:app
+```
+
+A single process serves both the management UI/API (port 5000) and the Ollama-compatible proxy (port 42069). The container/bare-metal mode is auto-detected; if detection is ever wrong for your runtime, set `LLAMAMAN_IN_DOCKER=true` or `false` explicitly. Bare-metal, `HOST_MODELS_DIR` / `HOST_LOGS_DIR` already resolve to real host paths, so they need no special handling.
 
 ## Authentication
 
@@ -179,7 +192,7 @@ When you select a GGUF model, LlamaMan reads the file's metadata to detect the t
 
 | Setting | Default | Description |
 |---|---|---|
-| **GPU Layers** | `-1` | Number of layers to offload to GPU. `-1` = all layers, `0` = CPU only. Total layers are autodetected from the GGUF file. |
+| **GPU Layers** | `-1` | Number of layers to offload to GPU. `-1` = all layers, `0` = **CPU only**. Total layers are autodetected from the GGUF file. With `0`, no GPU is attached to the container at all (it's launched without any GPU device request), so it runs fully on CPU and its card shows no GPU - handy on hosts where GPU passthrough isn't available. |
 | **Context Size** | `4096` | Maximum context window in tokens (`--ctx-size`). |
 | **Parallel** | `1` | Number of parallel sequences the llama-server can process simultaneously (`--parallel`). Controls KV cache slot allocation inside the server itself. |
 | **Idle Timeout min** | `0` | Minutes of inactivity before the server is stopped to free VRAM. `0` = disabled. See [Idle Timeout](#idle-timeout). |
@@ -189,7 +202,7 @@ When you select a GGUF model, LlamaMan reads the file's metadata to detect the t
 | **Embedding Model** | off | Marks the instance as an embedding model. Embedding instances are **excluded** from the `LLAMAMAN_MAX_MODELS` count and will never be evicted by the proxy's LRU policy. |
 | **CPU Threads** | _(auto)_ | Sets both `--threads N` for llama-server and the container's CPU quota (`--cpus N`). Leave blank to let the container and llama-server use all available cores. |
 | **Memory Limit** | _(none)_ | Hard memory cap for the llama-server container (e.g. `32g`, `8192m`). Equivalent to `deploy.resources.limits.memory` in Docker Compose. Leave blank for no limit. |
-| **GPU Devices** | _(global default)_ | Comma-separated GPU indices to make visible to this container (e.g. `0,1`). Overrides `LLAMA_GPU_DEVICES` for this instance. Leave blank to use the global default. Not supported on Intel Arc. |
+| **GPU Devices** | _(global default)_ | Comma-separated GPU indices to make visible to this container (e.g. `0,1`). Overrides `LLAMA_GPU_DEVICES` for this instance. Leave blank (or the literal `all`) to expose all GPUs. The instance card labels exactly the GPUs selected here. Not supported on Intel Arc. |
 | **Extra Args** | _(empty)_ | Additional flags passed directly to llama-server (e.g. `--flash-attn`). |
 | **Proxy Sampling Overrides** | off | When enabled, the proxy forces the configured sampling parameters on every request forwarded to this instance, regardless of what the client sends. |
 | **Temperature** | `0.8` | Sampling temperature to enforce (range: `0.0`–`2.0`). Only active when proxy sampling overrides are enabled. |
@@ -226,6 +239,24 @@ LlamaMan queries GPU VRAM and utilization natively - no running llama-server ins
 | Intel Arc | `/sys/class/drm` sysfs | Same mount as AMD |
 
 When native access is not configured, LlamaMan falls back to exec-ing `nvidia-smi` / `rocm-smi` inside a running llama-server container (previous behavior). Stats always reflect the full host GPU state, not just a single container's usage.
+
+## Request Recording & Stats
+
+### Request recording
+
+Under **Settings >> App Settings >> Request recording**, choose how proxied inference traffic is logged:
+
+| Mode | Behaviour |
+|---|---|
+| **Off** (default) | Nothing is recorded. |
+| **Per request** | Each turn is stored as its own record. |
+| **Per conversation** | Turns are grouped by a content hash of the system prompt + first user message, so a multi-turn chat lands in one file/row. |
+
+Each record captures the request/response bodies plus envelope fields - model, endpoint, status, duration, prompt/completion token counts, and **accurate per-turn metrics**: generation throughput (tokens/s, measured over the generation window so it excludes prompt evaluation) and time-to-first-token. Records live under `request_log/` for the JSON backend (`RECORDINGS_DIR` to relocate) or the `request_log` table for MariaDB. A **Retention (days)** setting prunes older records hourly in the background (`0` = keep forever).
+
+### Per-instance stats
+
+Each instance card has a **Stats** button that opens a modal summarizing that instance's recorded traffic: request count (and errors), average and peak throughput, average time-to-first-token, average latency, prompt/completion/total tokens, and the active time span. Because the numbers are rolled up from the request log, the modal shows an empty state prompting you to enable recording when it's off, and stats persist even after the instance is stopped. Throughput and TTFT use the accurate per-turn metrics captured at generation time rather than re-derived end-to-end figures.
 
 ## Idle Timeout
 
@@ -419,6 +450,8 @@ Tables are auto-created on first connection. Requires `sqlalchemy` and `pymysql`
 | `LLAMA_IMAGE` | _(auto)_ | llama.cpp Docker image used for all spawned containers. Auto-selected from the detected GPU vendor if not set (`server-cuda` / `server-rocm` / `server-sycl` / `server`). Set explicitly to pin a specific image or version. |
 | `LLAMA_NETWORK` | `llamaman-net` | Docker network that LlamaMan and all llama-server containers are attached to. Created automatically if it doesn't exist. |
 | `LLAMA_CONTAINER_PREFIX` | `llamaman-` | Name prefix for spawned llama-server containers (e.g. `llamaman-abcd1234`). |
+| `LLAMAMAN_IN_DOCKER` | _(auto-detect)_ | Whether llamaman itself runs in a container. Auto-detected from runtime marker files and cgroups. In Docker it reaches spawned containers by name on the Docker network; bare-metal it uses `localhost` on their published ports. Set `true`/`false` to override detection. |
+| `LLAMA_HOST_ADDR` | `localhost` | Host address used to reach spawned containers' published ports when running bare-metal. Change only if those ports are published on a non-loopback address. |
 | `GPU_TYPE` | _(auto-detect)_ | Override GPU vendor detection: `cuda` (NVIDIA), `rocm` (AMD), `intel` (Intel Arc). Leave unset to let LlamaMan probe the host automatically. |
 | `LLAMA_GPU_DEVICES` | _(unset = all)_ | Comma-separated GPU indices visible to all spawned llama-server containers, e.g. `0,1,3`. Unset exposes all GPUs. Per-instance **GPU Devices** overrides this when set. Not supported on Intel Arc. |
 
@@ -570,6 +603,16 @@ Leave `filename` blank to download the full repository.
 | `GET` | `/api/gpu-info` | Per-GPU VRAM and utilization (native query; falls back to container exec if native access is not configured) |
 | `GET` | `/health` | Health check (`{"status": "ok"}`) - always open, no auth required |
 
+### Request Log
+
+Available when request recording is enabled (see [Request Recording & Stats](#request-recording--stats)).
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/request-log/conversations` | Recent conversations with rolled-up metadata (`limit` query, default 100, max 500) |
+| `GET` | `/api/request-log/conversations/<id>` | All recorded turns for one conversation, oldest first |
+| `GET` | `/api/request-log/stats` | Aggregate metrics (token totals, avg/peak tokens/s, avg TTFT, latency, error/streamed counts). Optional `inst_id` to scope to one instance and `window_hours` to limit the time range. Also returns the current `recording` mode. |
+
 ### Ollama-compatible (llamaman)
 
 | Method | Endpoint | Description |
@@ -595,6 +638,9 @@ Leave `filename` blank to download the full repository.
 | No GPU / Intel Arc error | Ensure `/dev/dri` is accessible and your user is in the `video`/`render` groups. |
 | GPU stats show unavailable | For NVIDIA: uncomment the `deploy.resources.reservations` block in `docker-compose.yml`. For AMD/Intel: ensure `/sys/class/drm:ro` is mounted (default in `docker-compose.yml`). |
 | Wrong GPU vendor detected | Set `GPU_TYPE=cuda`, `GPU_TYPE=rocm`, or `GPU_TYPE=intel` in the environment to override auto-detection. |
+| Instance stuck on **starting** when running bare-metal | The container is healthy but llamaman can't reach it. Deployment mode is auto-detected, but if it's wrong for your runtime, set `LLAMAMAN_IN_DOCKER=false` (bare-metal) or `true` (in Docker) explicitly. |
+| Stats modal is empty | Per-instance stats are rolled up from the request log. Enable **Settings >> App Settings >> Request recording** (per request or per conversation). |
+| Launch fails with GPU/CDI error on a host without GPU passthrough | Set **GPU Layers** to `0` to launch CPU-only with no GPU device attached, or fix the GPU runtime (e.g. install the NVIDIA Container Toolkit). |
 | Port conflict | The form auto-suggests an unused port; adjust if needed. |
 | Model not showing in OpenWebUI | Ensure `OLLAMA_BASE_URL` points to `http://llamaman:42069`. Check `/api/tags` returns models. |
 | OpenWebUI gets 401 errors | `require_auth` is on (default). Create an API key in the UI and set `OPENAI_API_KEYS` in OpenWebUI's environment. |

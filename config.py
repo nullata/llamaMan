@@ -33,6 +33,42 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "")
 LLAMA_CONTAINER_PORT = 8080
 LLAMA_NETWORK = os.environ.get("LLAMA_NETWORK", "llamaman-net")
 LLAMA_CONTAINER_PREFIX = os.environ.get("LLAMA_CONTAINER_PREFIX", "llamaman-")
+
+
+def _detect_in_docker() -> bool:
+    """Whether llamaman itself runs inside a container.
+
+    Containerized, it shares LLAMA_NETWORK with the sibling llama-server
+    containers and reaches them by name on the in-container port. Bare-metal
+    (e.g. running under WSL), it must reach them via localhost on the host-
+    published port instead.
+
+    Auto-detected; set LLAMAMAN_IN_DOCKER=true/false to force either mode.
+    Detection order: explicit override, runtime marker files (Docker's
+    /.dockerenv, Podman's /run/.containerenv), then cgroup inspection which
+    catches many containerd / Kubernetes / LXC setups.
+    """
+    override = os.environ.get("LLAMAMAN_IN_DOCKER", "").strip().lower()
+    if override in ("1", "true", "yes", "on"):
+        return True
+    if override in ("0", "false", "no", "off"):
+        return False
+    if os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv"):
+        return True
+    for cgroup_path in ("/proc/self/cgroup", "/proc/1/cgroup"):
+        try:
+            with open(cgroup_path, "r", encoding="utf-8") as f:
+                data = f.read()
+        except OSError:
+            continue
+        if any(m in data for m in ("docker", "containerd", "kubepods", "/lxc/", "libpod")):
+            return True
+    return False
+
+
+IN_DOCKER = _detect_in_docker()
+# Host llamaman uses to reach bare-metal-published llama-server ports.
+LLAMA_HOST_ADDR = os.environ.get("LLAMA_HOST_ADDR", "localhost").strip() or "localhost"
 # GPU_TYPE: set to override auto-detection ("cuda", "rocm", "intel").
 # Leave unset to let llamaman probe the host automatically.
 GPU_TYPE = os.environ.get("GPU_TYPE", "").strip().lower()

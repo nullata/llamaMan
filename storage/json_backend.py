@@ -437,6 +437,83 @@ class JsonBackend(StorageBackend):
         turns.sort(key=lambda r: r.get("created_at") or "")
         return turns
 
+    def request_log_stats(self, inst_id: str | None = None,
+                          since=None) -> dict:
+        since_iso = None
+        if isinstance(since, datetime):
+            dt = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+            since_iso = to_iso(dt)
+        elif isinstance(since, str) and since:
+            since_iso = to_iso(parse_iso(since))
+
+        turn_count = 0
+        prompt_tokens = 0
+        completion_tokens = 0
+        tps_sum = 0.0
+        tps_n = 0
+        tps_max = None
+        ttft_sum = 0.0
+        ttft_n = 0
+        dur_sum = 0
+        dur_n = 0
+        error_count = 0
+        streamed_count = 0
+        first_seen = None
+        last_seen = None
+
+        for rec, _ in self._iter_request_log_records():
+            if inst_id is not None and rec.get("inst_id") != inst_id:
+                continue
+            created = rec.get("created_at") or ""
+            # ISO 8601 UTC sorts lexicographically == chronologically.
+            if since_iso and created and created < since_iso:
+                continue
+            turn_count += 1
+            pt = rec.get("prompt_tokens")
+            ct = rec.get("completion_tokens")
+            if isinstance(pt, int):
+                prompt_tokens += pt
+            if isinstance(ct, int):
+                completion_tokens += ct
+            tps = rec.get("tokens_per_sec")
+            if isinstance(tps, (int, float)):
+                tps_sum += tps
+                tps_n += 1
+                if tps_max is None or tps > tps_max:
+                    tps_max = tps
+            ttft = rec.get("ttft_ms")
+            if isinstance(ttft, (int, float)):
+                ttft_sum += ttft
+                ttft_n += 1
+            dur = rec.get("duration_ms")
+            if isinstance(dur, int):
+                dur_sum += dur
+                dur_n += 1
+            status = rec.get("status_code")
+            if isinstance(status, int) and status >= 400:
+                error_count += 1
+            if rec.get("streamed"):
+                streamed_count += 1
+            if created:
+                if first_seen is None or created < first_seen:
+                    first_seen = created
+                if last_seen is None or created > last_seen:
+                    last_seen = created
+
+        return {
+            "turn_count": turn_count,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "avg_tokens_per_sec": round(tps_sum / tps_n, 2) if tps_n else None,
+            "max_tokens_per_sec": round(tps_max, 2) if tps_max is not None else None,
+            "avg_ttft_ms": round(ttft_sum / ttft_n, 1) if ttft_n else None,
+            "avg_duration_ms": round(dur_sum / dur_n, 1) if dur_n else None,
+            "error_count": error_count,
+            "streamed_count": streamed_count,
+            "first_seen_at": first_seen,
+            "last_seen_at": last_seen,
+        }
+
     def prune_request_log(self, older_than) -> int:
         if not os.path.isdir(self._recordings_dir):
             return 0

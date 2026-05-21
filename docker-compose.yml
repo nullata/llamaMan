@@ -54,6 +54,11 @@ services:
       - LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda
       - LLAMA_NETWORK=llamaman-net
       - LLAMA_CONTAINER_PREFIX=llamaman-
+      # How llamaman reaches spawned llama-server containers is auto-detected:
+      # in Docker it uses the Docker network (by container name); bare-metal it
+      # uses localhost on the published ports. Override only if detection is
+      # wrong for your runtime: LLAMAMAN_IN_DOCKER=true|false.
+      # - LLAMAMAN_IN_DOCKER=true
       # GPU_TYPE: override GPU auto-detection ("cuda", "rocm", "intel").
       # Leave unset to let llamaman probe the host automatically.
       # - GPU_TYPE=cuda

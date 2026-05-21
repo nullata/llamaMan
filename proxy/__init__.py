@@ -444,6 +444,8 @@ def make_proxy_app(inst_id: str, internal_port: int, proxy_port: int):
                     for chunk in resp.iter_content(chunk_size=None):
                         if acc is not None:
                             acc.feed(chunk)
+                            if handle and chunk:
+                                handle.mark_first_token()
                         elif buf is not None and len(buf) < BUF_CAP:
                             buf.extend(chunk[: BUF_CAP - len(buf)])
                         yield chunk

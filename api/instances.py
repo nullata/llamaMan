@@ -33,8 +33,8 @@ from core.gpu import get_vendor
 from core.helpers import (
     build_llama_cmd, ensure_docker_network, find_available_port,
     get_docker_client, is_container_running, is_port_available,
-    kill_instance_process, public_dict, read_log_file, stop_container,
-    stream_log_file,
+    kill_instance_process, public_dict, read_log_file, resolve_llama_endpoint,
+    stop_container, stream_log_file,
 )
 from core.proxy_sampling import parse_proxy_sampling_config
 from core.state import (
@@ -231,8 +231,15 @@ def _resolve_gpu_devices(per_instance: str | None) -> str:
 
     Priority: per-instance > global LLAMA_GPU_DEVICES > empty (all).
     Returns a comma-separated string of device indices, or "" for all.
+
+    The literal "all" (the UI placeholder text, which a user might type) is
+    normalized to "" so it means all GPUs everywhere - both for device
+    attachment and the instance card's GPU label.
     """
-    return (per_instance or LLAMA_GPU_DEVICES or "").strip()
+    effective = (per_instance or LLAMA_GPU_DEVICES or "").strip()
+    if effective.lower() == "all":
+        return ""
+    return effective
 
 
 def _make_device_requests(gpu_devices: str | None):
@@ -302,8 +309,19 @@ def _run_container(
     if memory_limit:
         kwargs["mem_limit"] = memory_limit
 
+    try:
+        n_gpu_layers = int(config.get("n_gpu_layers", -1))
+    except (TypeError, ValueError):
+        n_gpu_layers = -1
+
     vendor = get_vendor()
-    if vendor == "rocm":
+    if n_gpu_layers == 0:
+        # CPU-only: attach no GPU devices at all. Besides honoring the user's
+        # intent, this avoids Docker's CDI GPU discovery, which errors on hosts
+        # without a configured GPU runtime (e.g. WSL without the NVIDIA
+        # container toolkit).
+        pass
+    elif vendor == "rocm":
         kwargs["devices"] = _make_rocm_devices()
         kwargs["group_add"] = ["video", "render"]
         effective_gpus = _resolve_gpu_devices(gpu_devices)
@@ -401,7 +419,7 @@ def relaunch_inactive_instance(inst_id: str) -> bool:
         logger.error("Failed to relaunch %s: %s", inst_id, err)
         return False
 
-    server_host = container_name
+    server_host, health_port = resolve_llama_endpoint(container_name, internal_port)
 
     with instances_lock:
         inst = instances.get(inst_id)
@@ -410,13 +428,13 @@ def relaunch_inactive_instance(inst_id: str) -> bool:
             inst["container_id"] = container.id
             inst["container_name"] = container_name
             inst["_server_host"] = server_host
-            inst["_server_port"] = LLAMA_CONTAINER_PORT
+            inst["_server_port"] = health_port
             inst["started_at"] = time.time()
             inst["_last_request_at"] = time.time()
 
     save_state()
 
-    if not wait_for_healthy(server_host, LLAMA_CONTAINER_PORT, timeout=MODEL_LOAD_TIMEOUT):
+    if not wait_for_healthy(server_host, health_port, timeout=MODEL_LOAD_TIMEOUT):
         logger.warning("Relaunched %s but it did not become healthy", inst_id)
         return False
 
@@ -505,7 +523,7 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
     if err:
         return None, err
 
-    server_host = container_name
+    server_host, health_port = resolve_llama_endpoint(container_name, server_port)
 
     instance = {
         "id": inst_id,
@@ -519,7 +537,7 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
         "config": config,
         "started_at": time.time(),
         "_server_host": server_host,
-        "_server_port": LLAMA_CONTAINER_PORT,
+        "_server_port": health_port,
         "_last_request_at": time.time(),
         "stats": {
             "model_load_time_s": None,
@@ -636,6 +654,13 @@ def api_container_stats():
             inst = instances.get(inst_id)
             if not inst:
                 return []
+        # CPU-only launches (GPU Layers = 0) get no GPU attached, so don't
+        # label them with one. Mirrors the device gating in _run_container.
+        try:
+            if int(inst.get("config", {}).get("n_gpu_layers", -1)) == 0:
+                return []
+        except (TypeError, ValueError):
+            pass
         if vendor == "intel":
             name = gpu_map.get(0, "Intel Arc")
             return [name]

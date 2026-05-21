@@ -172,6 +172,7 @@ function renderInstances() {
     <span class="status-badge ${statusClass}">${inst.status}</span>
     <div class="inst-actions">
       <button class="btn btn-secondary btn-logs" data-id="${inst.id}"><i class="fa-solid fa-terminal"></i> Logs</button>
+      <button class="btn btn-secondary btn-stats" data-id="${inst.id}" data-model="${escHtml(inst.model_name)}"><i class="fa-solid fa-chart-line"></i> Stats</button>
       ${inst.status !== 'stopped' && inst.status !== 'sleeping' ? `<button class="btn btn-danger btn-stop" data-id="${inst.id}"><i class="fa-solid fa-stop"></i> Stop</button>` : ''}
       ${inst.status === 'sleeping' ? `<button class="btn btn-danger btn-stop" data-id="${inst.id}"><i class="fa-solid fa-stop"></i> Stop</button>` : ''}
       ${inst.status === 'stopped' || inst.status === 'sleeping' ? `<button class="btn btn-primary btn-restart" data-id="${inst.id}"><i class="fa-solid fa-rotate-right"></i> Restart</button>` : ''}
@@ -201,6 +202,9 @@ function renderInstances() {
   });
   container.querySelectorAll('.btn-logs').forEach(btn => {
     btn.addEventListener('click', () => openLogModal('instance', btn.dataset.id));
+  });
+  container.querySelectorAll('.btn-stats').forEach(btn => {
+    btn.addEventListener('click', () => openStatsModal(btn.dataset.id, btn.dataset.model));
   });
 }
 

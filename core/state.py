@@ -6,8 +6,10 @@ import time
 import uuid
 from pathlib import Path
 
-from config import LLAMA_CONTAINER_PORT, LLAMA_CONTAINER_PREFIX, logger
-from core.helpers import get_docker_client, is_container_running, stop_container
+from config import LLAMA_CONTAINER_PREFIX, logger
+from core.helpers import (
+    get_docker_client, is_container_running, resolve_llama_endpoint, stop_container,
+)
 
 
 instances: dict[str, dict] = {}
@@ -144,6 +146,7 @@ def adopt_orphans() -> int:
         }
 
         container_name = container.name
+        adopt_host, adopt_port = resolve_llama_endpoint(container_name, port)
         inst = {
             "id": inst_id,
             "model_name": Path(model_path).name,
@@ -155,8 +158,8 @@ def adopt_orphans() -> int:
             "log_file": "",
             "config": orphan_config,
             "started_at": time.time(),
-            "_server_host": container_name,
-            "_server_port": LLAMA_CONTAINER_PORT,
+            "_server_host": adopt_host,
+            "_server_port": adopt_port,
             "_last_request_at": time.time(),
             "stats": {
                 "model_load_time_s": None,
@@ -245,6 +248,12 @@ def load_state():
             restored_status = "stopped"
             saved_container_id = ""
 
+        if container_name:
+            restore_host, restore_port = resolve_llama_endpoint(
+                container_name, internal_port or entry.get("port", 0))
+        else:
+            restore_host, restore_port = "localhost", None
+
         inst = {
             "id": entry["id"],
             "model_name": entry["model_name"],
@@ -256,8 +265,8 @@ def load_state():
             "log_file": entry.get("log_file", ""),
             "config": config,
             "started_at": entry.get("started_at", 0),
-            "_server_host": container_name or "localhost",
-            "_server_port": LLAMA_CONTAINER_PORT if container_name else None,
+            "_server_host": restore_host,
+            "_server_port": restore_port,
             "_llamaman_managed": entry.get("llamaman_managed", False),
             "_last_request_at": time.time(),
             "stats": entry.get("stats", {
