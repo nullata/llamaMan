@@ -6,14 +6,18 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 
 ## Features
 
+- **Universal GPU support** - single image for NVIDIA, AMD (ROCm), Intel Arc, and CPU. The GPU vendor and matching `LLAMA_IMAGE` are auto-detected at startup; `GPU_TYPE` / `LLAMA_IMAGE` override if needed.
 - **Model library** - scans `/models` for GGUF files, shows quant type and file size
-- **One-click launch** - configure GPU layers, context size, threads, multi-GPU, extra args
-- **Preset configs** - save/load per-model launch settings
+- **One-click launch** - configure GPU layers, context size, threads, multi-GPU, speculative decoding, extra args
+- **Speculative decoding (MTP)** - optional `--spec-type draft-mtp` toggle with a configurable draft length, for models with MTP heads
+- **Preset configs** - save/load per-model launch settings, with live updates to running instances where possible
 - **Download manager** - pull models from HuggingFace with speed throttling and auto-retry on failure
 - **Model backup and restore** - export model metadata and presets to JSON, restore on any instance with downloads queued automatically for missing models
 - **Instance management** - stop, restart, remove, view live-streamed logs
-- **Container resource monitoring** - live CPU%, core quota, RAM usage with thin progress bars, and GPU assignment per running instance card
 - **GPU VRAM indicator** - per-GPU VRAM and utilization, queried natively (no running instance required)
+- **Container resource monitoring** - live CPU%, core quota, RAM usage with thin progress bars, and GPU assignment per running instance card
+- **Per-instance stats** - a Stats button on each instance card surfaces throughput (tokens/s), time-to-first-token, latency, and token totals rolled up from the request log
+- **Request recording** - optionally record proxied requests/responses per request or per conversation, with configurable retention
 - **Idle timeout** - auto-sleep instances after configurable idle period, wake on next request
 - **Ollama-compatible proxy** - OpenWebUI discovers models and auto-starts servers on demand
 - **Authentication** - user accounts with session login, API key management with bearer tokens
@@ -21,17 +25,8 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Persistent state** - instance history and configs survive container restarts
 - **Storage backends** - JSON files (default) or MariaDB/MySQL via SQLAlchemy
 - **Proxy sampling overrides** - force temperature, top-k, top-p, presence penalty, and repeat penalty on all proxied requests, configurable per model preset
+- **CPU quota + memory limit** - CPU Threads also applies a Docker CPU quota; a Memory Limit field caps container RAM
 - **Docker image management** - pull any llama.cpp image by name, delete old local images from the UI
-
-## What's New
-
-- **Universal GPU support** - single image for NVIDIA, AMD (ROCm), Intel Arc, and CPU. GPU vendor auto-detected at startup; `LLAMA_IMAGE` auto-selected from the detected vendor. `GPU_TYPE` overrides if needed.
-- **Native GPU monitoring** - VRAM and utilization queried inside the llamaman container (pynvml for NVIDIA, `/sys/class/drm` sysfs for AMD/Intel Arc). GPU panel works without a running llama-server instance.
-- **Container resource monitoring** - each running instance card shows live CPU%, core quota, RAM used/limit, and GPU assignment with thin usage bars under each value.
-- **Docker image management** - pull any llama.cpp image by name, delete old local images from the Settings UI.
-- **Model backup and restore** - export model metadata and presets to JSON; restore on any instance with downloads queued automatically for missing models.
-- **Repeat penalty in proxy sampling overrides** - configurable per preset, default 0 (disabled).
-- **CPU quota + memory limit** - CPU Threads setting now also applies a Docker CPU quota; new Memory Limit field caps container RAM.
 
 ## Tags
 
@@ -174,7 +169,7 @@ networks:
 | Path | Description |
 |---|---|
 | `/models` | GGUF model files. Place your models here or use the built-in download manager. |
-| `/data` | Persistent state: instance configs, presets, user accounts, settings, API keys. |
+| `/data` | Persistent state: instance configs, presets, user accounts, settings, API keys, and recorded request logs. |
 | `/tmp/llama-logs` | Instance and download logs. Optional - mount to preserve logs across restarts. |
 
 ## Environment Variables
@@ -189,6 +184,7 @@ networks:
 | `LLAMAMAN_PROXY_PORT` | `42069` | Port for the Ollama-compatible proxy. |
 | `MODELS_DIR` | `/models` | Directory scanned for model files (container path). |
 | `DATA_DIR` | `/data` | Directory for persistent config/state. |
+| `RECORDINGS_DIR` | `{DATA_DIR}/request_log` | Directory for recorded request-log records (JSON backend only; ignored when `DATABASE_URL` is set). |
 | `LOGS_DIR` | `/tmp/llama-logs` | Directory for instance and download logs (container path). |
 | `HOST_MODELS_DIR` | *(same as `MODELS_DIR`)* | **Host-side** absolute path of the models volume. Must match the left side of `-v /host/path/models:/models`. LlamaMan passes this to the Docker daemon when spawning sibling containers. |
 | `HOST_LOGS_DIR` | *(same as `LOGS_DIR`)* | **Host-side** absolute path of the logs volume. Same requirement as `HOST_MODELS_DIR`. |
@@ -218,6 +214,12 @@ The UI provides automatic cleanup under **Settings >> Cleanup Settings**:
 - **Auto-remove stale instance records** - periodically checks all `starting`/`healthy`/`sleeping` instance records against their backing Docker container. Records whose container is no longer running are marked stopped. Configurable check interval (default: 5 minutes).
 
 Cleanup runs periodically in the background. These settings only remove or update records in the UI/state - they do not delete model files.
+
+## Request Recording & Stats
+
+Under **Settings >> App Settings >> Request recording**, choose how proxied inference traffic is logged: **Off** (default), **Per request**, or **Per conversation** (turns grouped by a hash of the system prompt + first user message). Each record captures the request/response bodies plus envelope fields and accurate per-turn metrics - generation throughput (tokens/s, measured over the generation window) and time-to-first-token. Records are stored under `RECORDINGS_DIR` (inside `/data`) for the JSON backend or the `request_log` table for MariaDB; a **Retention (days)** setting prunes older records hourly (`0` = keep forever).
+
+Each instance card then exposes a **Stats** button that opens a modal summarizing that instance's recorded traffic - request count (with errors), average and peak throughput, average time-to-first-token, average latency, prompt/completion/total tokens, and the active time span. Stats are rolled up from the request log, so they persist after an instance is stopped and the modal prompts you to enable recording when it's off.
 
 ## OpenWebUI Integration
 
