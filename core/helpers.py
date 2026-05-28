@@ -16,6 +16,36 @@ def model_name_from_path(path: str) -> str:
     return Path(path).stem.lower()
 
 
+def request_local_worker(url, *, method="POST", json=None, data=None,
+                         headers=None, stream=False):
+    """Send an HTTP request to a local llama-server with bounded connect
+    retries. Returns the requests.Response on success; raises the last
+    connection error after 3 failed attempts.
+
+    Read timeouts are NOT retried. A ReadTimeout means llama-server accepted
+    the request and is generating - it keeps grinding on the original even
+    after we close the socket, so a retry just enqueues a second copy of the
+    same prompt while the first burns compute uselessly in the background.
+    ConnectionError / ConnectionRefused are the only failures that mean
+    "server isn't accepting yet, try again" - which is the brief window
+    right after a model starts up.
+    """
+    import requests as _requests
+    from config import REQUEST_TIMEOUT
+    last_err = None
+    for _ in range(3):
+        try:
+            return _requests.request(
+                method=method, url=url,
+                json=json, data=data, headers=headers,
+                stream=stream, timeout=REQUEST_TIMEOUT,
+            )
+        except (_requests.ConnectionError, ConnectionRefusedError) as e:
+            last_err = e
+            time.sleep(2)
+    raise last_err
+
+
 def format_size(size_bytes: int) -> str:
     if size_bytes >= 1024**3:
         return f"{size_bytes / (1024**3):.1f} GB"
@@ -74,6 +104,14 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
         cmd += ["--parallel", str(int(config["parallel"]))]
     if config.get("embedding_model"):
         cmd += ["--embeddings"]
+    # When this instance opts into a queue-group alias, also tell llama-server
+    # to advertise itself under that name (--alias). Two effects: clients
+    # hitting THIS instance's port directly see the group name in /v1/models
+    # and chat responses; and the alias plumbing stays honest end-to-end
+    # rather than being a cluster-router-only fiction.
+    alias = (config.get("share_queue_group") or "").strip()
+    if alias:
+        cmd += ["--alias", alias]
     if config.get("spec_enabled"):
         cmd += ["--spec-type", "draft-mtp"]
         try:

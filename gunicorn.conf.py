@@ -10,14 +10,26 @@
 
 import os
 
-# Bind to port 5000 (UI + API), overridable via env
-bind = os.environ.get("GUNICORN_BIND", "0.0.0.0:5000")
+# Bind to both the management/cluster port (5000) and the client-facing
+# inference port (42069, OpenWebUI's OLLAMA_BASE_URL). One Flask app, one
+# worker pool, both ports - replaces the old werkzeug make_server-in-a-thread
+# setup that ran two different WSGI runtimes side by side. Override either
+# with GUNICORN_BIND (comma-separated) or LLAMAMAN_PROXY_PORT.
+_default_inference_port = os.environ.get("LLAMAMAN_PROXY_PORT", "42069")
+_default_bind = f"0.0.0.0:5000,0.0.0.0:{_default_inference_port}"
+bind = [b.strip() for b in os.environ.get("GUNICORN_BIND", _default_bind).split(",") if b.strip()]
 
 # IMPORTANT: Must use exactly 1 worker. The app uses in-memory state
 # (instances, downloads, locks) that cannot be shared across processes.
 # Use threads for concurrency instead.
 workers = 1
-threads = int(os.environ.get("GUNICORN_THREADS", 8))
+# In a cluster, each cross-node forwarded inference request holds a thread for
+# the ENTIRE generation (it lands on this UI/API port via the peer's advertise
+# URL), and it competes with dashboard polls, reachability probes, and the
+# cross-node management proxy. 8 starved easily and made nodes flap offline, so
+# this is sized generously - threads are cheap here (the work is I/O-bound,
+# mostly waiting on llama-server).
+threads = 32
 
 # Worker class - gthread supports threading within a single worker
 worker_class = "gthread"

@@ -84,41 +84,47 @@ def _get_container_inactive_file_bytes() -> int:
     return 0
 
 
+def collect_system_info() -> dict:
+    """Gather host/container CPU + RAM usage. Shared by the /api/system-info
+    route and the cluster snapshot builder. May raise on platform errors."""
+    cpu_limit = _get_container_cpu_limit()
+    cpu_cores = cpu_limit if cpu_limit else (psutil.cpu_count(logical=True) or 1)
+    cpu_percent = psutil.cpu_percent(interval=0.3)
+
+    mem_limit = _get_container_memory_limit()
+    mem_usage = _get_container_memory_usage()
+
+    if mem_limit and mem_usage is not None:
+        # cgroup usage includes page cache for recently-read GGUF files,
+        # which can stay charged after a model exits. Subtract inactive
+        # file cache so the UI tracks the active working set instead.
+        inactive_file = min(_get_container_inactive_file_bytes(), mem_usage)
+        working_set = max(mem_usage - inactive_file, 0)
+        ram_total_mb = round(mem_limit / (1024 * 1024))
+        ram_used_mb = round(working_set / (1024 * 1024))
+        ram_free_mb = ram_total_mb - ram_used_mb
+        ram_percent = round(working_set / mem_limit * 100, 1) if mem_limit > 0 else 0
+    else:
+        vm = psutil.virtual_memory()
+        ram_total_mb = round(vm.total / (1024 * 1024))
+        ram_free_mb = round(vm.available / (1024 * 1024))
+        ram_used_mb = max(ram_total_mb - ram_free_mb, 0)
+        ram_percent = round(ram_used_mb / ram_total_mb * 100, 1) if ram_total_mb > 0 else 0
+
+    return {
+        "cpu_percent": cpu_percent,
+        "cpu_cores": round(cpu_cores, 1),
+        "ram_total_mb": ram_total_mb,
+        "ram_used_mb": ram_used_mb,
+        "ram_free_mb": ram_free_mb,
+        "ram_percent": ram_percent,
+    }
+
+
 @bp.route("/api/system-info")
 def api_system_info():
     try:
-        cpu_limit = _get_container_cpu_limit()
-        cpu_cores = cpu_limit if cpu_limit else (psutil.cpu_count(logical=True) or 1)
-        cpu_percent = psutil.cpu_percent(interval=0.3)
-
-        mem_limit = _get_container_memory_limit()
-        mem_usage = _get_container_memory_usage()
-
-        if mem_limit and mem_usage is not None:
-            # cgroup usage includes page cache for recently-read GGUF files,
-            # which can stay charged after a model exits. Subtract inactive
-            # file cache so the UI tracks the active working set instead.
-            inactive_file = min(_get_container_inactive_file_bytes(), mem_usage)
-            working_set = max(mem_usage - inactive_file, 0)
-            ram_total_mb = round(mem_limit / (1024 * 1024))
-            ram_used_mb = round(working_set / (1024 * 1024))
-            ram_free_mb = ram_total_mb - ram_used_mb
-            ram_percent = round(working_set / mem_limit * 100, 1) if mem_limit > 0 else 0
-        else:
-            vm = psutil.virtual_memory()
-            ram_total_mb = round(vm.total / (1024 * 1024))
-            ram_free_mb = round(vm.available / (1024 * 1024))
-            ram_used_mb = max(ram_total_mb - ram_free_mb, 0)
-            ram_percent = round(ram_used_mb / ram_total_mb * 100, 1) if ram_total_mb > 0 else 0
-
-        return jsonify({
-            "cpu_percent": cpu_percent,
-            "cpu_cores": round(cpu_cores, 1),
-            "ram_total_mb": ram_total_mb,
-            "ram_used_mb": ram_used_mb,
-            "ram_free_mb": ram_free_mb,
-            "ram_percent": ram_percent,
-        })
+        return jsonify(collect_system_info())
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -239,19 +245,25 @@ def _query_via_container_exec() -> list[dict] | None:
     return None
 
 
+def collect_gpu_info() -> dict:
+    """Return {"gpus": [...]} (with an optional "error" when none found).
+    Shared by the /api/gpu-info route and the cluster snapshot builder."""
+    from core.gpu import query_gpus
+    gpus = query_gpus()
+    if gpus is not None:
+        return {"gpus": gpus}
+
+    # Fallback: exec into a running llama-server container
+    gpus = _query_via_container_exec()
+    if gpus is not None:
+        return {"gpus": gpus}
+
+    return {"gpus": [], "error": "No GPU data available - mount /sys/class/drm:ro (AMD/Intel) or enable NVIDIA toolkit utility capability"}
+
+
 @bp.route("/api/gpu-info")
 def api_gpu_info():
     try:
-        from core.gpu import query_gpus
-        gpus = query_gpus()
-        if gpus is not None:
-            return jsonify({"gpus": gpus})
-
-        # Fallback: exec into a running llama-server container
-        gpus = _query_via_container_exec()
-        if gpus is not None:
-            return jsonify({"gpus": gpus})
-
-        return jsonify({"gpus": [], "error": "No GPU data available - mount /sys/class/drm:ro (AMD/Intel) or enable NVIDIA toolkit utility capability"}), 200
+        return jsonify(collect_gpu_info())
     except Exception as e:
         return jsonify({"error": str(e), "gpus": []}), 500

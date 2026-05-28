@@ -2,12 +2,10 @@
 
 import hashlib
 import os
-import threading
 
 from flask import Flask, jsonify, make_response, render_template
-from werkzeug.serving import make_server
 
-from config import LLAMAMAN_PROXY_PORT, SECRET_KEY, logger
+from config import SECRET_KEY, logger
 from core.migrations import run_pending_migrations
 from core.state import load_state
 from proxy import start_idle_proxy
@@ -26,6 +24,7 @@ import api.api_keys as api_keys
 import api.images as images
 import api.restore as restore
 import api.request_log as request_log
+import api.cluster as cluster
 
 
 def create_app() -> Flask:
@@ -56,12 +55,19 @@ def create_app() -> Flask:
     application.register_blueprint(images.bp)
     application.register_blueprint(restore.bp)
     application.register_blueprint(request_log.bp)
+    application.register_blueprint(cluster.bp)
 
     auth.init_auth(application)
 
     @application.route("/")
     def index():
         resp = make_response(render_template("index.html"))
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    @application.route("/logging")
+    def logging_page():
+        resp = make_response(render_template("logging.html"))
         resp.headers["Cache-Control"] = "no-store"
         return resp
 
@@ -105,14 +111,17 @@ for _inst_id, _proxy_port, _internal_port in _deferred_proxies:
     except Exception as _e:
         logger.warning("Failed to restore proxy for %s: %s", _inst_id, _e)
 
-# Start the llamaman proxy port (Ollama-compatible API) in a background thread.
-# OpenWebUI connects here via OLLAMA_BASE_URL=http://llamaman:42069
-_proxy_server = make_server("0.0.0.0", LLAMAMAN_PROXY_PORT, app, threaded=True)
-_proxy_thread = threading.Thread(target=_proxy_server.serve_forever, daemon=True)
-_proxy_thread.start()
-logger.info("Llamaman proxy listening on port %d", LLAMAMAN_PROXY_PORT)
+# The client-facing inference port (default 42069, OpenWebUI's
+# OLLAMA_BASE_URL=http://llamaman:42069) used to run a separate werkzeug
+# make_server here in a daemon thread - same Flask app, different port.
+# That meant requests on 42069 were served by werkzeug's threaded WSGI dev
+# server while requests on 5000 went through gunicorn's gthread workers,
+# and a cluster relay that spanned both runtimes was a mess to reason
+# about (different concurrency models, different timeout behavior, no
+# shared thread pool). Both ports are now bound by gunicorn (see
+# gunicorn.conf.py); no in-process server needed here.
 
 
 if __name__ == "__main__":
-    # Direct execution: run the Flask dev server on port 5000
+    # Direct execution (no gunicorn): run the Flask dev server on port 5000.
     app.run(host="0.0.0.0", port=5000, debug=False)

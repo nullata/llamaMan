@@ -11,7 +11,7 @@ import time
 from copy import deepcopy
 from datetime import datetime, timezone
 
-from core.timeutil import epoch_ms_to_iso, epoch_s_to_iso, parse_iso, to_iso
+from core.timeutil import epoch_ms_to_iso, epoch_s_to_iso, now_iso, parse_iso, to_iso
 from storage.base import StorageBackend
 
 logger = logging.getLogger("llamaman")
@@ -62,6 +62,10 @@ class JsonBackend(StorageBackend):
         self._recordings_dir = recordings_dir or os.path.join(
             os.path.dirname(settings_file), "request_log"
         )
+        self._cluster_file = os.path.join(
+            os.path.dirname(settings_file) or ".", "cluster.json"
+        )
+        self._cluster_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._settings_lock = threading.Lock()
         self._request_log_lock = threading.Lock()
@@ -181,16 +185,41 @@ class JsonBackend(StorageBackend):
 
     # -- State (atomic read/write) --
 
-    def save_state(self, instances: list[dict], downloads: list[dict]) -> None:
+    @staticmethod
+    def _owned_by(row: dict, node_id: str) -> bool:
+        # Rows predating node scoping have no node_id; treat them as the local
+        # node's so single-node installs upgrade without losing state.
+        rid = row.get("node_id")
+        return rid is None or rid == node_id
+
+    def save_state(self, instances: list[dict], downloads: list[dict],
+                   node_id: str | None = None) -> None:
         with self._state_lock:
-            state = {"instances": instances, "downloads": downloads}
+            if node_id is None:
+                state = {"instances": instances, "downloads": downloads}
+                _atomic_write_json(self._state_file, state)
+                return
+            # Preserve rows owned by other nodes (shared-storage case); replace
+            # this node's rows, stamping each with the owning node_id.
+            existing = self._read_state()
+            other_inst = [r for r in existing.get("instances", []) if not self._owned_by(r, node_id)]
+            other_dl = [r for r in existing.get("downloads", []) if not self._owned_by(r, node_id)]
+            mine_inst = [{**r, "node_id": node_id} for r in instances]
+            mine_dl = [{**r, "node_id": node_id} for r in downloads]
+            state = {"instances": other_inst + mine_inst, "downloads": other_dl + mine_dl}
             _atomic_write_json(self._state_file, state)
 
-    def load_instances(self) -> list[dict]:
-        return self._read_state().get("instances", [])
+    def load_instances(self, node_id: str | None = None) -> list[dict]:
+        rows = self._read_state().get("instances", [])
+        if node_id is None:
+            return rows
+        return [r for r in rows if self._owned_by(r, node_id)]
 
-    def load_downloads(self) -> list[dict]:
-        return self._read_state().get("downloads", [])
+    def load_downloads(self, node_id: str | None = None) -> list[dict]:
+        rows = self._read_state().get("downloads", [])
+        if node_id is None:
+            return rows
+        return [r for r in rows if self._owned_by(r, node_id)]
 
     # -- Presets --
 
@@ -305,6 +334,50 @@ class JsonBackend(StorageBackend):
                 return True
         return False
 
+    # -- Cluster registry --
+    #
+    # Stored as { node_id: {identity..., last_heartbeat_at, snapshot} } in a
+    # single JSON file. For a real multi-node JSON deployment this file must live
+    # on shared network storage; on a single node it simply stays one entry.
+
+    def _read_cluster(self) -> dict:
+        try:
+            with open(self._cluster_file, "r") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def register_node(self, node: dict, snapshot: dict | None = None) -> None:
+        with self._cluster_lock:
+            nodes = self._read_cluster()
+            entry = nodes.get(node["node_id"], {})
+            entry.update({
+                "node_id": node["node_id"],
+                "node_name": node.get("node_name", ""),
+                "advertise_url": node.get("advertise_url", ""),
+                "vendor": node.get("vendor", ""),
+                "llama_image": node.get("llama_image", ""),
+                "last_heartbeat_at": now_iso(),
+            })
+            if snapshot is not None:
+                entry["snapshot"] = snapshot
+            entry.setdefault("snapshot", {})
+            nodes[node["node_id"]] = entry
+            _atomic_write_json(self._cluster_file, nodes)
+
+    def list_nodes(self) -> list[dict]:
+        return list(self._read_cluster().values())
+
+    def get_node(self, node_id: str) -> dict | None:
+        return self._read_cluster().get(node_id)
+
+    def remove_node(self, node_id: str) -> None:
+        with self._cluster_lock:
+            nodes = self._read_cluster()
+            if node_id in nodes:
+                del nodes[node_id]
+                _atomic_write_json(self._cluster_file, nodes)
+
     # -- Request Log --
 
     def append_request_log(self, record: dict, mode: str) -> None:
@@ -399,10 +472,18 @@ class JsonBackend(StorageBackend):
                     "first_seen_at": created,
                     "last_seen_at": created,
                     "turn_count": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
                     "title": "",
                 }
                 rollup[cid] = entry
             entry["turn_count"] += 1
+            pt = rec.get("prompt_tokens")
+            ct = rec.get("completion_tokens")
+            if isinstance(pt, int):
+                entry["prompt_tokens"] += pt
+            if isinstance(ct, int):
+                entry["completion_tokens"] += ct
             # ISO 8601 UTC strings sort lexicographically the same way they
             # sort chronologically, so plain string compare is correct here.
             if not entry["first_seen_at"] or (created and created < entry["first_seen_at"]):

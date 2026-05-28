@@ -77,7 +77,9 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
     from storage import get_storage
 
     merged = dict(config)
-    preset = get_storage().get_preset(model_path) or {}
+    from api.presets import resolve_preset_for_node
+    from core.cluster import get_node_id
+    preset = resolve_preset_for_node(get_storage().get_preset(model_path) or {}, get_node_id())
     if preset:
         for key in (
             "n_gpu_layers",
@@ -93,7 +95,10 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
             "max_concurrent",
             "max_queue_depth",
             "share_queue",
+            "share_queue_group",
+            "share_queue_fallback",
             "embedding_model",
+            "auto_restart_on_crash",
             "proxy_sampling_override_enabled",
             "proxy_sampling_temperature",
             "proxy_sampling_top_k",
@@ -120,8 +125,9 @@ def _parse_required_positive_int(body: dict, field_name: str) -> tuple[int | Non
 
 
 def _admin_ui_enforces_eviction() -> bool:
+    from core.node_settings import effective_from_settings
     settings = get_storage().get_settings()
-    return bool(settings.get("admin_ui_enforce_max_models", False))
+    return bool(effective_from_settings(settings, "admin_ui_enforce_max_models", False))
 
 
 def _count_running_chat_instances(exclude_instance_id: str | None = None) -> int:
@@ -269,6 +275,7 @@ def _run_container(
 
     cmd = build_llama_cmd(model_path, LLAMA_CONTAINER_PORT, config)
     gpu_devices = config.get("gpu_devices") or None
+    image_name = config.get("image") or LLAMA_IMAGE
 
     ensure_docker_network()
 
@@ -286,7 +293,7 @@ def _run_container(
     port_bindings = {LLAMA_CONTAINER_PORT: server_port}
 
     kwargs = dict(
-        image=LLAMA_IMAGE,
+        image=image_name,
         command=cmd,
         name=container_name,
         network=LLAMA_NETWORK,
@@ -342,7 +349,7 @@ def _run_container(
         _start_log_relay(container, log_file)
         return container, None
     except docker.errors.ImageNotFound:
-        return None, f"Docker image '{LLAMA_IMAGE}' not found. Run: docker pull {LLAMA_IMAGE}"
+        return None, f"Docker image '{image_name}' not found. Pull it in the Docker Images tab, or run: docker pull {image_name}"
     except docker.errors.APIError as e:
         return None, f"Docker API error: {e}"
     except Exception as e:
@@ -455,7 +462,11 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
                     spec_enabled=False, spec_draft_n_max=None,
                     gpu_devices=None, idle_timeout_min=0,
                     max_concurrent=0, max_queue_depth=200,
-                    share_queue=False, embedding_model=False,
+                    share_queue=False, share_queue_group="",
+                    share_queue_fallback=False,
+                    embedding_model=False,
+                    auto_restart_on_crash=False,
+                    image=None,
                     proxy_sampling_override_enabled=False,
                     proxy_sampling_temperature=0.8,
                     proxy_sampling_top_k=40,
@@ -481,6 +492,14 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
         server_port = port
         internal_port = None
 
+    # Group/fallback are meaningless without share_queue; force-empty them so a
+    # value typed before the toggle was flipped off can't leak into the config
+    # and confuse cluster routing. The UI also gates the inputs, so this is
+    # defense in depth for API callers that bypass the form.
+    if not share_queue:
+        share_queue_group = ""
+        share_queue_fallback = False
+
     config = {
         "n_gpu_layers": n_gpu_layers,
         "ctx_size": ctx_size,
@@ -495,7 +514,14 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
         "max_concurrent": max_concurrent,
         "max_queue_depth": max_queue_depth,
         "share_queue": share_queue,
+        # Optional alias-based cross-node grouping (cluster) - empty string
+        # means "group by filename" (legacy behavior). Normalized at the
+        # boundary so the cluster matcher (which lowercases) stays consistent.
+        "share_queue_group": (share_queue_group or "").strip().lower(),
+        "share_queue_fallback": bool(share_queue_fallback),
         "embedding_model": embedding_model,
+        "auto_restart_on_crash": auto_restart_on_crash,
+        "image": (image or "").strip() or LLAMA_IMAGE,
         "proxy_sampling_override_enabled": proxy_sampling_override_enabled,
         "proxy_sampling_temperature": proxy_sampling_temperature,
         "proxy_sampling_top_k": proxy_sampling_top_k,
@@ -560,6 +586,15 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
     if max_concurrent > 0:
         create_gate(inst_id, max_concurrent, max_queue_depth,
                     model_path=model_path, share_queue=share_queue)
+
+    if share_queue:
+        # Publish this model's sampling/spec as the cluster group default
+        # (last writer wins). No-op when clustering is disabled.
+        try:
+            from api.cluster import record_group_overrides
+            record_group_overrides(model_path, config)
+        except Exception as e:
+            logger.warning("record_group_overrides failed: %s", e)
 
     save_state()
     return instance, None
@@ -787,7 +822,11 @@ def api_instances_create():
         max_concurrent=int(body.get("max_concurrent", 0)),
         max_queue_depth=int(body.get("max_queue_depth", 200)),
         share_queue=bool(body.get("share_queue", False)),
+        share_queue_group=body.get("share_queue_group", ""),
+        share_queue_fallback=bool(body.get("share_queue_fallback", False)),
         embedding_model=bool(body.get("embedding_model", False)),
+        auto_restart_on_crash=bool(body.get("auto_restart_on_crash", False)),
+        image=body.get("image", "").strip() or None,
         **proxy_sampling_config,
     )
     if err:
@@ -868,7 +907,10 @@ def api_instances_restart(inst_id):
         max_concurrent=config.get("max_concurrent", 0),
         max_queue_depth=config.get("max_queue_depth", 200),
         share_queue=config.get("share_queue", False),
+        share_queue_group=config.get("share_queue_group", ""),
+        share_queue_fallback=config.get("share_queue_fallback", False),
         embedding_model=config.get("embedding_model", False),
+        image=config.get("image"),
         proxy_sampling_override_enabled=bool(config.get("proxy_sampling_override_enabled", False)),
         proxy_sampling_temperature=float(config.get("proxy_sampling_temperature", 0.8)),
         proxy_sampling_top_k=int(config.get("proxy_sampling_top_k", 40)),

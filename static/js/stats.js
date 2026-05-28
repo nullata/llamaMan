@@ -71,14 +71,16 @@ function renderStats(data) {
   body.innerHTML = `<div class="stats-grid">${tiles.join('')}</div>${span}`;
 }
 
-async function openStatsModal(instId, modelName) {
+async function openStatsModal(instId, modelName, nodeId) {
   const modal = document.getElementById('stats-modal');
   document.getElementById('stats-modal-title').textContent =
     modelName ? `Stats - ${modelName}` : 'Stats';
   document.getElementById('stats-body').textContent = 'Loading…';
   modal.classList.add('open');
   try {
-    const res = await apiFetch(`/api/request-log/stats?inst_id=${encodeURIComponent(instId)}`);
+    // Per-instance stats come from the owning node's request log.
+    const path = `/api/request-log/stats?inst_id=${encodeURIComponent(instId)}`;
+    const res = await ((typeof nodeFetch === 'function') ? nodeFetch(nodeId, path) : apiFetch(path));
     renderStats(await res.json());
   } catch (e) {
     document.getElementById('stats-body').textContent = 'Error loading stats';

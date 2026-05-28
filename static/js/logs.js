@@ -146,9 +146,10 @@ function renderDownloadProgress(data) {
   box.innerHTML = html;
 }
 
-async function pollDownloadProgress(id) {
+async function pollDownloadProgress(id, nodeId) {
   try {
-    const res = await apiFetch(`/api/downloads/${id}/progress`);
+    const path = `/api/downloads/${id}/progress`;
+    const res = await ((typeof nodeFetch === 'function') ? nodeFetch(nodeId, path) : apiFetch(path));
     if (!res || !res.ok) return;
     const data = await res.json();
     renderDownloadProgress(data);
@@ -161,9 +162,12 @@ async function pollDownloadProgress(id) {
 
 // ---- modal open/close ----
 
-function openLogModal(type, id) {
+function openLogModal(type, id, nodeId) {
   const isDownload = type === 'download';
   const endpoint = isDownload ? 'downloads' : 'instances';
+  // For a peer node, route through the cluster proxy. nodeId is empty/self for
+  // this node, so the base is '' and behaviour is unchanged on single-node.
+  const proxyBase = (typeof clusterProxyBase === 'function') ? clusterProxyBase(nodeId) : '';
 
   let title;
   if (type === 'instance') {
@@ -195,8 +199,8 @@ function openLogModal(type, id) {
         rawLogBtn.classList.toggle('active', !out.hidden);
       };
     }
-    pollDownloadProgress(id);
-    progressTimer = setInterval(() => pollDownloadProgress(id), 1000);
+    pollDownloadProgress(id, nodeId);
+    progressTimer = setInterval(() => pollDownloadProgress(id, nodeId), 1000);
   } else {
     progressBox.hidden = true;
     progressBox.innerHTML = '';
@@ -207,7 +211,15 @@ function openLogModal(type, id) {
 
   document.getElementById('log-modal').classList.add('open');
   logModalInstanceId = id;
-  startLogStream(`/api/${endpoint}/${id}/logs/stream`, `/api/${endpoint}/${id}/logs`);
+  if (proxyBase) {
+    // The cluster proxy buffers the whole response, so an SSE stream would never
+    // flush. Poll the peer's log endpoint through the proxy instead.
+    logFetchUrl = `${proxyBase}/api/${endpoint}/${id}/logs`;
+    fetchLogsPoll();
+    logRefreshTimer = setInterval(fetchLogsPoll, 3000);
+  } else {
+    startLogStream(`/api/${endpoint}/${id}/logs/stream`, `/api/${endpoint}/${id}/logs`);
+  }
 }
 
 function closeLogs() {

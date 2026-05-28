@@ -13,7 +13,7 @@ from core.state import (
     downloads, downloads_lock,
     save_state,
 )
-from proxy import idle_proxies, idle_proxies_lock, cleanup_orphan_idle_proxies, refresh_gate
+from proxy import idle_proxies, idle_proxies_lock, cleanup_orphan_idle_proxies, drain_gate
 
 _last_cleanup_at: float = 0.0
 _CLEANUP_INTERVAL = 3600  # run at most once per hour
@@ -141,6 +141,8 @@ def _run_stale_record_cleanup() -> None:
         if status in ("starting", "healthy"):
             if _is_container_dead(inst):
                 container_id = inst.get("container_id")
+                crashed = False
+                auto_restart = False
                 with instances_lock:
                     inst = instances.get(inst_id)
                     if inst and inst["status"] not in ("stopped", "sleeping"):
@@ -155,6 +157,14 @@ def _run_stale_record_cleanup() -> None:
                             inst_id, stats["crash_count"],
                         )
                         changed = True
+                        crashed = True
+                        auto_restart = bool((inst.get("config") or {}).get("auto_restart_on_crash", False))
+                # Backstop for the 5s poller: redistribute queued work to peers,
+                # and honor opt-in crash recovery (loop-guarded, off-thread).
+                if crashed:
+                    drain_gate(inst_id)
+                    if auto_restart:
+                        _maybe_auto_restart(inst_id)
 
         elif status == "sleeping":
             has_proxy = inst_id in live_proxies
@@ -247,6 +257,48 @@ def _prune_request_log():
         logger.info("request_log: pruned %d records older than %d days", pruned, days)
 
 
+# Auto-restart-on-crash (opt-in per instance via config["auto_restart_on_crash"]).
+# Bounded so a model that crashes on every launch (bad GGUF, OOM) can't hot-loop
+# Docker forever: at most _AUTO_RESTART_MAX relaunches per instance within a
+# rolling _AUTO_RESTART_WINDOW_S window. Old timestamps age out, so an instance
+# that runs fine for a while and crashes much later restarts again from scratch.
+_auto_restart_lock = threading.Lock()
+_auto_restart_log: dict[str, list[float]] = {}
+_AUTO_RESTART_MAX = 3
+_AUTO_RESTART_WINDOW_S = 600
+
+
+def _maybe_auto_restart(inst_id: str) -> None:
+    """Relaunch a crashed instance that opted into auto-restart, unless it has
+    crash-looped recently. The relaunch blocks until the model is healthy, so it
+    runs on a daemon thread to keep the poller responsive. Only the crash path
+    calls this - user stops and idle-sleep never reach it."""
+    now = time.time()
+    with _auto_restart_lock:
+        recent = [t for t in _auto_restart_log.get(inst_id, ()) if now - t < _AUTO_RESTART_WINDOW_S]
+        if len(recent) >= _AUTO_RESTART_MAX:
+            _auto_restart_log[inst_id] = recent
+            logger.warning(
+                "Instance %s auto-restart suppressed: %d crashes within %ds (crash loop)",
+                inst_id, len(recent), _AUTO_RESTART_WINDOW_S,
+            )
+            return
+        recent.append(now)
+        _auto_restart_log[inst_id] = recent
+
+    def _run():
+        from api.instances import relaunch_inactive_instance
+        try:
+            if relaunch_inactive_instance(inst_id):
+                logger.info("Instance %s auto-restarted after crash", inst_id)
+            else:
+                logger.warning("Instance %s auto-restart failed", inst_id)
+        except Exception as e:
+            logger.warning("Instance %s auto-restart error: %s", inst_id, e)
+
+    threading.Thread(target=_run, daemon=True, name=f"auto-restart-{inst_id[:8]}").start()
+
+
 def _background_poller():
     global _last_cleanup_at, _last_orphan_scan_at, _last_stale_cleanup_at, _last_image_check_at
     global _last_request_log_prune_at
@@ -334,6 +386,7 @@ def _background_poller():
             container_dead = not container_id or not is_container_running(container_id)
 
             if container_dead:
+                auto_restart = False
                 with instances_lock:
                     inst = instances.get(inst_id)
                     if inst and inst["status"] not in ("stopped", "sleeping"):
@@ -345,8 +398,16 @@ def _background_poller():
                         stats["crash_count"] = stats.get("crash_count", 0) + 1
                         logger.info("Instance %s auto-stopped (container died, crashes: %d)",
                                     inst_id, stats["crash_count"])
-                refresh_gate(inst_id)
+                        auto_restart = bool((inst.get("config") or {}).get("auto_restart_on_crash", False))
+                # Redistribute the dead worker's QUEUED requests to peers instead
+                # of rejecting them (drain, not cancel). Called outside instances_lock
+                # because drain_gate takes it internally.
+                drain_gate(inst_id)
                 save_state()
+                # Opt-in crash recovery (loop-guarded, off-thread). Only crashes
+                # reach here - user stops and idle-sleep set status before this.
+                if auto_restart:
+                    _maybe_auto_restart(inst_id)
                 continue
 
             try:
@@ -432,11 +493,32 @@ def _background_poller():
             _handle_download_exit(dl_id, exit_code)
 
 
+# The cluster heartbeat runs on its OWN thread, NOT inside the main poller tick.
+# The poller does Docker-heavy work (orphan scans, health checks, container
+# stops) that can stretch a tick well past the online window when a peer drives
+# Docker on this node from its UI. If the heartbeat shared that tick, this node
+# would flap "offline" to its peers mid-interaction, and their dispatchers would
+# skip it (breaking cross-node routing and surfacing 500s). A dedicated thread
+# keeps the heartbeat on a strict cadence regardless of how busy the poller is.
+CLUSTER_HEARTBEAT_INTERVAL_S = 5
+
+
+def _cluster_heartbeat_loop():
+    from api.cluster import publish_cluster_heartbeat
+    while True:
+        try:
+            publish_cluster_heartbeat()
+        except Exception as e:
+            logger.warning("cluster heartbeat error: %s", e)
+        time.sleep(CLUSTER_HEARTBEAT_INTERVAL_S)
+
+
 def start_background_poller():
     logger.info(
-        "Background poller started (cleanup=%ds, orphan-scan=%ds, poll=5s)",
-        _CLEANUP_INTERVAL, _ORPHAN_SCAN_INTERVAL,
+        "Background poller started (cleanup=%ds, orphan-scan=%ds, poll=5s, heartbeat=%ds)",
+        _CLEANUP_INTERVAL, _ORPHAN_SCAN_INTERVAL, CLUSTER_HEARTBEAT_INTERVAL_S,
     )
+    threading.Thread(target=_cluster_heartbeat_loop, daemon=True).start()
     thread = threading.Thread(target=_background_poller, daemon=True)
     thread.start()
     return thread

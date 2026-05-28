@@ -14,6 +14,15 @@ Call sites use the return value as a handle:
             handle.finalize(streamed=True)
 
 Returning None when recording is off keeps hook sites branchless.
+
+`finalize_async(handle, streamed=...)` runs the storage write on a daemon
+thread so it never blocks the HTTP response. The storage backend serializes
+log writes through a global lock and on slow filesystems (WSL2 9p, NFS,
+etc.) that lock contention can stretch the LAST write of a burst long
+enough that Flask doesn't deliver the response within the upstream's
+read-timeout window - then the client sees a 504 even though the work
+completed cleanly. Anything in a request handler's `finally` runs BEFORE
+Flask sends the response to the wire, so finalize had to come off that path.
 """
 
 import hashlib
@@ -198,6 +207,24 @@ class RecordingHandle:
             logger.warning("request_log flush failed: %s", e)
 
 
+def finalize_async(handle: "RecordingHandle | None", streamed: bool = False) -> None:
+    """Run handle.finalize() on a daemon thread so the HTTP response isn't
+    blocked by storage I/O. No-op when handle is None.
+
+    duration_ms is snapshotted on THIS thread before the handoff so the value
+    reflects when the work actually ended, not when the background flush ran.
+    """
+    if handle is None:
+        return
+    duration_ms = int((time.monotonic() - handle._t_start) * 1000)
+    t = threading.Thread(
+        target=handle.finalize,
+        kwargs={"duration_ms": duration_ms, "streamed": streamed},
+        daemon=True,
+    )
+    t.start()
+
+
 def _safe_dumps(obj: Any) -> str:
     try:
         return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
@@ -241,16 +268,34 @@ class SSEAccumulator:
                 obj = json.loads(data)
             except (json.JSONDecodeError, ValueError):
                 continue
-            usage = obj.get("usage") if isinstance(obj, dict) else None
+            if not isinstance(obj, dict):
+                continue
+            usage = obj.get("usage")
             if isinstance(usage, dict):
                 self._usage = usage
-            choices = obj.get("choices") if isinstance(obj, dict) else None
-            if isinstance(choices, list) and choices:
-                delta = choices[0].get("delta") if isinstance(choices[0], dict) else None
-                if isinstance(delta, dict):
+            choices = obj.get("choices")
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                c0 = choices[0]
+                delta = c0.get("delta")
+                if isinstance(delta, dict):                 # chat: choices[].delta.content
                     c = delta.get("content")
                     if isinstance(c, str) and c:
                         self._content.append(c)
+                text = c0.get("text")                       # legacy completions: choices[].text
+                if isinstance(text, str) and text:
+                    self._content.append(text)
+            else:                                           # llama.cpp native: top-level content
+                c = obj.get("content")
+                if isinstance(c, str) and c:
+                    self._content.append(c)
+                if obj.get("stop") and self._usage is None:
+                    tp, te = obj.get("tokens_predicted"), obj.get("tokens_evaluated")
+                    if isinstance(tp, int) or isinstance(te, int):
+                        self._usage = {
+                            "completion_tokens": tp or 0,
+                            "prompt_tokens": te or 0,
+                            "total_tokens": (tp or 0) + (te or 0),
+                        }
 
     def finish(self) -> tuple[str, dict | None]:
         return "".join(self._content), self._usage

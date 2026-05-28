@@ -191,9 +191,15 @@ def get_hf_token_secret(token_id: str) -> str | None:
 
 
 def _sanitize_settings(settings: dict) -> dict:
+    from core.node_settings import NODE_SCOPED_KEYS, effective_from_settings
     safe = _apply_settings_defaults(settings)
     if "huggingface_tokens" in safe:
         safe["huggingface_tokens"] = [serialize_hf_token(token) for token in _get_hf_tokens()]
+    # Surface the local node's value for per-node keys the UI reads from here
+    # (the eviction toggles); never leak the raw per-node namespace.
+    for key in ("admin_ui_enforce_max_models", "allow_ollama_api_override_admin"):
+        safe[key] = bool(effective_from_settings(settings, key, safe.get(key, False)))
+    safe.pop("nodes", None)
     return safe
 
 
@@ -204,9 +210,18 @@ def get_settings():
 
 @bp.route("/api/settings", methods=["POST"])
 def save_settings():
+    from core.node_settings import NODE_SCOPED_KEYS, merge_node_settings
     data = request.get_json(silent=True) or {}
     data.pop("huggingface_tokens", None)
-    settings = get_storage().merge_settings(_normalize_settings_patch(data))
+    # Per-node keys (eviction toggles, docker_images) go to this node's
+    # namespace; everything else stays shared cluster-wide.
+    node_patch = {k: data.pop(k) for k in list(data.keys()) if k in NODE_SCOPED_KEYS}
+    if node_patch:
+        merge_node_settings(node_patch)
+    if data:
+        settings = get_storage().merge_settings(_normalize_settings_patch(data))
+    else:
+        settings = get_storage().get_settings()
     if "recording_mode" in data:
         from core.request_log import invalidate_cache as _invalidate_recording_cache
         _invalidate_recording_cache()

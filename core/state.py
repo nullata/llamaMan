@@ -78,7 +78,8 @@ def save_state():
                 })
 
         try:
-            storage.save_state(inst_list, dl_list)
+            from core.cluster import get_node_id
+            storage.save_state(inst_list, dl_list, node_id=get_node_id())
         except Exception as e:
             logger.warning("Failed to save state: %s", e)
 
@@ -199,10 +200,12 @@ def load_state():
     """
     from proxy import create_gate
     from storage import get_storage
+    from core.cluster import get_node_id
     storage = get_storage()
 
-    saved_instances = storage.load_instances()
-    saved_downloads = storage.load_downloads()
+    node_id = get_node_id()
+    saved_instances = storage.load_instances(node_id)
+    saved_downloads = storage.load_downloads(node_id)
 
     restore_proxies = []
 

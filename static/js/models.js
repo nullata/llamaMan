@@ -4,9 +4,19 @@
 // Model metadata & GPU layer suggestion state
 // -------------------------------------------------------------------------
 let currentModelMeta = null;  // last fetched GGUF architecture metadata
-let _gpuCache = null;         // cached GPU info array
-let _gpuCacheTs = 0;          // timestamp of last GPU cache fill
+let _gpuCache = {};           // nodeId -> cached GPU info array
+let _gpuCacheTs = {};         // nodeId -> timestamp of last cache fill
 let _suggestionTimer = null;  // debounce handle
+let _loadedPreset = null;     // last preset loaded into the form (for per-node hardware)
+let _loadedPresetPath = null;
+
+// Cluster-aware helpers (cluster.js loads after this file, so resolve at call time).
+function _launchNode() {
+  return (typeof getLaunchNode === 'function') ? getLaunchNode() : null;
+}
+function _nf(nodeId, path, opts) {
+  return (typeof nodeFetch === 'function') ? nodeFetch(nodeId, path, opts) : apiFetch(path, opts);
+}
 
 // Approximate effective bits-per-weight for common GGUF quant types
 const QUANT_BITS = {
@@ -25,18 +35,19 @@ const QUANT_BITS = {
   'IQ1_S': 1.56,  'IQ1_M': 1.75,
 };
 
-async function fetchGpuInfoCached() {
+async function fetchGpuInfoCached(nodeId) {
+  const key = nodeId || 'local';
   const now = Date.now();
-  if (_gpuCache && now - _gpuCacheTs < 15000) return _gpuCache;
+  if (_gpuCache[key] && now - (_gpuCacheTs[key] || 0) < 15000) return _gpuCache[key];
   try {
-    const res = await apiFetch('/api/gpu-info');
+    const res = await _nf(nodeId, '/api/gpu-info');
     if (res && res.ok) {
       const data = await res.json();
-      _gpuCache = data.gpus || [];
-      _gpuCacheTs = now;
+      _gpuCache[key] = data.gpus || [];
+      _gpuCacheTs[key] = now;
     }
   } catch (e) { /* ignore */ }
-  return _gpuCache || [];
+  return _gpuCache[key] || [];
 }
 
 /**
@@ -95,7 +106,7 @@ async function updateGpuLayersSuggestion() {
 
   const ctxSize = parseInt(document.getElementById('f-ctx-size').value) || 4096;
   const gpuDevicesRaw = (document.getElementById('f-gpu-devices').value || '').trim();
-  const gpus = await fetchGpuInfoCached();
+  const gpus = await fetchGpuInfoCached(_launchNode());
   if (!gpus.length) {
     el.textContent = '';
     el.classList.remove('text-success');
@@ -201,27 +212,58 @@ async function loadModels() {
   }
 }
 
+// Build the present (launchable) and ghost (available on other nodes) model
+// lists for the current launch Target node. Outside cluster mode this is just
+// the local models with no ghosts.
+function _modelSets() {
+  const cs = window.clusterState;
+  if (!(cs && cs.enabled)) return { present: allModels, ghost: [] };
+
+  const target = _launchNode();
+  const targetNode = (cs.nodes || []).find(n => n.node_id === target);
+  const present = (target === cs.self_id)
+    ? allModels
+    : ((targetNode && targetNode.snapshot && targetNode.snapshot.models) || []);
+
+  const presentKeys = new Set(present.map(m => m.name.toLowerCase()));
+  const ghostMap = {};
+  (cs.nodes || []).forEach(n => {
+    if (n.node_id === target) return;
+    ((n.snapshot && n.snapshot.models) || []).forEach(m => {
+      const key = m.name.toLowerCase();
+      if (presentKeys.has(key)) return;
+      if (!ghostMap[key]) ghostMap[key] = { ...m, _onNodes: [] };
+      ghostMap[key]._onNodes.push(n.node_name);
+    });
+  });
+  return { present, ghost: Object.values(ghostMap) };
+}
+
 function renderModels() {
   const list = document.getElementById('model-list');
   if (!list) return;
   const query = document.getElementById('model-search').value.toLowerCase().trim();
+  const matches = (m) => !query || m.name.toLowerCase().includes(query)
+    || (m.path && m.path.toLowerCase().includes(query))
+    || (m.quant && m.quant.toLowerCase().includes(query));
 
-  const filtered = query
-    ? allModels.filter(m => m.name.toLowerCase().includes(query) || m.path.toLowerCase().includes(query) || (m.quant && m.quant.toLowerCase().includes(query)))
-    : allModels;
+  const { present, ghost } = _modelSets();
+  const filtered = present.filter(matches);
+  const ghostFiltered = ghost.filter(matches);
 
-  // Sort favorites first alphabetically, then the rest alphabetically
   filtered.sort((a, b) => {
     const favDiff = (isModelFavorited(a.path) ? 0 : 1) - (isModelFavorited(b.path) ? 0 : 1);
     if (favDiff !== 0) return favDiff;
     return a.name.localeCompare(b.name);
   });
+  ghostFiltered.sort((a, b) => a.name.localeCompare(b.name));
 
   list.innerHTML = '';
-  if (filtered.length === 0) {
-    list.innerHTML = `<div id="model-empty">${allModels.length === 0 ? 'No models found in /models' : 'No matches'}</div>`;
+  if (filtered.length === 0 && ghostFiltered.length === 0) {
+    list.innerHTML = `<div id="model-empty">${present.length === 0 && ghost.length === 0 ? 'No models found in /models' : 'No matches'}</div>`;
     return;
   }
+
   filtered.forEach(m => {
     const el = document.createElement('div');
     el.className = 'model-item' + (m.path === selectedModelPath ? ' selected' : '');
@@ -257,6 +299,74 @@ function renderModels() {
     el.addEventListener('click', () => selectModel(m, el));
     list.appendChild(el);
   });
+
+  if (ghostFiltered.length === 0) return;
+
+  const targetName = (typeof nodeNameById === 'function' && nodeNameById(_launchNode())) || 'this node';
+  const divider = document.createElement('div');
+  divider.className = 'model-ghost-divider';
+  divider.textContent = `Available on other nodes`;
+  list.appendChild(divider);
+
+  ghostFiltered.forEach(m => {
+    const el = document.createElement('div');
+    el.className = 'model-item model-item-ghost';
+    const quantBadge = m.quant ? `<span class="badge badge-quant">${escHtml(m.quant)}</span>` : '';
+    el.innerHTML = `
+      <div class="model-item-row">
+        <div class="model-item-content">
+          <span class="name">${escHtml(m.name)}</span>
+          <div class="badges">
+            <span class="badge">${(m.type || 'gguf').toUpperCase()}</span>
+            ${quantBadge}
+            <span class="badge badge-size">${escHtml(m.size_display || '')}</span>
+          </div>
+          <span class="path">on ${escHtml((m._onNodes || []).join(', '))}</span>
+        </div>
+      </div>
+      <button class="btn-ghost-download" title="Download to ${escHtml(targetName)}"><i class="fa-solid fa-download"></i></button>
+    `;
+    el.querySelector('.btn-ghost-download').addEventListener('click', (e) => {
+      e.stopPropagation();
+      ghostDownload(m);
+    });
+    list.appendChild(el);
+  });
+}
+
+// One-click: download a model that exists elsewhere onto the current Target
+// node. Falls back to the download modal when the source has no known repo id.
+async function ghostDownload(m) {
+  const target = _launchNode();
+  const targetName = (typeof nodeNameById === 'function' && nodeNameById(target)) || 'node';
+  if (!m.repo_id) {
+    if (typeof openDownloadModal === 'function') {
+      openDownloadModal();
+      const dn = document.getElementById('d-node');
+      if (dn) dn.value = target;
+      const repo = document.getElementById('d-repo-id');
+      if (repo) repo.focus();
+    }
+    toast('No source repo recorded  fill in the download form', 'info');
+    return;
+  }
+  const filename = (m.type === 'gguf' && m.path) ? m.path.split('/').pop() : '';
+  try {
+    const res = await _nf(target, '/api/downloads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_id: m.repo_id, filename }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      toast(`Downloading ${m.name} to ${targetName}`, 'success');
+      if (typeof pollDownloads === 'function') pollDownloads();
+    } else {
+      toast(`Download failed: ${data.error}`, 'error');
+    }
+  } catch (e) {
+    toast('Error starting download: ' + e.message, 'error');
+  }
 }
 
 async function selectModel(model, el) {
@@ -272,23 +382,29 @@ async function selectModel(model, el) {
   updatePortSuggestion();
   if (ctxField) ctxField.value = '';
   // Load preset if one exists
+  _loadedPreset = null;
+  _loadedPresetPath = null;
   try {
     const res = await apiFetch(`/api/presets${encodePathForUrl(model.path)}`);
     if (res.ok) {
       const p = await res.json();
-      if (p.n_gpu_layers != null) document.getElementById('f-gpu-layers').value = p.n_gpu_layers;
+      _loadedPreset = p;
+      _loadedPresetPath = model.path;
+      // Shared (cluster-wide) fields
       if (p.ctx_size != null && ctxField) ctxField.value = p.ctx_size;
-      document.getElementById('f-threads').value = p.threads || '';
-      document.getElementById('f-memory-limit').value = p.memory_limit || '';
-      document.getElementById('f-parallel').value = p.parallel || '';
       document.getElementById('f-extra').value = p.extra_args || '';
       document.getElementById('f-spec-enabled').checked = !!p.spec_enabled;
       document.getElementById('f-spec-draft-n-max').value = p.spec_draft_n_max ?? '';
-      document.getElementById('f-gpu-devices').value = p.gpu_devices || '';
       document.getElementById('f-idle-timeout').value = p.idle_timeout_min || 0;
       document.getElementById('f-max-concurrent').value = p.max_concurrent || 0;
       document.getElementById('f-max-queue-depth').value = p.max_queue_depth || 200;
       document.getElementById('f-share-queue').checked = !!p.share_queue;
+      const _gIn = document.getElementById('f-share-queue-group');
+      if (_gIn) _gIn.value = p.share_queue_group || '';
+      const _fbIn = document.getElementById('f-share-queue-fallback');
+      if (_fbIn) _fbIn.checked = !!p.share_queue_fallback;
+      if (typeof updateShareQueueClusterRow === 'function') updateShareQueueClusterRow();
+      document.getElementById('f-auto-restart').checked = !!p.auto_restart_on_crash;
       document.getElementById('f-embedding-model').checked = !!p.embedding_model;
       document.getElementById('f-proxy-sampling-override-enabled').checked = !!p.proxy_sampling_override_enabled;
       document.getElementById('f-proxy-sampling-temperature').value = p.proxy_sampling_temperature ?? 0.8;
@@ -297,6 +413,8 @@ async function selectModel(model, el) {
       document.getElementById('f-proxy-sampling-presence-penalty').value = p.proxy_sampling_presence_penalty ?? 0.0;
       document.getElementById('f-proxy-sampling-repeat-penalty').value = p.proxy_sampling_repeat_penalty ?? 0.0;
       document.getElementById('f-note').value = p.note || '';
+      // Per-node hardware (base, overlaid with the selected node's override)
+      applyPresetHardwareForNode(p, _launchNode());
       if (typeof updateProxySamplingOverrideState === 'function') updateProxySamplingOverrideState();
       if (typeof updateSpecState === 'function') updateSpecState();
       toast('Preset loaded', 'info');
@@ -304,6 +422,91 @@ async function selectModel(model, el) {
   } catch (e) { /* no preset, use defaults */ }
   // Detect layer count for model
   await updateGpuLayersTotal(model.path);
+}
+
+// Populate the launch Docker-image dropdown from the target node's images,
+// preserving the current pick and defaulting to that node's configured image.
+async function populateLaunchImageSelect() {
+  const sel = document.getElementById('f-image');
+  if (!sel) return;
+  const want = sel.value;  // preserve an explicit pick across refreshes
+  try {
+    const res = await _nf(_launchNode(), '/api/images');
+    if (!res || !res.ok) return;
+    const data = await res.json();
+    const imgs = data.images || [];
+    sel.innerHTML = '';
+    imgs.forEach(img => {
+      const opt = document.createElement('option');
+      opt.value = img.name;
+      const tags = [];
+      if (img.name === data.current_image) tags.push('default');
+      if (!img.present) tags.push('not pulled');
+      opt.textContent = img.name + (tags.length ? `  (${tags.join(', ')})` : '');
+      sel.appendChild(opt);
+    });
+    if (imgs.some(i => i.name === want)) sel.value = want;
+    else if (data.current_image) sel.value = data.current_image;
+  } catch (e) { /* ignore */ }
+}
+
+// Fill the hardware fields from a preset's base, overlaid with one node's
+// override block (cluster mode). The shared fields are handled by the caller.
+function applyPresetHardwareForNode(p, nodeId) {
+  if (!p) return;
+  const ov = (nodeId && p.node_overrides && p.node_overrides[nodeId]) || {};
+  const val = (k) => (ov[k] !== undefined && ov[k] !== null) ? ov[k] : p[k];
+  const layers = val('n_gpu_layers');
+  if (layers != null) document.getElementById('f-gpu-layers').value = layers;
+  document.getElementById('f-threads').value = val('threads') || '';
+  document.getElementById('f-memory-limit').value = val('memory_limit') || '';
+  document.getElementById('f-parallel').value = val('parallel') || '';
+  document.getElementById('f-gpu-devices').value = val('gpu_devices') || '';
+}
+
+// Reset the launch form to a "no model selected" state. Used when switching
+// the Target node: the new node's model library and presets are independent,
+// so carrying over the previous node's fields (model path, ctx_size, share
+// queue, sampling overrides, ...) is misleading - the user almost always has
+// to pick a model on the new node anyway. We preserve only the node and image
+// selects (the image select is repopulated by onLaunchNodeChanged immediately
+// after). form.reset() clears values to their HTML defaults and unchecks
+// checkboxes; we then clear the JS-side cached preset/model state so the next
+// model selection starts clean.
+function resetLaunchForm() {
+  const form = document.getElementById('launch-form');
+  if (!form) return;
+  const node = document.getElementById('f-node')?.value;
+  form.reset();
+  if (node) {
+    const sel = document.getElementById('f-node');
+    if (sel) sel.value = node;
+  }
+  selectedModelPath = null;
+  _loadedPreset = null;
+  _loadedPresetPath = null;
+  currentModelMeta = null;
+  // form.reset() doesn't fire change events, so the share-queue cluster row
+  // (which hides + clears its inputs on toggle-off) needs a manual nudge.
+  if (typeof updateShareQueueClusterRow === 'function') updateShareQueueClusterRow();
+  if (typeof updateLaunchFormRepoInfo === 'function') updateLaunchFormRepoInfo(null);
+  if (typeof updateLaunchFormStar === 'function') updateLaunchFormStar();
+  const total = document.getElementById('gpu-layers-total');
+  if (total) total.textContent = '';
+  const sugg = document.getElementById('gpu-layers-suggestion');
+  if (sugg) { sugg.textContent = ''; sugg.classList.remove('text-success'); }
+  if (typeof updateProxySamplingOverrideState === 'function') updateProxySamplingOverrideState();
+  if (typeof updateSpecState === 'function') updateSpecState();
+}
+
+// Called when the launch Target node changes. Different node = different model
+// library and (effectively) a fresh launch, so the form is reset; the user
+// picks a model on the new node and its preset re-populates as normal.
+async function onLaunchNodeChanged() {
+  resetLaunchForm();
+  renderModels();
+  populateLaunchImageSelect();
+  updatePortSuggestion();
 }
 
 function updateLaunchFormRepoInfo(model) {
@@ -332,7 +535,7 @@ async function deleteModel(model) {
   const ok = await showConfirm('Delete Model', `Delete "${model.name}" (${model.size_display}) from disk?\n\n${model.path}\n\nThis cannot be undone.`);
   if (!ok) return;
   try {
-    const res = await apiFetch('/api/models/delete', {
+    const res = await _nf(_launchNode(), '/api/models/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: model.path }),
@@ -361,7 +564,7 @@ async function updateGpuLayersTotal(modelPath) {
   }
   if (!modelPath || !modelPath.toLowerCase().endsWith('.gguf')) return;
   try {
-    const res = await apiFetch(`/api/model-layers?path=${encodeURIComponent(modelPath)}`);
+    const res = await _nf(_launchNode(), `/api/model-layers?path=${encodeURIComponent(modelPath)}`);
     const data = await res.json();
     if (data.layers && data.layers > 0) {
       label.textContent = `/ ${data.layers}`;

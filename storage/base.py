@@ -14,16 +14,27 @@ class StorageBackend(ABC):
     # -- Instances & Downloads (state) --
 
     @abstractmethod
-    def save_state(self, instances: list[dict], downloads: list[dict]) -> None:
-        """Atomically persist both instances and downloads."""
+    def save_state(self, instances: list[dict], downloads: list[dict],
+                   node_id: str | None = None) -> None:
+        """Atomically persist both instances and downloads.
+
+        When `node_id` is given, only that node's rows are replaced; rows owned
+        by other cluster nodes are left untouched. This keeps a shared database
+        (or shared state file) safe for multi-node use - each node manages only
+        its own instances/downloads. `node_id=None` replaces everything (legacy
+        single-writer behavior).
+        """
         ...
 
     @abstractmethod
-    def load_instances(self) -> list[dict]:
+    def load_instances(self, node_id: str | None = None) -> list[dict]:
+        """Return persisted instances. Scoped to `node_id` when given; legacy
+        rows that predate node scoping (no node_id) are treated as belonging to
+        the caller so existing single-node installs upgrade seamlessly."""
         ...
 
     @abstractmethod
-    def load_downloads(self) -> list[dict]:
+    def load_downloads(self, node_id: str | None = None) -> list[dict]:
         ...
 
     # -- Presets --
@@ -97,6 +108,36 @@ class StorageBackend(ABC):
     @abstractmethod
     def verify_api_key(self, raw_key: str) -> bool:
         """Check if a raw bearer token matches any stored key hash."""
+        ...
+
+    # -- Cluster registry --
+
+    @abstractmethod
+    def register_node(self, node: dict, snapshot: dict | None = None) -> None:
+        """Insert or update a node in the shared cluster registry and stamp a
+        fresh heartbeat.
+
+        `node` carries: node_id, node_name, advertise_url, vendor, llama_image.
+        `snapshot` (when given) replaces the node's published metadata blob
+        (system info, gpus, instances, downloads, images). Identity-only calls
+        (e.g. join) may omit it.
+        """
+        ...
+
+    @abstractmethod
+    def list_nodes(self) -> list[dict]:
+        """Return all registered nodes. Each dict has the identity fields plus
+        `last_heartbeat_at` (ISO string or None) and `snapshot` (dict)."""
+        ...
+
+    @abstractmethod
+    def get_node(self, node_id: str) -> dict | None:
+        """Return one node dict (as in list_nodes) or None if not registered."""
+        ...
+
+    @abstractmethod
+    def remove_node(self, node_id: str) -> None:
+        """Remove a node from the registry (used on graceful leave)."""
         ...
 
     # -- Request Log --
@@ -192,5 +233,15 @@ class StorageBackend(ABC):
         Adds the request_log tokens_per_sec / ttft_ms metric columns where the
         backend uses a fixed schema. The JSON backend stores schema-less
         records so it needs nothing; default is a no-op.
+        """
+        return None
+
+    def apply_migration_003_node_scoped_state(self) -> None:
+        """Backend-specific implementation of migration 003.
+
+        Adds a node_id column to the instances/downloads tables and backfills
+        existing rows with the local node id (the only writer before clustering
+        existed). The JSON backend infers ownership at the read boundary
+        (missing node_id => local), so it needs nothing; default is a no-op.
         """
         return None

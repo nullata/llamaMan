@@ -312,6 +312,25 @@ header span {
   grid-column: 1 / -1;
 }
 
+/* Two fields side by side on one full-width row (Target node + Docker Image,
+   Model Path + Note). When one side is hidden (e.g. Target node in single-node
+   mode) the other fills the row. */
+.launch-pair {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 14px;
+}
+.launch-pair > .form-group {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* The `hidden` attribute alone loses to .form-group's display:flex, so hide
+   node selectors explicitly when clustering is off. */
+.node-select-row[hidden] {
+  display: none;
+}
+
 .form-group label {
   font-size: 12px;
   color: var(--muted);
@@ -412,14 +431,29 @@ header span {
   flex: 0 1 auto;
 }
 
+/* display:grid overrides .form-group's display:flex/flex-direction:column (this
+   element carries both classes). The pairs use display:contents so their
+   label+toggle become DIRECT grid items and share the table's columns across
+   rows - so the left-column toggles line up vertically (same trick as the App
+   Settings toggles). Layout: [label][toggle]  [label][toggle], left-column
+   pairs stack (Share queue over Embedding), the right column holds Auto Restart. */
 .launch-toggle-table {
   display: grid;
-  grid-template-columns: minmax(0, max-content) 40px;
+  grid-template-columns: max-content 40px max-content 40px;
+  justify-content: start;
   align-items: center;
-  column-gap: 10px;
-  row-gap: 10px;
-  width: fit-content;
+  column-gap: 12px;
+  row-gap: 12px;
   max-width: 100%;
+}
+
+.launch-toggle-pair {
+  display: contents;
+}
+
+/* breathing room between the two toggle columns */
+.launch-toggle-pair.toggle-right > label:not(.toggle-switch) {
+  padding-left: 36px;
 }
 
 .launch-settings-section {
@@ -1769,3 +1803,253 @@ body.login-page {
   height: 22px;
   width: auto;
 }
+
+/* ------------------------------------------------------------------ */
+/* Clustering                                                          */
+/* ------------------------------------------------------------------ */
+.node-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--surface);
+  color: var(--muted);
+  vertical-align: middle;
+}
+.node-badge i { font-size: 10px; }
+
+.cluster-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  vertical-align: middle;
+  margin-right: 2px;
+}
+.cluster-dot-online { background: var(--green); }
+.cluster-dot-offline { background: var(--grey); }
+
+/* Per-node groups inside the System / GPU cards */
+.cluster-node-group { margin-bottom: 12px; }
+.cluster-node-group:last-child { margin-bottom: 0; }
+.cluster-node-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.cluster-node-head .text-meta { margin-left: auto; }
+.cluster-stat-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 2px 0 4px;
+}
+
+/* Cluster settings tab */
+.cluster-section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  margin: 14px 0 8px;
+}
+.cluster-self {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cluster-self-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.cluster-self-row .cluster-k {
+  width: 120px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.cluster-self-tag {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--accent);
+  background: rgba(16, 185, 129, 0.15);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.instance-card-remote { opacity: 0.92; }
+.inst-remote-note { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+
+/* Cluster: ghost (available-on-other-node) model entries */
+.model-ghost-divider {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  margin: 10px 6px 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.model-item-ghost { opacity: 0.7; cursor: default; }
+.model-item-ghost .name { font-style: italic; }
+.btn-ghost-download {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 6px 8px;
+  align-self: center;
+}
+.btn-ghost-download:hover { color: var(--accent-hover); }
+
+/* ---------------------------------------------------------------------------
+   Logging page (/logging)
+   --------------------------------------------------------------------------- */
+.logging-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.logging-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.logging-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* segmented time-window control */
+.logging-window {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.lw-btn {
+  background: var(--surface);
+  color: var(--muted);
+  border: none;
+  border-left: 1px solid var(--border);
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lw-btn:first-child { border-left: none; }
+.lw-btn:hover { color: var(--text); }
+.lw-btn.active { background: var(--green); color: #fff; }
+
+.logging-banner {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.logging-banner a { color: var(--text); }
+
+.logging-conv-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.logging-conv-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px 90px 90px 90px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 4px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 13px;
+}
+.logging-conv-row:last-child { border-bottom: none; }
+.logging-conv-row:hover { background: var(--surface); }
+
+.lc-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lc-model,
+.lc-meta,
+.lc-when { color: var(--muted); font-size: 12px; }
+.lc-model { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lc-meta { text-align: right; font-variant-numeric: tabular-nums; }
+.lc-when { text-align: right; white-space: nowrap; }
+
+.logging-empty { color: var(--muted); padding: 16px 4px; font-size: 13px; }
+.logging-untitled { color: var(--muted); font-style: italic; }
+.logging-dim { color: var(--muted); }
+
+/* conversation drill-down turns */
+.conv-turn {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.conv-turn:last-child { margin-bottom: 0; }
+.conv-turn-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.conv-turn-n { font-weight: 600; }
+.conv-msg { margin-bottom: 8px; }
+.conv-msg-role {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.conv-msg pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono, monospace);
+  font-size: 12.5px;
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 8px 10px;
+  max-height: 320px;
+  overflow: auto;
+}
+.conv-msg-resp pre { background: var(--panel); border: 1px solid var(--border); }
+.conv-metrics { font-size: 12px; color: var(--muted); }
+.conv-metrics summary { cursor: pointer; }
+.conv-metrics-body { margin-top: 6px; font-variant-numeric: tabular-nums; }

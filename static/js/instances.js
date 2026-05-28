@@ -9,7 +9,26 @@ async function pollInstances() {
     const res = await apiFetch('/api/instances');
     const list = await res.json();
     const map = {};
-    list.forEach(i => map[i.id] = i);
+    const cs = window.clusterState;
+    const selfName = (cs && cs.selfName) || null;
+    const selfId = (cs && cs.self_id) || null;
+    list.forEach(i => {
+      i._remote = false; i._node_name = selfName; i._node_id = selfId; i._node_online = true;
+      map[i.id] = i;
+    });
+
+    // In cluster mode, merge the instances published by peer nodes. Their
+    // lifecycle lives on the owning node, but we drive it there via the cluster
+    // proxy (see nodeFetch), so the controls below are wired to the owner.
+    if (cs && cs.enabled) {
+      (cs.nodes || []).forEach(n => {
+        if (n.node_id === cs.self_id) return;  // self comes from the live call above
+        ((n.snapshot || {}).instances || []).forEach(i => {
+          map[i.id] = { ...i, _remote: true, _node_name: n.node_name, _node_id: n.node_id, _node_online: n.online };
+        });
+      });
+    }
+
     instances = map;
     renderInstances();
   } catch (e) { /* ignore */ }
@@ -18,11 +37,34 @@ async function pollInstances() {
 async function pollContainerStats() {
   try {
     const res = await apiFetch('/api/instances/container-stats');
-    if (!res || !res.ok) return;
-    const data = await res.json();
-    containerStats = data;
-    // Update resource lines in existing cards without a full re-render
-    Object.entries(data).forEach(([id, stat]) => {
+    const local = (res && res.ok) ? await res.json() : {};
+
+    // Cluster: a peer's running-instance resource bars need that peer's live
+    // container stats (a docker stats call), which is too heavy to ride the 5s
+    // heartbeat snapshot. Pull them straight from each online peer - but on a
+    // gentler cadence than the local 3s poll so we don't pile load onto peers
+    // (peer load is exactly what makes them flap). Stats persist between the
+    // throttled refreshes so remote bars don't blink out in between.
+    const cs = window.clusterState;
+    if (cs && cs.enabled && typeof nodeFetch === 'function') {
+      if (_peerStatsTick++ % 3 === 0) {  // ~every 9s
+        const peers = (cs.nodes || []).filter(n => n.node_id !== cs.self_id && n.online);
+        const next = {};
+        await Promise.all(peers.map(async (n) => {
+          try {
+            const r = await nodeFetch(n.node_id, '/api/instances/container-stats');
+            if (r && r.ok) Object.assign(next, await r.json());
+          } catch (e) { /* one peer failing must not blank the others */ }
+        }));
+        peerContainerStats = next;
+      }
+    } else {
+      peerContainerStats = {};
+    }
+
+    // Local wins on the (unexpected) key clash; ids are per-instance uuids.
+    containerStats = { ...peerContainerStats, ...local };
+    Object.entries(containerStats).forEach(([id, stat]) => {
       const el = document.querySelector(`.instance-card[data-id="${id}"] .inst-resource-line`);
       if (el) el.innerHTML = formatResourceLine(stat);
     });
@@ -161,23 +203,37 @@ function renderInstances() {
       ? `Public ${inst.port} -> llama-server ${inst.internal_port}`
       : `Port ${inst.port}`;
 
+    const nodeBadge = (typeof instanceNodeBadge === 'function') ? instanceNodeBadge(inst) : '';
+    const queueGroupBadge = (typeof instanceQueueGroupBadge === 'function') ? instanceQueueGroupBadge(inst) : '';
+
+    // Peer instances are managed on their owning node via the cluster proxy.
+    // The data-node attribute carries that node id so each control routes there
+    // (empty/self => this node, a direct local call). When the owner is offline
+    // there's no path to it, so fall back to a read-only note.
+    const nodeAttr = inst._node_id ? ` data-node="${escHtml(inst._node_id)}"` : '';
+    const offlineRemote = inst._remote && inst._node_online === false;
+    const actions = offlineRemote
+      ? `<div class="inst-actions"><span class="meta inst-remote-note"><i class="fa-solid fa-server"></i> ${escHtml(inst._node_name || 'peer node')} offline</span></div>`
+      : `<div class="inst-actions">
+      <button class="btn btn-secondary btn-logs" data-id="${inst.id}"${nodeAttr}><i class="fa-solid fa-terminal"></i> Logs</button>
+      <button class="btn btn-secondary btn-stats" data-id="${inst.id}"${nodeAttr} data-model="${escHtml(inst.model_name)}"><i class="fa-solid fa-chart-line"></i> Stats</button>
+      ${inst.status !== 'stopped' && inst.status !== 'sleeping' ? `<button class="btn btn-danger btn-stop" data-id="${inst.id}"${nodeAttr}><i class="fa-solid fa-stop"></i> Stop</button>` : ''}
+      ${inst.status === 'sleeping' ? `<button class="btn btn-danger btn-stop" data-id="${inst.id}"${nodeAttr}><i class="fa-solid fa-stop"></i> Stop</button>` : ''}
+      ${inst.status === 'stopped' || inst.status === 'sleeping' ? `<button class="btn btn-primary btn-restart" data-id="${inst.id}"${nodeAttr}><i class="fa-solid fa-rotate-right"></i> Restart</button>` : ''}
+      ${inst.status === 'stopped' ? `<button class="btn btn-danger btn-remove" data-id="${inst.id}"${nodeAttr} title="Remove from list"><i class="fa-solid fa-trash"></i></button>` : ''}
+    </div>`;
+
+    card.classList.toggle('instance-card-remote', !!inst._remote);
     card.innerHTML = `
     <div class="inst-info">
-      <div class="model">${escHtml(inst.model_name)}</div>
+      <div class="model">${escHtml(inst.model_name)}${nodeBadge}${queueGroupBadge}</div>
       <div class="meta">${portLine} &nbsp;·&nbsp; Container ${inst.container_id ? escHtml(inst.container_id.slice(0, 12)) : '-'} &nbsp;·&nbsp; ${uptime}</div>
       ${statsLine}
       ${resourceLine}
       ${queueLine}
     </div>
     <span class="status-badge ${statusClass}">${inst.status}</span>
-    <div class="inst-actions">
-      <button class="btn btn-secondary btn-logs" data-id="${inst.id}"><i class="fa-solid fa-terminal"></i> Logs</button>
-      <button class="btn btn-secondary btn-stats" data-id="${inst.id}" data-model="${escHtml(inst.model_name)}"><i class="fa-solid fa-chart-line"></i> Stats</button>
-      ${inst.status !== 'stopped' && inst.status !== 'sleeping' ? `<button class="btn btn-danger btn-stop" data-id="${inst.id}"><i class="fa-solid fa-stop"></i> Stop</button>` : ''}
-      ${inst.status === 'sleeping' ? `<button class="btn btn-danger btn-stop" data-id="${inst.id}"><i class="fa-solid fa-stop"></i> Stop</button>` : ''}
-      ${inst.status === 'stopped' || inst.status === 'sleeping' ? `<button class="btn btn-primary btn-restart" data-id="${inst.id}"><i class="fa-solid fa-rotate-right"></i> Restart</button>` : ''}
-      ${inst.status === 'stopped' ? `<button class="btn btn-danger btn-remove" data-id="${inst.id}" title="Remove from list"><i class="fa-solid fa-trash"></i></button>` : ''}
-    </div>
+    ${actions}
   `;
   });
 
@@ -190,32 +246,42 @@ function renderInstances() {
   // Remove stale no-instances placeholder
   container.querySelector('#no-instances')?.remove();
 
-  // Bind buttons
+  // Bind buttons (data-node routes the call to the owning node, if remote)
   container.querySelectorAll('.btn-stop').forEach(btn => {
-    btn.addEventListener('click', () => stopInstance(btn.dataset.id));
+    btn.addEventListener('click', () => stopInstance(btn.dataset.id, btn.dataset.node));
   });
   container.querySelectorAll('.btn-remove').forEach(btn => {
-    btn.addEventListener('click', () => removeInstance(btn.dataset.id));
+    btn.addEventListener('click', () => removeInstance(btn.dataset.id, btn.dataset.node));
   });
   container.querySelectorAll('.btn-restart').forEach(btn => {
-    btn.addEventListener('click', () => restartInstance(btn.dataset.id));
+    btn.addEventListener('click', () => restartInstance(btn.dataset.id, btn.dataset.node));
   });
   container.querySelectorAll('.btn-logs').forEach(btn => {
-    btn.addEventListener('click', () => openLogModal('instance', btn.dataset.id));
+    btn.addEventListener('click', () => openLogModal('instance', btn.dataset.id, btn.dataset.node));
   });
   container.querySelectorAll('.btn-stats').forEach(btn => {
-    btn.addEventListener('click', () => openStatsModal(btn.dataset.id, btn.dataset.model));
+    btn.addEventListener('click', () => openStatsModal(btn.dataset.id, btn.dataset.model, btn.dataset.node));
   });
 }
 
 // -------------------------------------------------------------------------
 // Instance actions
 // -------------------------------------------------------------------------
-async function stopInstance(id) {
+function nodeFetchOr(nodeId, path, opts) {
+  // Route to the owning node when clustering is active; a no-op (direct local
+  // call) for self/single-node. nodeFetch lives in cluster.js (always loaded).
+  return (typeof nodeFetch === 'function') ? nodeFetch(nodeId, path, opts) : apiFetch(path, opts);
+}
+
+function nodeLabel(nodeId) {
+  return (typeof nodeSuffix === 'function') ? nodeSuffix(nodeId) : '';
+}
+
+async function stopInstance(id, nodeId) {
   try {
-    const res = await apiFetch(`/api/instances/${id}`, { method: 'DELETE' });
+    const res = await nodeFetchOr(nodeId, `/api/instances/${id}`, { method: 'DELETE' });
     if (res.ok) {
-      toast('Instance stopped', 'info');
+      toast('Instance stopped' + nodeLabel(nodeId), 'info');
       await pollInstances();
       await updatePortSuggestion();
     } else {
@@ -226,10 +292,10 @@ async function stopInstance(id) {
   }
 }
 
-async function restartInstance(id) {
+async function restartInstance(id, nodeId) {
   try {
     const attemptRestart = async (confirmOvercommit = false) => {
-      const res = await apiFetch(`/api/instances/${id}/restart`, {
+      const res = await nodeFetchOr(nodeId, `/api/instances/${id}/restart`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(confirmOvercommit ? { confirm_overcommit: true } : {}),
@@ -251,7 +317,7 @@ async function restartInstance(id) {
       const msg = data.internal_port != null
         ? `Instance restarted: public ${data.port}, llama-server ${data.internal_port}`
         : `Instance restarted on port ${data.port}`;
-      toast(msg, 'success');
+      toast(msg + nodeLabel(nodeId), 'success');
       await pollInstances();
       await updatePortSuggestion();
     } else {
@@ -262,11 +328,11 @@ async function restartInstance(id) {
   }
 }
 
-async function removeInstance(id) {
+async function removeInstance(id, nodeId) {
   try {
-    const res = await apiFetch(`/api/instances/${id}/remove`, { method: 'DELETE' });
+    const res = await nodeFetchOr(nodeId, `/api/instances/${id}/remove`, { method: 'DELETE' });
     if (res.ok) {
-      toast('Instance removed', 'info');
+      toast('Instance removed' + nodeLabel(nodeId), 'info');
       await pollInstances();
     } else {
       const data = await res.json();
@@ -304,7 +370,15 @@ function updateSpecState() {
 async function updatePortSuggestion() {
   const portField = document.getElementById('f-port');
   if (!portField) return;
-  portField.value = await nextAvailablePort();
+  // Port pools are per-node, so ask the node we'd launch on.
+  try {
+    const node = (typeof getLaunchNode === 'function') ? getLaunchNode() : null;
+    const res = await nodeFetch(node, '/api/next-port');
+    const data = await res.json();
+    portField.value = data.port || 8000;
+  } catch (e) {
+    portField.value = 8000;
+  }
 }
 
 function readLaunchForm() {
@@ -326,6 +400,9 @@ function readLaunchForm() {
     max_concurrent: parseInt(document.getElementById('f-max-concurrent').value) || 0,
     max_queue_depth: parseInt(document.getElementById('f-max-queue-depth').value) || 200,
     share_queue: document.getElementById('f-share-queue').checked,
+    share_queue_group: document.getElementById('f-share-queue-group')?.value.trim() || '',
+    share_queue_fallback: document.getElementById('f-share-queue-fallback')?.checked || false,
+    auto_restart_on_crash: document.getElementById('f-auto-restart').checked,
     embedding_model: document.getElementById('f-embedding-model').checked,
     spec_enabled: document.getElementById('f-spec-enabled').checked,
     proxy_sampling_override_enabled: document.getElementById('f-proxy-sampling-override-enabled').checked,
@@ -358,6 +435,8 @@ function readLaunchForm() {
   if (parallel) body.parallel = parseInt(parallel);
   const specNMax = document.getElementById('f-spec-draft-n-max').value.trim();
   if (specNMax) body.spec_draft_n_max = parseInt(specNMax, 10);
+  const image = document.getElementById('f-image')?.value;
+  if (image) body.image = image;
   return body;
 }
 
@@ -379,7 +458,7 @@ if (launchForm) launchForm.addEventListener('submit', async (e) => {
         ...body,
         ...(confirmOvercommit ? { confirm_overcommit: true } : {}),
       };
-      const res = await apiFetch('/api/instances', {
+      const res = await nodeFetch(getLaunchNode(), '/api/instances', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(launchBody),
@@ -435,6 +514,10 @@ if (savePresetBtn) savePresetBtn.addEventListener('click', async () => {
     const body = readLaunchForm();
     body.note = (document.getElementById('f-note').value || '').trim();
     body.favorite = isModelFavorited(modelPath);
+    // In cluster mode the hardware fields are this Target node's override.
+    if (typeof isClusterActive === 'function' && isClusterActive()) {
+      body.override_node_id = getLaunchNode();
+    }
     const res = await apiFetch(`/api/presets${encodePathForUrl(modelPath)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

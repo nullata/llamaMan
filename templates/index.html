@@ -18,6 +18,8 @@
     <h1>LlamaMan</h1>
     <div class="header-spacer"></div>
     <nav class="header-nav" aria-label="Primary">
+      <a href="/logging" class="nav-link" title="Request logging"><i class="fa-solid fa-chart-column"></i> Logging</a>
+      <span class="header-separator" aria-hidden="true">|</span>
       <span id="instance-count" class="nav-meta">0 instances</span>
       <span class="header-separator" aria-hidden="true">|</span>
       <a href="/logout" class="nav-link nav-link-logout" title="Logout"><i
@@ -109,6 +111,8 @@
             <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-images"
               aria-controls="settings-tab-images" aria-selected="false" tabindex="-1" data-tab="images">Docker
               Images</button>
+            <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-cluster"
+              aria-controls="settings-tab-cluster" aria-selected="false" tabindex="-1" data-tab="cluster">Cluster</button>
             <span class="settings-tab-repo" id="f-repo-info" hidden></span>
             <button type="button" class="btn-star settings-tab-star" id="f-favorite" title="Toggle favorite" hidden>
               <i class="fa-star fa-regular"></i>
@@ -119,13 +123,31 @@
             data-tab-panel="launch">
             <form id="launch-form" autocomplete="off">
               <div class="form-grid">
-                <div class="form-group full">
-                  <label for="f-model-path">Model Path</label>
-                  <input id="f-model-path" type="text" placeholder="/models/my-model" required />
+                <div class="launch-pair">
+                  <div class="form-group node-select-row" hidden>
+                    <span class="label-row">
+                      <label for="f-node">Target node</label>
+                      <span class="info-tip" tabindex="0" role="button" aria-label="Target node help" data-tip="Which cluster node launches this instance. The model must exist on that node's storage."><i class="fa-solid fa-circle-info"></i></span>
+                    </span>
+                    <select id="f-node" class="node-select"></select>
+                  </div>
+                  <div class="form-group">
+                    <span class="label-row">
+                      <label for="f-image">Docker Image</label>
+                      <span class="info-tip" tabindex="0" role="button" aria-label="Docker Image help" data-tip="Which llama.cpp image runs this instance. Defaults to the target node's configured image; pick another local image to run a different CUDA/ROCm/CPU build. Manage images in the Docker Images tab."><i class="fa-solid fa-circle-info"></i></span>
+                    </span>
+                    <select id="f-image"></select>
+                  </div>
                 </div>
-                <div class="form-group full">
-                  <label for="f-note">Note</label>
-                  <input id="f-note" type="text" placeholder="Add a note about this model…" />
+                <div class="launch-pair">
+                  <div class="form-group">
+                    <label for="f-model-path">Model Path</label>
+                    <input id="f-model-path" type="text" placeholder="/models/my-model" required />
+                  </div>
+                  <div class="form-group">
+                    <label for="f-note">Note</label>
+                    <input id="f-note" type="text" placeholder="Add a note about this model…" />
+                  </div>
                 </div>
                 <div class="form-group">
                   <span class="label-row">
@@ -258,7 +280,7 @@
                       <span class="toggle-slider"></span>
                     </label>
                   </div>
-                  <p class="hint-text">When enabled, runs the model with MTP speculative decoding (<code>--spec-type draft-mtp</code>). Requires a model with MTP heads (e.g. Qwen3.6). For other speculative-decoding types, set them via Extra Args instead.</p>
+                  <p class="hint-text">When enabled, runs the model with MTP speculative decoding (<code>--spec-type draft-mtp</code>). Requires a model with MTP heads. For other speculative-decoding types, set them via Extra Args instead.</p>
                   <div class="launch-inline-settings-grid">
                     <div class="form-group">
                       <span class="label-row">
@@ -277,16 +299,50 @@
                   <input id="f-extra" type="text" placeholder="--flash-attn --mlock" />
                 </div>
                 <div class="form-group full launch-toggle-table">
-                  <label for="f-share-queue">Share queue with same model</label>
-                  <label class="toggle-switch" for="f-share-queue" aria-label="Share queue with same model">
-                    <input id="f-share-queue" type="checkbox" />
-                    <span class="toggle-slider"></span>
-                  </label>
-                  <label for="f-embedding-model">Embedding Model</label>
-                  <label class="toggle-switch" for="f-embedding-model" aria-label="Embedding Model">
-                    <input id="f-embedding-model" type="checkbox" />
-                    <span class="toggle-slider"></span>
-                  </label>
+                  <div class="launch-toggle-pair">
+                    <label for="f-share-queue">Share queue with same model</label>
+                    <label class="toggle-switch" for="f-share-queue" aria-label="Share queue with same model">
+                      <input id="f-share-queue" type="checkbox" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                  <div class="launch-toggle-pair toggle-right">
+                    <label for="f-auto-restart">Auto Restart on Crash</label>
+                    <label class="toggle-switch" for="f-auto-restart" aria-label="Auto Restart instance on crash">
+                      <input id="f-auto-restart" type="checkbox" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                  <div class="launch-toggle-pair">
+                    <label for="f-embedding-model">Embedding Model</label>
+                    <label class="toggle-switch" for="f-embedding-model" aria-label="Embedding Model">
+                      <input id="f-embedding-model" type="checkbox" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <!-- Cluster grouping: revealed only when Share queue is on. The
+                     group name overrides the implicit "same filename" key, so
+                     different-quant siblings can pool under one alias; fallback
+                     instances serve only when primaries are saturated/down. -->
+                <div class="form-group full share-queue-cluster-row" id="f-share-queue-cluster" hidden>
+                  <div class="form-group">
+                    <span class="label-row">
+                      <label for="f-share-queue-group">Queue group name <span class="muted">(optional)</span></label>
+                      <span class="info-tip" tabindex="0" role="button" aria-label="Queue group help" data-tip="Override the implicit same-filename grouping. Instances on different nodes with the same group name pool into one queue, even if they're running different quants or files. Empty = group by filename (default)."><i class="fa-solid fa-circle-info"></i></span>
+                    </span>
+                    <input id="f-share-queue-group" type="text" placeholder="qwen2.5-14b" />
+                  </div>
+                  <div class="form-group launch-toggle-table" style="margin-top: 8px;">
+                    <div class="launch-toggle-pair">
+                      <label for="f-share-queue-fallback">Fallback only</label>
+                      <label class="toggle-switch" for="f-share-queue-fallback" aria-label="Fallback only">
+                        <input id="f-share-queue-fallback" type="checkbox" />
+                        <span class="toggle-slider"></span>
+                      </label>
+                    </div>
+                    <span class="muted" style="grid-column: 3 / -1; align-self: center;">Serve only when every non-fallback instance in the group is at capacity or unreachable.</span>
+                  </div>
                 </div>
               </div>
               <div class="form-actions">
@@ -458,6 +514,10 @@
           <div class="tab-panel" id="settings-tab-images" role="tabpanel"
             aria-labelledby="settings-tab-btn-images" data-tab-panel="images" hidden>
             <p class="hint-text">Manage the llama.cpp server Docker images used to launch model instances. The active image is set via the <code>LLAMA_IMAGE</code> environment variable.</p>
+            <div class="form-group node-select-row" hidden>
+              <label for="images-node">Node</label>
+              <select id="images-node" class="node-select"></select>
+            </div>
             <div class="cleanup-settings-grid">
               <div class="form-group cleanup-toggle-grid">
                 <label for="s-image-auto-update">Auto-update image periodically</label>
@@ -511,6 +571,17 @@
             </div>
             <div id="api-keys-list"></div>
           </div>
+
+          <div class="tab-panel" id="settings-tab-cluster" role="tabpanel"
+            aria-labelledby="settings-tab-btn-cluster" data-tab-panel="cluster" hidden>
+            <p class="hint-text">Run several LlamaMan deployments as one cluster. Nodes discover each other through the shared storage backend and trust one <code>CLUSTER_SECRET</code>. Set <code>CLUSTER_ENABLED</code>, <code>CLUSTER_SECRET</code> and <code>CLUSTER_ADVERTISE_URL</code> on each node, then point them all at the same database.</p>
+            <div id="cluster-disabled-hint" class="list-empty-state" hidden>
+              Clustering is not enabled on this node. Set <code>CLUSTER_ENABLED=true</code>, a shared <code>CLUSTER_SECRET</code>, and this node's <code>CLUSTER_ADVERTISE_URL</code>, then restart.
+            </div>
+            <div id="cluster-self-card" hidden></div>
+            <div class="cluster-section-label" id="cluster-nodes-label" hidden>Cluster nodes</div>
+            <div id="cluster-nodes-list"></div>
+          </div>
         </div>
       </div>
 
@@ -540,6 +611,10 @@
       <div class="modal-body">
         <form id="download-form" autocomplete="off">
           <div class="form-grid form-grid-single">
+            <div class="form-group node-select-row" hidden>
+              <label for="d-node">Download to node</label>
+              <select id="d-node" class="node-select"></select>
+            </div>
             <div class="form-group">
               <label for="d-repo-id">HuggingFace Repo ID</label>
               <input id="d-repo-id" type="text" placeholder="mistralai/Mistral-7B-Instruct-v0.3" required />
@@ -653,6 +728,7 @@
   <script src="{{ url_for('static', filename='js/instances.js') }}"></script>
   <script src="{{ url_for('static', filename='js/downloads.js') }}"></script>
   <script src="{{ url_for('static', filename='js/system.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/cluster.js') }}"></script>
   <script src="{{ url_for('static', filename='js/boot.js') }}"></script>
 </body>
 
