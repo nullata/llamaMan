@@ -6,9 +6,19 @@ import time
 from flask import Blueprint, jsonify, request
 
 from config import LLAMA_IMAGE, logger
+from core.node_settings import get_effective_setting, merge_node_settings
 from storage import get_storage
 
 bp = Blueprint("images", __name__)
+
+
+def _read_docker_images() -> dict:
+    """This node's docker_images settings (node-scoped, legacy-fallback)."""
+    return dict(get_effective_setting("docker_images", {}) or {})
+
+
+def _write_docker_images(docker_images: dict) -> None:
+    merge_node_settings({"docker_images": docker_images})
 
 # ---------------------------------------------------------------------------
 # In-memory pull operation state
@@ -90,9 +100,7 @@ def _update_image_record(image_name: str, pulled_at: float | None = None,
                           checked_at: float | None = None,
                           digest: str | None = None,
                           size_bytes: int | None = None) -> None:
-    storage = get_storage()
-    settings = storage.get_settings()
-    docker_images = settings.setdefault("docker_images", {})
+    docker_images = _read_docker_images()
     images_list = docker_images.setdefault("images", [])
 
     record = next((r for r in images_list if r.get("name") == image_name), None)
@@ -109,7 +117,7 @@ def _update_image_record(image_name: str, pulled_at: float | None = None,
     if size_bytes is not None:
         record["size_mb"] = round(size_bytes / (1024 * 1024))
 
-    storage.save_settings(settings)
+    _write_docker_images(docker_images)
 
 
 def _get_image_local_info(image_name: str) -> dict:
@@ -157,9 +165,7 @@ def check_and_pull_if_needed(image_name: str) -> bool:
         if _pull_state["status"] == "pulling":
             return False
 
-    storage = get_storage()
-    settings = storage.get_settings()
-    docker_images = settings.get("docker_images", {})
+    docker_images = _read_docker_images()
 
     if not docker_images.get("auto_update_enabled"):
         return False
@@ -182,9 +188,7 @@ def check_and_pull_if_needed(image_name: str) -> bool:
 
 @bp.route("/api/images", methods=["GET"])
 def list_images():
-    storage = get_storage()
-    settings = storage.get_settings()
-    docker_images = settings.get("docker_images", {})
+    docker_images = _read_docker_images()
     images_list = list(docker_images.get("images", []))
 
     # Always show the currently configured LLAMA_IMAGE first
@@ -240,6 +244,17 @@ def delete_image():
     if not image_name:
         return jsonify({"error": "no image specified"}), 400
 
+    # Any image may be deleted (including the node default) unless a running
+    # instance on this node is using it.
+    from core.state import instances, instances_lock
+    with instances_lock:
+        for inst in instances.values():
+            if inst.get("status") in ("stopped",):
+                continue
+            inst_image = (inst.get("config", {}) or {}).get("image") or LLAMA_IMAGE
+            if inst_image == image_name:
+                return jsonify({"error": f"image is in use by an instance on port {inst['port']}  stop it first"}), 409
+
     from core.helpers import get_docker_client
     import docker
 
@@ -253,13 +268,11 @@ def delete_image():
     except docker.errors.APIError as e:
         return jsonify({"error": str(e)}), 409
 
-    # Remove from tracked list
-    storage = get_storage()
-    settings = storage.get_settings()
-    docker_images = settings.setdefault("docker_images", {})
+    # Remove from tracked list (node-scoped)
+    docker_images = _read_docker_images()
     images_list = docker_images.get("images", [])
     docker_images["images"] = [r for r in images_list if r.get("name") != image_name]
-    storage.save_settings(settings)
+    _write_docker_images(docker_images)
 
     logger.info("Image removed: %s (docker=%s)", image_name, removed_from_docker)
     return jsonify({"ok": True, "removed_from_docker": removed_from_docker})
@@ -275,11 +288,9 @@ def save_image_settings():
     except (TypeError, ValueError):
         interval_hours = 24
 
-    storage = get_storage()
-    settings = storage.get_settings()
-    docker_images = settings.setdefault("docker_images", {})
+    docker_images = _read_docker_images()
     docker_images["auto_update_enabled"] = auto_update_enabled
     docker_images["auto_update_interval_hours"] = interval_hours
-    storage.save_settings(settings)
+    _write_docker_images(docker_images)
 
     return jsonify({"ok": True})

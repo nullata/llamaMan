@@ -5,7 +5,8 @@
 // -------------------------------------------------------------------------
 async function refreshDownloadDiskSpace() {
   try {
-    const res = await apiFetch('/api/disk-space');
+    const node = (typeof getDownloadNode === 'function') ? getDownloadNode() : null;
+    const res = await nodeFetch(node, '/api/disk-space');
     const data = await res.json();
     if (data.free_gb != null) {
       document.getElementById('dl-disk-space').textContent =
@@ -55,14 +56,16 @@ if (downloadForm) downloadForm.addEventListener('submit', async (e) => {
   };
 
   try {
-    const res = await apiFetch('/api/downloads', {
+    const res = await nodeFetch(getDownloadNode(), '/api/downloads', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     const data = await res.json();
     if (res.ok) {
-      toast(`Download started: ${body.repo_id}`, 'success');
+      const dest = (typeof nodeNameById === 'function' && isClusterActive())
+        ? ` on ${nodeNameById(getDownloadNode()) || 'node'}` : '';
+      toast(`Download started: ${body.repo_id}${dest}`, 'success');
       closeDownloadModal();
       document.getElementById('download-form').reset();
       await pollDownloads();
@@ -94,10 +97,25 @@ async function pollDownloads() {
     const list = await res.json();
     const prevDownloads = downloads;
     const map = {};
+    const cs = window.clusterState;
+    const selfName = (cs && cs.selfName) || null;
+    const selfId = (cs && cs.self_id) || null;
     list.forEach(d => {
       const prev = prevDownloads[d.id];
-      map[d.id] = prev ? { ...d, hasNotified: prev.hasNotified } : d;
+      const item = prev ? { ...d, hasNotified: prev.hasNotified } : d;
+      item._node_name = selfName; item._node_id = selfId; item._node_online = true;
+      map[d.id] = item;
     });
+    // In cluster mode, merge peer downloads so the list is global. They're managed
+    // on their owning node, which we drive via the cluster proxy (see nodeFetch).
+    if (cs && cs.enabled) {
+      (cs.nodes || []).forEach(n => {
+        if (n.node_id === cs.self_id) return;
+        ((n.snapshot || {}).downloads || []).forEach(d => {
+          map[d.id] = { ...d, _remote: true, _node_name: n.node_name, _node_id: n.node_id, _node_online: n.online };
+        });
+      });
+    }
     downloads = map;
     renderDownloads();
   } catch (e) { /* ignore */ }
@@ -133,9 +151,16 @@ function updateDownloadItem(item, dl) {
     spinner.remove();
   }
 
+  const clusterActive = (typeof isClusterActive === 'function') && isClusterActive();
   const name = item.querySelector('.dl-item-name');
   name.textContent = label;
   name.title = dl.repo_id;
+  if (clusterActive && dl._node_name) {
+    const badge = document.createElement('span');
+    badge.className = 'node-badge';
+    badge.innerHTML = `<i class="fa-solid fa-server"></i> ${escHtml(dl._node_name)}`;
+    name.appendChild(badge);
+  }
 
   const status = item.querySelector('.dl-status');
   status.textContent = dl.status;
@@ -144,63 +169,51 @@ function updateDownloadItem(item, dl) {
   const actions = item.querySelector('.dl-item-actions');
   actions.innerHTML = '';
 
-  const logsBtn = document.createElement('button');
-  logsBtn.className = 'btn-xs btn-dl-logs';
-  logsBtn.dataset.id = dl.id;
-  logsBtn.innerHTML = '<i class="fa-solid fa-chart-line"></i> Progress';
-  actions.appendChild(logsBtn);
+  // A peer download is driven on its owning node via the cluster proxy. When that
+  // node is offline there's no path to it, so show a read-only note instead.
+  if (dl._remote && dl._node_online === false) {
+    const note = document.createElement('span');
+    note.className = 'meta inst-remote-note';
+    note.innerHTML = `<i class="fa-solid fa-server"></i> ${escHtml(dl._node_name || 'peer')} offline`;
+    actions.appendChild(note);
+    return;
+  }
+
+  const nodeId = dl._node_id || '';
+  const mkBtn = (cls, html) => {
+    const b = document.createElement('button');
+    b.className = cls;
+    b.dataset.id = dl.id;
+    if (nodeId) b.dataset.node = nodeId;
+    b.innerHTML = html;
+    actions.appendChild(b);
+    return b;
+  };
+
+  mkBtn('btn-xs btn-dl-logs', '<i class="fa-solid fa-chart-line"></i> Progress');
 
   if (dl.status === 'downloading') {
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'btn-xs danger btn-dl-cancel';
-    cancelBtn.dataset.id = dl.id;
-    cancelBtn.innerHTML = '<i class="fa-solid fa-ban"></i> Cancel';
-    actions.appendChild(cancelBtn);
-
-    const pauseBtn = document.createElement('button');
-    pauseBtn.className = 'btn-xs btn-dl-pause';
-    pauseBtn.dataset.id = dl.id;
-    pauseBtn.innerHTML = '<i class="fa-solid fa-pause"></i> Pause';
-    actions.appendChild(pauseBtn);
+    mkBtn('btn-xs danger btn-dl-cancel', '<i class="fa-solid fa-ban"></i> Cancel');
+    mkBtn('btn-xs btn-dl-pause', '<i class="fa-solid fa-pause"></i> Pause');
   }
 
   if (dl.status === 'paused') {
-    const resumeBtn = document.createElement('button');
-    resumeBtn.className = 'btn-xs btn-dl-resume';
-    resumeBtn.dataset.id = dl.id;
-    resumeBtn.innerHTML = '<i class="fa-solid fa-play"></i> Resume';
-    actions.appendChild(resumeBtn);
-
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'btn-xs danger btn-dl-cancel';
-    cancelBtn.dataset.id = dl.id;
-    cancelBtn.innerHTML = '<i class="fa-solid fa-ban"></i> Cancel';
-    actions.appendChild(cancelBtn);
+    mkBtn('btn-xs btn-dl-resume', '<i class="fa-solid fa-play"></i> Resume');
+    mkBtn('btn-xs danger btn-dl-cancel', '<i class="fa-solid fa-ban"></i> Cancel');
   }
 
   if (dl.status === 'completed') {
-    const useBtn = document.createElement('button');
-    useBtn.className = 'btn-xs btn-dl-use';
+    const useBtn = mkBtn('btn-xs btn-dl-use', '<i class="fa-solid fa-arrow-right"></i> Use');
     useBtn.dataset.path = dl.dest_path;
     useBtn.dataset.filename = dl.filename || '';
-    useBtn.innerHTML = '<i class="fa-solid fa-arrow-right"></i> Use';
-    actions.appendChild(useBtn);
   }
 
   if (dl.status === 'failed') {
-    const retryBtn = document.createElement('button');
-    retryBtn.className = 'btn-xs btn-dl-retry';
-    retryBtn.dataset.id = dl.id;
-    retryBtn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> Retry';
-    actions.appendChild(retryBtn);
+    mkBtn('btn-xs btn-dl-retry', '<i class="fa-solid fa-rotate-right"></i> Retry');
   }
 
   if (['failed', 'cancelled', 'completed'].includes(dl.status)) {
-    const removeBtn = document.createElement('button');
-    removeBtn.className = 'btn-xs danger btn-dl-remove';
-    removeBtn.dataset.id = dl.id;
-    removeBtn.innerHTML = '<i class="fa-solid fa-trash"></i> Remove';
-    actions.appendChild(removeBtn);
+    mkBtn('btn-xs danger btn-dl-remove', '<i class="fa-solid fa-trash"></i> Remove');
   }
 }
 
@@ -241,31 +254,37 @@ function renderDownloads() {
 
   existingItems.forEach(item => item.remove());
 
-  // Bind buttons
+  // Bind buttons (data-node routes the call to the owning node, if remote)
   panel.querySelectorAll('.btn-dl-logs').forEach(btn => {
-    btn.addEventListener('click', () => openLogModal('download', btn.dataset.id));
+    btn.addEventListener('click', () => openLogModal('download', btn.dataset.id, btn.dataset.node));
   });
   panel.querySelectorAll('.btn-dl-cancel').forEach(btn => {
-    btn.addEventListener('click', () => cancelDownload(btn.dataset.id));
+    btn.addEventListener('click', () => cancelDownload(btn.dataset.id, btn.dataset.node));
   });
   panel.querySelectorAll('.btn-dl-pause').forEach(btn => {
-    btn.addEventListener('click', () => pauseDownload(btn.dataset.id));
+    btn.addEventListener('click', () => pauseDownload(btn.dataset.id, btn.dataset.node));
   });
   panel.querySelectorAll('.btn-dl-resume').forEach(btn => {
-    btn.addEventListener('click', () => resumeDownload(btn.dataset.id));
+    btn.addEventListener('click', () => resumeDownload(btn.dataset.id, btn.dataset.node));
   });
   panel.querySelectorAll('.btn-dl-retry').forEach(btn => {
-    btn.addEventListener('click', () => retryDownload(btn.dataset.id));
+    btn.addEventListener('click', () => retryDownload(btn.dataset.id, btn.dataset.node));
   });
   panel.querySelectorAll('.btn-dl-remove').forEach(btn => {
-    btn.addEventListener('click', () => removeDownload(btn.dataset.id));
+    btn.addEventListener('click', () => removeDownload(btn.dataset.id, btn.dataset.node));
   });
   panel.querySelectorAll('.btn-dl-use').forEach(btn => {
     btn.addEventListener('click', () => {
       const fullPath = btn.dataset.filename
         ? btn.dataset.path + '/' + btn.dataset.filename
         : btn.dataset.path;
-      window.location.href = `/?model_path=${encodeURIComponent(fullPath)}`;
+      // The model file lives on the owning node, so launch it there: carry the
+      // node id so the launch form preselects it after reload (see cluster.js).
+      const cs = window.clusterState || {};
+      const node = btn.dataset.node;
+      const nodeQ = (node && cs.self_id && node !== cs.self_id)
+        ? `&launch_node=${encodeURIComponent(node)}` : '';
+      window.location.href = `/?model_path=${encodeURIComponent(fullPath)}${nodeQ}`;
     });
   });
 
@@ -278,11 +297,20 @@ function renderDownloads() {
   });
 }
 
-async function cancelDownload(id) {
+// Route to the owning node when clustering is active; a direct local call for
+// self/single-node. nodeFetch / nodeSuffix live in cluster.js (always loaded).
+function dlNodeFetch(nodeId, path, opts) {
+  return (typeof nodeFetch === 'function') ? nodeFetch(nodeId, path, opts) : apiFetch(path, opts);
+}
+function dlNodeLabel(nodeId) {
+  return (typeof nodeSuffix === 'function') ? nodeSuffix(nodeId) : '';
+}
+
+async function cancelDownload(id, nodeId) {
   try {
-    const res = await apiFetch(`/api/downloads/${id}`, { method: 'DELETE' });
+    const res = await dlNodeFetch(nodeId, `/api/downloads/${id}`, { method: 'DELETE' });
     if (res.ok) {
-      toast('Download cancelled', 'info');
+      toast('Download cancelled' + dlNodeLabel(nodeId), 'info');
       await pollDownloads();
     } else {
       toast('Failed to cancel download', 'error');
@@ -292,11 +320,11 @@ async function cancelDownload(id) {
   }
 }
 
-async function pauseDownload(id) {
+async function pauseDownload(id, nodeId) {
   try {
-    const res = await apiFetch(`/api/downloads/${id}/pause`, { method: 'POST' });
+    const res = await dlNodeFetch(nodeId, `/api/downloads/${id}/pause`, { method: 'POST' });
     if (res.ok) {
-      toast('Download paused', 'info');
+      toast('Download paused' + dlNodeLabel(nodeId), 'info');
       await pollDownloads();
     } else {
       const data = await res.json();
@@ -307,11 +335,11 @@ async function pauseDownload(id) {
   }
 }
 
-async function resumeDownload(id) {
+async function resumeDownload(id, nodeId) {
   try {
-    const res = await apiFetch(`/api/downloads/${id}/resume`, { method: 'POST' });
+    const res = await dlNodeFetch(nodeId, `/api/downloads/${id}/resume`, { method: 'POST' });
     if (res.ok) {
-      toast('Download resumed', 'success');
+      toast('Download resumed' + dlNodeLabel(nodeId), 'success');
       await pollDownloads();
     } else {
       const data = await res.json();
@@ -322,11 +350,11 @@ async function resumeDownload(id) {
   }
 }
 
-async function retryDownload(id) {
+async function retryDownload(id, nodeId) {
   try {
-    const res = await apiFetch(`/api/downloads/${id}/retry`, { method: 'POST' });
+    const res = await dlNodeFetch(nodeId, `/api/downloads/${id}/retry`, { method: 'POST' });
     if (res.ok) {
-      toast('Download retry started', 'success');
+      toast('Download retry started' + dlNodeLabel(nodeId), 'success');
       await pollDownloads();
     } else {
       const data = await res.json();
@@ -337,11 +365,11 @@ async function retryDownload(id) {
   }
 }
 
-async function removeDownload(id) {
+async function removeDownload(id, nodeId) {
   try {
-    const res = await apiFetch(`/api/downloads/${id}/remove`, { method: 'DELETE' });
+    const res = await dlNodeFetch(nodeId, `/api/downloads/${id}/remove`, { method: 'DELETE' });
     if (res.ok) {
-      toast('Download removed', 'info');
+      toast('Download removed' + dlNodeLabel(nodeId), 'info');
       await pollDownloads();
     } else {
       const data = await res.json();

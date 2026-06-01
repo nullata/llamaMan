@@ -5,12 +5,11 @@ import json
 import threading
 import time
 
-import requests
 from werkzeug.serving import make_server
 from werkzeug.wrappers import Request as WerkzeugRequest
 
 from config import REQUEST_TIMEOUT, logger
-from core.helpers import model_name_from_path
+from core.helpers import model_name_from_path, request_local_worker
 from core.proxy_sampling import PROXY_SAMPLING_PATHS, apply_proxy_sampling_overrides
 from core.request_log import record_request, SSEAccumulator
 from core.state import instances, instances_lock
@@ -41,26 +40,30 @@ class RequestGate:
         self._lock = threading.Lock()
         self._condition = threading.Condition(self._lock)
         self._closed = False
+        self._draining = False
         self.active = 0
         self.queued = 0
 
-    def acquire(self, timeout: float = 300) -> bool:
+    def acquire(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
         with self._condition:
-            if self._closed:
+            # A draining gate (worker died) will never grant a local slot. With no
+            # peer-migration path here (this is the non-cluster / max-hops path),
+            # the only honest answer is "no slot" -> the caller 429s.
+            if self._closed or self._draining:
                 return False
             if self._waiting >= self.max_queue_depth:
                 return False
             self._waiting += 1
             try:
-                while not self._closed and self.active >= self.max_concurrent:
+                while not self._closed and not self._draining and self.active >= self.max_concurrent:
                     self.queued = self._waiting
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         return False
                     self._condition.wait(timeout=remaining)
 
-                if self._closed:
+                if self._closed or self._draining:
                     return False
 
                 self.active += 1
@@ -68,6 +71,90 @@ class RequestGate:
             finally:
                 self._waiting -= 1
                 self.queued = self._waiting
+
+    def acquire_or_overflow(self, timeout: float, poll: float, find_target, do_forward):
+        """Acquire a local slot, or migrate the request to a peer.
+
+        The request stays counted in `queued` for its ENTIRE wait - including
+        while find_target() searches for a free peer - so the metric never
+        flickers to 0 just because a poll cycle happens to be mid-search.
+
+        Each `poll` seconds without a local slot, find_target() runs without the
+        lock (it may do network I/O) to look for a peer with capacity. Only when
+        it returns one do we stop counting this request as queued (it's leaving
+        the queue) and hand it to do_forward(), which performs the actual -
+        possibly long, possibly blocking - forward. A request being served on a
+        peer must not also show as queued here, so the uncount happens right
+        before do_forward(), never before the search.
+
+        Returns one of:
+            ("acquired", None)        - got a local slot; caller serves and release()s
+            ("overflow", value)       - migrated; relay do_forward()'s `value`
+            ("rejected", reason)      - reason is one of: "closed", "queue_full",
+                                        "deadline". Callers map: queue_full -> 429,
+                                        deadline -> 504 (we waited and gave up),
+                                        closed -> 503.
+
+        Draining (the worker died): no local slot will ever come, so we skip the
+        local-slot wait and go straight to find_target() each poll - pushing the
+        dead worker's queued requests out to peers instead of rejecting them.
+        """
+        deadline = time.monotonic() + timeout
+        admitted = False   # passed the queue-depth admission check (once)
+        counted = False    # currently contributing to _waiting / queued
+        try:
+            while True:
+                draining = False
+                with self._condition:
+                    if self._closed:
+                        return ("rejected", "closed")
+                    if not admitted:
+                        if self._waiting >= self.max_queue_depth:
+                            return ("rejected", "queue_full")
+                        admitted = True
+                    if not counted:
+                        self._waiting += 1
+                        counted = True
+                        self.queued = self._waiting
+                    if not self._draining:
+                        slice_end = time.monotonic() + poll
+                        while not self._closed and not self._draining and self.active >= self.max_concurrent:
+                            remaining = min(slice_end, deadline) - time.monotonic()
+                            if remaining <= 0:
+                                break
+                            self._condition.wait(timeout=remaining)
+                        if self._closed:
+                            return ("rejected", "closed")
+                        if not self._draining and self.active < self.max_concurrent:
+                            self.active += 1
+                            return ("acquired", None)
+                    draining = self._draining
+                # Lock released. We stay COUNTED as queued while searching - the
+                # request is still waiting here, so the metric stays honest.
+                if time.monotonic() >= deadline:
+                    return ("rejected", "deadline")
+                target = find_target()
+                if target is not None:
+                    # Committing to a peer: uncount BEFORE the (possibly blocking)
+                    # forward - the request is leaving this queue to be served away.
+                    with self._condition:
+                        self._waiting -= 1
+                        self.queued = self._waiting
+                        counted = False
+                    result = do_forward(target)
+                    if result is not None:
+                        return ("overflow", result)
+                    # Forward failed; fall through, re-count at the top, keep waiting.
+                if draining:
+                    # Worker dead - no local slot will ever come. Pace the
+                    # search/forward retries so the deadline governs giving up
+                    # (covers both "no peer yet" and "peer was full, 429'd").
+                    time.sleep(poll)
+        finally:
+            if counted:
+                with self._condition:
+                    self._waiting -= 1
+                    self.queued = self._waiting
 
     def release(self):
         with self._condition:
@@ -78,6 +165,15 @@ class RequestGate:
         """Wake queued waiters and prevent new acquires on this gate."""
         with self._condition:
             self._closed = True
+            self._condition.notify_all()
+
+    def drain(self):
+        """The worker died: stop granting local slots and let queued requests
+        migrate to peers (via on_overflow) instead of rejecting them. Distinct
+        from cancel(), which hard-rejects. Wakes every waiter so they stop
+        waiting on a slot that will never come and try a peer immediately."""
+        with self._condition:
+            self._draining = True
             self._condition.notify_all()
 
 
@@ -159,6 +255,41 @@ def refresh_gate(inst_id: str):
             _shared_queue_gates[config["model_path"]] = fresh_gate
 
         gate.cancel()
+
+
+def drain_gate(inst_id: str):
+    """A worker died: put its gate into drain mode so QUEUED requests migrate to
+    peers (work-stealing) instead of being rejected, then detach it so the next
+    launch builds a fresh gate.
+
+    Unlike refresh_gate (which cancel()s the old gate, rejecting its waiters),
+    this lets the parked requests find a free peer first. The draining waiters
+    keep their own reference to the gate until they migrate out, so detaching it
+    from the registry here is safe. No-op if a sibling local instance still
+    shares the gate - it can keep serving the queue itself."""
+    with _gates_lock:
+        gate = _instance_gates.get(inst_id)
+        config = _instance_gate_configs.get(inst_id)
+        if gate is None:
+            return
+
+        related_ids = [iid for iid, other_gate in _instance_gates.items() if other_gate is gate]
+        with instances_lock:
+            for iid in related_ids:
+                if iid == inst_id:
+                    continue
+                sibling = instances.get(iid)
+                if sibling and sibling.get("status") not in ("stopped", "sleeping"):
+                    return  # a live sibling shares this gate and can still serve
+
+        gate.drain()
+        # A relaunch of a share_queue model would otherwise reuse this drained
+        # gate via _shared_queue_gates; drop it so create_gate() builds fresh.
+        if config and config.get("share_queue") and config.get("model_path"):
+            if _shared_queue_gates.get(config["model_path"]) is gate:
+                _shared_queue_gates.pop(config["model_path"], None)
+        for iid in related_ids:
+            _instance_gates.pop(iid, None)
 
 
 # ---------------------------------------------------------------------------
@@ -393,36 +524,24 @@ def make_proxy_app(inst_id: str, internal_port: int, proxy_port: int):
                 req.path,
                 effective_inst.get("config", {}) if effective_inst else {},
             )
-            last_err = None
-            resp = None
-            for _attempt in range(3):
-                try:
-                    resp = requests.request(
-                        method=req.method,
-                        url=target,
-                        headers=headers,
-                        data=req_data,
-                        stream=True,
-                        timeout=REQUEST_TIMEOUT,
-                    )
-                    break
-                except (requests.ConnectionError, requests.Timeout,
-                        ConnectionRefusedError) as e:
-                    last_err = e
-                    time.sleep(2)
-                except Exception as e:
-                    last_err = e
-                    break
-            if resp is None:
+            try:
+                resp = request_local_worker(
+                    target,
+                    method=req.method,
+                    data=req_data,
+                    headers=headers,
+                    stream=True,
+                )
+            except Exception as e:
                 if gate:
                     gate.release()
                     gate = None  # prevent double-release in except block
                 if handle:
-                    handle.set_error(502, str(last_err))
+                    handle.set_error(502, str(e))
                     handle.finalize()
                 start_response("502 Bad Gateway",
                                [("Content-Type", "application/json")])
-                return [json.dumps({"error": str(last_err)}).encode()]
+                return [json.dumps({"error": str(e)}).encode()]
 
             resp_headers = [
                 (k, v) for k, v in resp.headers.items()

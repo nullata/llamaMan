@@ -5,6 +5,8 @@
 // -------------------------------------------------------------------------
 
 async function loadSystemInfo() {
+  // In cluster mode the System card is rendered per-node by cluster.js.
+  if (window.__clusterActive) return;
   try {
     const card = document.getElementById('system-info-card');
     const container = document.getElementById('system-info-bars');
@@ -49,6 +51,8 @@ async function loadSystemInfo() {
 // GPU VRAM indicator
 // -------------------------------------------------------------------------
 async function loadGpuInfo() {
+  // In cluster mode the GPU card is rendered per-node by cluster.js.
+  if (window.__clusterActive) return;
   try {
     const card = document.getElementById('gpu-vram-card');
     const container = document.getElementById('gpu-vram-bars');
@@ -694,7 +698,7 @@ async function loadImages() {
   const list = document.getElementById('images-list');
   if (!list) return;
   try {
-    const res = await apiFetch('/api/images');
+    const res = await nodeFetch(getImagesNode(), '/api/images');
     if (!res) return;
     const data = await res.json();
 
@@ -719,20 +723,20 @@ async function loadImages() {
       const presentBadge = img.present
         ? '<span class="badge badge-ok">local</span>'
         : '<span class="badge badge-warn">not pulled</span>';
-      const activeBadge = isActive ? '<span class="badge badge-info">active</span>' : '';
+      const defaultBadge = isActive ? '<span class="badge badge-info">default</span>' : '';
 
       const item = document.createElement('div');
       item.className = 'dl-item';
       item.innerHTML = `
         <div class="dl-item-top">
-          <span class="dl-item-name"><strong>${escHtml(img.name)}</strong> ${activeBadge} ${presentBadge}</span>
+          <span class="dl-item-name"><strong>${escHtml(img.name)}</strong> ${defaultBadge} ${presentBadge}</span>
           <code class="list-meta-code" title="${escHtml(img.digest || '')}">${escHtml(digestShort)}</code>
           <span class="list-meta-date">${escHtml(sizeMb)}</span>
           <span class="list-meta-date">pulled: ${escHtml(pulledAt)}</span>
           <button class="btn-xs btn-image-pull" data-image="${escHtml(img.name)}">
             <i class="fa-solid fa-arrow-down-to-line"></i> Pull
           </button>
-          <button class="btn-xs danger btn-image-delete" data-image="${escHtml(img.name)}"${isActive ? ' disabled title="Cannot remove the active image"' : ''}>
+          <button class="btn-xs danger btn-image-delete" data-image="${escHtml(img.name)}" title="Delete (blocked while a running instance uses it)">
             <i class="fa-solid fa-trash"></i>
           </button>
         </div>
@@ -746,6 +750,8 @@ async function loadImages() {
     list.querySelectorAll('.btn-image-delete').forEach(btn => {
       btn.addEventListener('click', () => deleteImage(btn.dataset.image));
     });
+    // Keep the launch-form image dropdown in sync with available images.
+    if (typeof populateLaunchImageSelect === 'function') populateLaunchImageSelect();
   } catch (e) {
     const list = document.getElementById('images-list');
     if (list) list.innerHTML = '<div class="list-empty-state">Error loading images.</div>';
@@ -755,7 +761,7 @@ async function loadImages() {
 async function triggerImagePull(imageName) {
   const statusEl = document.getElementById('image-pull-status');
   try {
-    const res = await apiFetch('/api/images/pull', {
+    const res = await nodeFetch(getImagesNode(), '/api/images/pull', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image: imageName }),
@@ -784,7 +790,7 @@ function startPullStatusPolling() {
 async function pollPullStatus() {
   const statusEl = document.getElementById('image-pull-status');
   try {
-    const res = await apiFetch('/api/images/pull-status');
+    const res = await nodeFetch(getImagesNode(), '/api/images/pull-status');
     if (!res) return;
     const state = await res.json();
 
@@ -822,7 +828,7 @@ async function saveImageSettings() {
   if (!autoToggle || !intervalInput) return;
 
   try {
-    const res = await apiFetch('/api/images/settings', {
+    const res = await nodeFetch(getImagesNode(), '/api/images/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -845,7 +851,7 @@ async function saveImageSettings() {
 async function deleteImage(imageName) {
   if (!confirm(`Remove image "${imageName}" from Docker?\n\nThis deletes the local image. You can re-pull it at any time.`)) return;
   try {
-    const res = await apiFetch('/api/images', {
+    const res = await nodeFetch(getImagesNode(), '/api/images', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image: imageName }),

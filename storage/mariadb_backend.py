@@ -14,7 +14,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.mysql import DATETIME as MYSQL_DATETIME, MEDIUMTEXT
 from sqlalchemy.orm import declarative_base, scoped_session, sessionmaker
 
-from core.timeutil import to_iso, parse_iso
+from core.timeutil import now_utc, to_iso, parse_iso
 from storage.base import StorageBackend
 
 logger = logging.getLogger("llamaman")
@@ -39,12 +39,14 @@ def _merge_dicts(base: dict, patch: dict) -> dict:
 class InstanceRow(Base):
     __tablename__ = "instances"
     id = Column(String(64), primary_key=True)
+    node_id = Column(String(64), index=True, nullable=True)
     data = Column(Text, default="{}")
 
 
 class DownloadRow(Base):
     __tablename__ = "downloads"
     id = Column(String(64), primary_key=True)
+    node_id = Column(String(64), index=True, nullable=True)
     data = Column(Text, default="{}")
 
 
@@ -93,6 +95,19 @@ class RequestLogRow(Base):
     ttft_ms = Column(Float, nullable=True)
     request_body = Column(MEDIUMTEXT, default="")
     response_body = Column(MEDIUMTEXT, nullable=True)
+
+
+class ClusterNodeRow(Base):
+    # New table - create_all() creates it on both fresh and existing installs,
+    # so no schema migration is needed for clustering's foundation.
+    __tablename__ = "cluster_nodes"
+    node_id = Column(String(64), primary_key=True)
+    node_name = Column(String(255), default="")
+    advertise_url = Column(String(512), default="")
+    vendor = Column(String(32), default="")
+    llama_image = Column(String(255), default="")
+    last_heartbeat_at = Column(MYSQL_DATETIME(fsp=3), nullable=True)
+    snapshot = Column(MEDIUMTEXT, default="{}")
 
 
 # ---------------------------------------------------------------------------
@@ -216,17 +231,49 @@ class MariaDBBackend(StorageBackend):
                         f"ALTER TABLE request_log ADD COLUMN {col} FLOAT NULL"
                     ))
 
+    def apply_migration_003_node_scoped_state(self) -> None:
+        # Add node_id to instances/downloads (create_all can't add columns to
+        # existing tables) and adopt pre-cluster rows under the local node id.
+        from core.cluster import get_node_id
+        local_node = get_node_id()
+        for table in ("instances", "downloads"):
+            if self._column_type(table, "node_id") is None:
+                logger.info("Migration 003: adding %s.node_id", table)
+                with self._engine.begin() as conn:
+                    conn.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN node_id VARCHAR(64) NULL"
+                    ))
+                    conn.execute(text(
+                        f"ALTER TABLE {table} ADD INDEX idx_{table}_node_id (node_id)"
+                    ))
+            with self._engine.begin() as conn:
+                result = conn.execute(text(
+                    f"UPDATE {table} SET node_id = :nid WHERE node_id IS NULL"
+                ), {"nid": local_node})
+                if result.rowcount:
+                    logger.info("Migration 003: adopted %d existing %s row(s) under node %s",
+                                result.rowcount, table, local_node[:12])
+
     # -- State --
 
-    def save_state(self, instances: list[dict], downloads: list[dict]) -> None:
+    def save_state(self, instances: list[dict], downloads: list[dict],
+                   node_id: str | None = None) -> None:
         session = self._session()
         try:
-            session.query(InstanceRow).delete()
-            session.query(DownloadRow).delete()
+            if node_id is None:
+                session.query(InstanceRow).delete()
+                session.query(DownloadRow).delete()
+            else:
+                # Replace only this node's rows (plus any legacy unscoped rows,
+                # which belong to the lone pre-cluster writer). Peer rows stay.
+                for Row in (InstanceRow, DownloadRow):
+                    session.query(Row).filter(
+                        (Row.node_id == node_id) | (Row.node_id.is_(None))
+                    ).delete(synchronize_session=False)
             for inst in instances:
-                session.add(InstanceRow(id=inst["id"], data=json.dumps(inst)))
+                session.add(InstanceRow(id=inst["id"], node_id=node_id, data=json.dumps(inst)))
             for dl in downloads:
-                session.add(DownloadRow(id=dl["id"], data=json.dumps(dl)))
+                session.add(DownloadRow(id=dl["id"], node_id=node_id, data=json.dumps(dl)))
             session.commit()
         except Exception:
             session.rollback()
@@ -234,17 +281,23 @@ class MariaDBBackend(StorageBackend):
         finally:
             self._session_factory.remove()
 
-    def load_instances(self) -> list[dict]:
+    def load_instances(self, node_id: str | None = None) -> list[dict]:
         session = self._session()
         try:
-            return [json.loads(row.data) for row in session.query(InstanceRow).all()]
+            q = session.query(InstanceRow)
+            if node_id is not None:
+                q = q.filter((InstanceRow.node_id == node_id) | (InstanceRow.node_id.is_(None)))
+            return [json.loads(row.data) for row in q.all()]
         finally:
             self._session_factory.remove()
 
-    def load_downloads(self) -> list[dict]:
+    def load_downloads(self, node_id: str | None = None) -> list[dict]:
         session = self._session()
         try:
-            return [json.loads(row.data) for row in session.query(DownloadRow).all()]
+            q = session.query(DownloadRow)
+            if node_id is not None:
+                q = q.filter((DownloadRow.node_id == node_id) | (DownloadRow.node_id.is_(None)))
+            return [json.loads(row.data) for row in q.all()]
         finally:
             self._session_factory.remove()
 
@@ -441,6 +494,87 @@ class MariaDBBackend(StorageBackend):
         finally:
             self._session_factory.remove()
 
+    # -- Cluster registry --
+
+    @staticmethod
+    def _node_to_dict(row: "ClusterNodeRow", age_us: int | None = None) -> dict:
+        d = {
+            "node_id": row.node_id,
+            "node_name": row.node_name or "",
+            "advertise_url": row.advertise_url or "",
+            "vendor": row.vendor or "",
+            "llama_image": row.llama_image or "",
+            "last_heartbeat_at": to_iso(row.last_heartbeat_at) if row.last_heartbeat_at else None,
+            "snapshot": json.loads(row.snapshot) if row.snapshot else {},
+        }
+        # Heartbeat age measured entirely on the DB clock (write and read both use
+        # NOW(3)), so it is immune to per-node clock skew - an unsynced peer (e.g.
+        # WSL drift) won't be wrongly judged offline by another node's clock.
+        if age_us is not None:
+            d["heartbeat_age_s"] = age_us / 1_000_000.0
+        return d
+
+    def register_node(self, node: dict, snapshot: dict | None = None) -> None:
+        session = self._session()
+        try:
+            row = session.get(ClusterNodeRow, node["node_id"])
+            if row is None:
+                row = ClusterNodeRow(node_id=node["node_id"])
+                session.add(row)
+            row.node_name = node.get("node_name", "")
+            row.advertise_url = node.get("advertise_url", "")
+            row.vendor = node.get("vendor", "")
+            row.llama_image = node.get("llama_image", "")
+            # Stamp with the DB server's clock, not this node's - so liveness is
+            # judged against a single shared clock and node-to-node skew can't
+            # make a healthy node flap offline. Paired with the DB-clock age in
+            # list_nodes(). text() keeps NOW(3) a literal (the fsp arg can't be a
+            # bound parameter).
+            row.last_heartbeat_at = text("NOW(3)")
+            if snapshot is not None:
+                row.snapshot = json.dumps(snapshot)
+            elif row.snapshot is None:
+                row.snapshot = "{}"
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            self._session_factory.remove()
+
+    def list_nodes(self) -> list[dict]:
+        session = self._session()
+        try:
+            # Compute heartbeat age on the DB clock (TIMESTAMPDIFF vs NOW(3)) so
+            # callers get a skew-proof liveness signal.
+            age = func.timestampdiff(
+                text("MICROSECOND"), ClusterNodeRow.last_heartbeat_at, text("NOW(3)"))
+            rows = session.query(ClusterNodeRow, age.label("age_us")).all()
+            return [self._node_to_dict(row, age_us) for row, age_us in rows]
+        finally:
+            self._session_factory.remove()
+
+    def get_node(self, node_id: str) -> dict | None:
+        session = self._session()
+        try:
+            row = session.get(ClusterNodeRow, node_id)
+            return self._node_to_dict(row) if row else None
+        finally:
+            self._session_factory.remove()
+
+    def remove_node(self, node_id: str) -> None:
+        session = self._session()
+        try:
+            row = session.get(ClusterNodeRow, node_id)
+            if row:
+                session.delete(row)
+                session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            self._session_factory.remove()
+
     # -- Request Log --
 
     def append_request_log(self, record: dict, mode: str) -> None:
@@ -510,6 +644,8 @@ class MariaDBBackend(StorageBackend):
                     func.max(RequestLogRow.created_at).label("last_seen_at"),
                     func.count(RequestLogRow.id).label("turn_count"),
                     func.min(RequestLogRow.model).label("model"),
+                    func.sum(RequestLogRow.prompt_tokens).label("prompt_tokens"),
+                    func.sum(RequestLogRow.completion_tokens).label("completion_tokens"),
                 )
                 .group_by(RequestLogRow.conversation_id)
                 .order_by(func.max(RequestLogRow.created_at).desc())
@@ -517,7 +653,7 @@ class MariaDBBackend(StorageBackend):
                 .all()
             )
             out = []
-            for cid, first, last, count, model in rows:
+            for cid, first, last, count, model, ptok, ctok in rows:
                 # Title: pull the earliest row's request_body for this conversation
                 first_row = (
                     session.query(RequestLogRow.request_body)
@@ -532,6 +668,8 @@ class MariaDBBackend(StorageBackend):
                     "first_seen_at": to_iso(first) if first else None,
                     "last_seen_at": to_iso(last) if last else None,
                     "turn_count": int(count),
+                    "prompt_tokens": int(ptok or 0),
+                    "completion_tokens": int(ctok or 0),
                     "title": self._extract_title(first_row or ""),
                 })
             return out

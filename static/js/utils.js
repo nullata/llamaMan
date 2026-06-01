@@ -6,6 +6,8 @@
 let instances = {};          // id -> instance obj
 let downloads = {};          // id -> download obj
 let containerStats = {};     // id -> {cpu_pct, mem_used_mb, mem_limit_mb}
+let peerContainerStats = {}; // remote-instance stats pulled from peers (cluster)
+let _peerStatsTick = 0;      // throttles how often peers are polled for stats
 let huggingFaceTokens = [];  // saved Hugging Face tokens (safe metadata only)
 let selectedModelPath = null;
 let allModels = [];           // cached model list for filtering

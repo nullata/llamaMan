@@ -24,9 +24,10 @@ from core.helpers import (
     find_available_port,
     is_container_running,
     model_name_from_path,
+    request_local_worker,
 )
 from core.proxy_sampling import apply_proxy_sampling_overrides
-from core.request_log import record_request, SSEAccumulator
+from core.request_log import record_request, finalize_async, SSEAccumulator
 from api.models import (
     detect_quant,
     discover_models,
@@ -44,6 +45,28 @@ bp = Blueprint("llamaman", __name__)
 # another request is currently launching or waiting on.
 _llamaman_lock = threading.Lock()
 
+
+@bp.after_request
+def _stamp_serving_node(resp):
+    """Tag responses so server-vs-entry is unambiguous (cluster mode):
+
+      X-Llamaman-Node  - the node that actually served the request. A forwarded
+                         peer sets this first; setdefault preserves it as the
+                         relay passes back through the entry node.
+      X-Llamaman-Entry - the node the client hit. Only the entry request (no
+                         dispatch header) sets it, and it always overwrites.
+    """
+    try:
+        from core.cluster import is_cluster_enabled, get_node_id
+        if is_cluster_enabled():
+            name = get_node_id()
+            resp.headers.setdefault("X-Llamaman-Node", name)
+            if not request.headers.get("X-Cluster-Dispatch"):
+                resp.headers["X-Llamaman-Entry"] = name
+    except Exception:
+        pass
+    return resp
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -58,6 +81,24 @@ def _find_model_by_name(name: str) -> dict | None:
     for m in models:
         if name_lower in model_name_from_path(m["path"]):
             return m
+    return None
+
+
+def _find_running_instance_by_alias(name: str) -> dict | None:
+    """Find a running instance that opted into the cluster alias `name`.
+
+    Without this, a client calling by an alias (e.g. "qwen2.5-14b" mapped to a
+    Q4 file by share_queue_group) would only find the instance through cluster
+    dispatch - direct calls to this node's compat endpoint would 404 on the
+    name even when a running instance is honestly serving it via --alias."""
+    req = name.split(":")[0].lower()
+    with instances_lock:
+        for inst in instances.values():
+            if inst.get("status") in ("stopped",):
+                continue
+            alias = ((inst.get("config") or {}).get("share_queue_group") or "").strip().lower()
+            if alias and (alias == req or req in alias):
+                return inst
     return None
 
 
@@ -113,7 +154,8 @@ def _get_all_evictable_instances() -> list[dict]:
 
 
 def _ollama_can_evict_admin_instances() -> bool:
-    return bool(get_storage().get_settings().get("allow_ollama_api_override_admin", False))
+    from core.node_settings import effective_from_settings
+    return bool(effective_from_settings(get_storage().get_settings(), "allow_ollama_api_override_admin", False))
 
 
 def _evict_llamaman_instances_if_needed(incoming_embedding_model: bool = False) -> bool:
@@ -198,6 +240,21 @@ def _ensure_model_running(
         launch_instance, relaunch_inactive_instance, wait_for_healthy,
     )
 
+    # Alias shortcut: when a running instance opted into share_queue_group
+    # matching the requested name, route to it directly. The aliased instance
+    # is honestly serving under that name (llama-server launched with --alias),
+    # so we don't need a file by that name to exist. Skip the launch / file-
+    # discovery path entirely in that case - even if a stale file with the
+    # same stem happens to exist, the live aliased instance is what the
+    # operator opted into. Cluster dispatch runs BEFORE this and may have
+    # forwarded already; reaching here means we're serving locally.
+    aliased = _find_running_instance_by_alias(model_name)
+    if aliased and aliased["status"] == "healthy":
+        with instances_lock:
+            if aliased["id"] in instances:
+                instances[aliased["id"]]["_last_request_at"] = time.time()
+        return aliased, None
+
     model = _find_model_by_name(model_name)
     if model is None:
         return None, f"model '{model_name}' not found"
@@ -222,7 +279,9 @@ def _ensure_model_running(
             return inst, None
 
         existing = inst or _find_any_instance_for_model(model["path"])
-        preset = get_storage().get_preset(model["path"]) or {}
+        from api.presets import resolve_preset_for_node
+        from core.cluster import get_node_id
+        preset = resolve_preset_for_node(get_storage().get_preset(model["path"]) or {}, get_node_id())
         incoming_embedding_model = preset.get("embedding_model", False)
 
         if allow_eviction:
@@ -516,6 +575,25 @@ def _translate_to_openai(body: dict) -> dict:
     return openai_body
 
 
+def _report_local_worker_unreachable(inst_id: str | None, err) -> None:
+    """A forward to the local worker failed at the connection level after retries,
+    so the worker is almost certainly dead (not merely slow). Drain its gate NOW
+    so any QUEUED requests migrate to peers immediately instead of funneling into
+    the dead worker for the few seconds until the background poller marks it
+    stopped. Read-timeouts (a slow-but-alive worker mid-generation) are excluded
+    on purpose - those are not a dead worker."""
+    if not inst_id:
+        return
+    from requests.exceptions import ConnectionError as ReqConnError, ConnectTimeout
+    if not isinstance(err, (ReqConnError, ConnectTimeout, ConnectionRefusedError)):
+        return
+    try:
+        from proxy import drain_gate
+        drain_gate(inst_id)
+    except Exception:
+        pass
+
+
 def _stream_llamaman(host: str, port: int, openai_body: dict, model_name: str,
                      mode: str = "chat", inst_id: str | None = None,
                      handle=None):
@@ -558,23 +636,15 @@ def _stream_llamaman(host: str, port: int, openai_body: dict, model_name: str,
 
     resp = None
     try:
-        # Retry on connection errors (model may have just finished loading)
-        last_err = None
-        for _attempt in range(3):
-            try:
-                resp = http_requests.post(
-                    f"http://{host}:{port}/v1/chat/completions",
-                    json=openai_body,
-                    stream=True,
-                    timeout=REQUEST_TIMEOUT,
-                )
-                break
-            except (http_requests.ConnectionError, http_requests.Timeout,
-                    ConnectionRefusedError) as e:
-                last_err = e
-                time.sleep(2)
-        if resp is None:
-            raise last_err or ConnectionError("failed to connect to model server")
+        try:
+            resp = request_local_worker(
+                f"http://{host}:{port}/v1/chat/completions",
+                json=openai_body,
+                stream=True,
+            )
+        except Exception as e:
+            _report_local_worker_unreachable(inst_id, e)
+            raise
         if resp.status_code >= 400:
             error_text = resp.text[:500] if resp.text else f"HTTP {resp.status_code}"
             final_status = resp.status_code
@@ -671,23 +741,14 @@ def _proxy_non_streaming(host: str, port: int, openai_body: dict, model_name: st
                          handle=None):
     t_start = time.monotonic()
     openai_body["stream"] = False
-    # Retry on connection errors (model may have just finished loading)
-    last_err = None
-    resp = None
-    for _attempt in range(3):
-        try:
-            resp = http_requests.post(
-                f"http://{host}:{port}/v1/chat/completions",
-                json=openai_body,
-                timeout=REQUEST_TIMEOUT,
-            )
-            break
-        except (http_requests.ConnectionError, http_requests.Timeout,
-                ConnectionRefusedError) as e:
-            last_err = e
-            time.sleep(2)
-    if resp is None:
-        raise last_err or ConnectionError("failed to connect to model server")
+    try:
+        resp = request_local_worker(
+            f"http://{host}:{port}/v1/chat/completions",
+            json=openai_body,
+        )
+    except Exception as e:
+        _report_local_worker_unreachable(inst_id, e)
+        raise
     resp.raise_for_status()
     elapsed_ns = int((time.monotonic() - t_start) * 1e9)
     data = resp.json()
@@ -748,6 +809,13 @@ def _handle_request(mode: str = "chat"):
             "done": True,
         })
 
+    # Cluster: if this model shares a queue across nodes, route to the
+    # least-loaded group node before doing any local work.
+    from api.cluster import dispatch_inference, effective_inference_config
+    forwarded = dispatch_inference(model_name)
+    if forwarded is not None:
+        return forwarded
+
     inst, err = _ensure_model_running(model_name)
     if err:
         code = 503 if "model limit reached" in err else 500
@@ -773,6 +841,18 @@ def _handle_request(mode: str = "chat"):
                     stats = instances[inst["id"]].setdefault("stats", {})
                     stats["model_load_time_s"] = round(time.time() - started, 1)
 
+    # Acquire a local slot, or migrate to a peer with free capacity (work-
+    # stealing). Done before recording so a migrated request isn't logged here.
+    gate = get_gate(inst["id"])
+    if gate:
+        from api.cluster import acquire_or_overflow, rejection_status
+        acquired, overflow, reason = acquire_or_overflow(gate, model_name)
+        if overflow is not None:
+            return overflow
+        if not acquired:
+            status, msg = rejection_status(reason)
+            return jsonify({"error": msg}), status
+
     handle = record_request(
         body,
         endpoint=f"ollama_{mode}",
@@ -781,16 +861,8 @@ def _handle_request(mode: str = "chat"):
         model=model_name,
     )
 
-    gate = get_gate(inst["id"])
-    if gate:
-        if not gate.acquire(timeout=REQUEST_TIMEOUT):
-            if handle:
-                handle.set_error(429, "request queue full")
-                handle.finalize()
-            return jsonify({"error": "request queue full"}), 429
-
     openai_body = _translate_to_openai(body)
-    openai_body = apply_proxy_sampling_overrides(openai_body, inst.get("config", {}))
+    openai_body = apply_proxy_sampling_overrides(openai_body, effective_inference_config(inst))
     stream_qp = request.args.get("stream", "").lower()
     if stream_qp in ("false", "0", "no"):
         stream = False
@@ -818,6 +890,9 @@ def _handle_request(mode: str = "chat"):
 
         result = _proxy_non_streaming(server_host, server_port, openai_body, model_name,
                                       mode, inst_id=inst["id"], handle=handle)
+        from core.cluster import get_node_id as _get_node_id
+        logger.info("ollama_chat: handler returning node=%s inst=%s thread=%d",
+                    _get_node_id(), inst["id"], threading.get_ident())
         return jsonify(result)
     except Exception as e:
         if handle:
@@ -827,7 +902,7 @@ def _handle_request(mode: str = "chat"):
         if gate and not stream_returned:
             gate.release()
         if handle and not stream_returned:
-            handle.finalize(streamed=False)
+            finalize_async(handle, streamed=False)
 
 
 # ---------------------------------------------------------------------------
@@ -949,6 +1024,12 @@ def llamaman_v1_chat():
     if not model_name:
         return jsonify({"error": {"message": "model is required"}}), 400
 
+    # Cluster: route shared-queue models to the least-loaded group node first.
+    from api.cluster import dispatch_inference, effective_inference_config
+    forwarded = dispatch_inference(model_name)
+    if forwarded is not None:
+        return forwarded
+
     inst, err = _ensure_model_running(model_name, allow_eviction=False)
     if err:
         return jsonify({"error": {"message": err}}), 503
@@ -956,7 +1037,7 @@ def llamaman_v1_chat():
     if inst.get("config", {}).get("embedding_model"):
         return jsonify({"error": {"message": f"model '{model_name}' is embedding-only and cannot handle chat completions"}}), 422
 
-    body = apply_proxy_sampling_overrides(body, inst.get("config", {}))
+    body = apply_proxy_sampling_overrides(body, effective_inference_config(inst))
 
     server_host = inst.get("_server_host", "localhost")
     server_port = inst.get("_server_port") or inst.get("_internal_port") or inst["port"]
@@ -974,6 +1055,18 @@ def llamaman_v1_chat():
                     stats = instances[inst_id].setdefault("stats", {})
                     stats["model_load_time_s"] = round(time.time() - started, 1)
 
+    # Acquire a local slot, or migrate to a peer with free capacity (work-
+    # stealing). Done before recording so a migrated request isn't logged here.
+    gate = get_gate(inst_id)
+    if gate:
+        from api.cluster import acquire_or_overflow, rejection_status
+        acquired, overflow, reason = acquire_or_overflow(gate, model_name)
+        if overflow is not None:
+            return overflow
+        if not acquired:
+            status, msg = rejection_status(reason)
+            return jsonify({"error": {"message": msg}}), status
+
     handle = record_request(
         body,
         endpoint="openai_chat",
@@ -982,36 +1075,19 @@ def llamaman_v1_chat():
         model=model_name,
     )
 
-    gate = get_gate(inst_id)
-    if gate:
-        if not gate.acquire(timeout=REQUEST_TIMEOUT):
-            if handle:
-                handle.set_error(429, "request queue full")
-                handle.finalize()
-            return jsonify({"error": {"message": "request queue full"}}), 429
-
     stream = body.get("stream", False)
     stream_returned = False
     t_start = time.monotonic()
     try:
-        # Retry on connection errors (transient failures right after load)
-        last_err = None
-        resp = None
-        for _attempt in range(3):
-            try:
-                resp = http_requests.post(
-                    f"http://{server_host}:{server_port}/v1/chat/completions",
-                    json=body,
-                    stream=stream,
-                    timeout=REQUEST_TIMEOUT,
-                )
-                break
-            except (http_requests.ConnectionError, http_requests.Timeout,
-                    ConnectionRefusedError) as e:
-                last_err = e
-                time.sleep(2)
-        if resp is None:
-            raise last_err or ConnectionError("failed to connect to model server")
+        try:
+            resp = request_local_worker(
+                f"http://{server_host}:{server_port}/v1/chat/completions",
+                json=body,
+                stream=stream,
+            )
+        except Exception as e:
+            _report_local_worker_unreachable(inst_id, e)
+            raise
         if stream:
             def _relay():
                 acc = SSEAccumulator() if handle else None
@@ -1057,6 +1133,9 @@ def llamaman_v1_chat():
                                     usage=usage,
                                     status_code=resp.status_code)
                 handle.set_metrics(tokens_per_sec=tps)
+            from core.cluster import get_node_id as _get_node_id
+            logger.info("v1_chat: handler returning node=%s inst=%s thread=%d",
+                        _get_node_id(), inst_id, threading.get_ident())
             return jsonify(data), resp.status_code
     except Exception as e:
         if handle:
@@ -1066,7 +1145,172 @@ def llamaman_v1_chat():
         if gate and not stream_returned:
             gate.release()
         if handle and not stream_returned:
-            handle.finalize(streamed=False)
+            finalize_async(handle, streamed=False)
+
+
+def _extract_completion_text(data) -> str:
+    """Generated text from a non-streaming completion response, across all three
+    shapes: OpenAI legacy (choices[].text), chat (choices[].message.content),
+    llama.cpp native (top-level content)."""
+    if not isinstance(data, dict):
+        return ""
+    choices = data.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        c0 = choices[0]
+        if isinstance(c0.get("text"), str):
+            return c0["text"]
+        msg = c0.get("message")
+        if isinstance(msg, dict) and isinstance(msg.get("content"), str):
+            return msg["content"]
+    if isinstance(data.get("content"), str):
+        return data["content"]
+    return ""
+
+
+def _completion_usage(data) -> dict | None:
+    """Usage from a completion response: OpenAI `usage`, else llama.cpp native
+    token counts mapped to the OpenAI shape."""
+    if not isinstance(data, dict):
+        return None
+    usage = data.get("usage")
+    if isinstance(usage, dict):
+        return usage
+    tp, te = data.get("tokens_predicted"), data.get("tokens_evaluated")
+    if isinstance(tp, int) or isinstance(te, int):
+        return {"completion_tokens": tp or 0, "prompt_tokens": te or 0,
+                "total_tokens": (tp or 0) + (te or 0)}
+    return None
+
+
+def _proxy_passthrough(upstream_path: str, endpoint_label: str):
+    """Cluster/gate/sampling-aware passthrough for the raw completion endpoints
+    (/v1/completions, /completion).
+
+    Same machinery as the chat handler - cross-node dispatch + work-stealing,
+    proxy-side sampling overrides, request logging - but the body is forwarded
+    UNCHANGED to `upstream_path` on the chosen llama-server (no chat templating,
+    no schema translation; llama-server serves these natively). Works single-node
+    too: dispatch is a no-op when clustering is off, so it just runs the local
+    gate and forwards locally."""
+    body = request.get_json(force=True)
+    model_name = (body.get("model") or "").strip()
+    if not model_name:
+        return jsonify({"error": {"message": "model is required"}}), 400
+
+    from api.cluster import dispatch_inference, effective_inference_config
+    forwarded = dispatch_inference(model_name)
+    if forwarded is not None:
+        return forwarded
+
+    inst, err = _ensure_model_running(model_name, allow_eviction=False)
+    if err:
+        return jsonify({"error": {"message": err}}), 503
+    if inst.get("config", {}).get("embedding_model"):
+        return jsonify({"error": {"message": f"model '{model_name}' is embedding-only and cannot generate completions"}}), 422
+
+    body = apply_proxy_sampling_overrides(body, effective_inference_config(inst))
+
+    server_host = inst.get("_server_host", "localhost")
+    server_port = inst.get("_server_port") or inst.get("_internal_port") or inst["port"]
+    inst_id = inst["id"]
+
+    if inst.get("status") != "healthy":
+        if not _wait_for_model_ready(server_host, server_port, MODEL_LOAD_TIMEOUT):
+            return jsonify({"error": {"message": "model launched but did not become healthy in time"}}), 500
+        with instances_lock:
+            if inst_id in instances:
+                instances[inst_id]["status"] = "healthy"
+                started = instances[inst_id].get("started_at", 0)
+                if started:
+                    stats = instances[inst_id].setdefault("stats", {})
+                    stats["model_load_time_s"] = round(time.time() - started, 1)
+
+    gate = get_gate(inst_id)
+    if gate:
+        from api.cluster import acquire_or_overflow, rejection_status
+        acquired, overflow, reason = acquire_or_overflow(gate, model_name)
+        if overflow is not None:
+            return overflow
+        if not acquired:
+            status, msg = rejection_status(reason)
+            return jsonify({"error": {"message": msg}}), status
+
+    handle = record_request(body, endpoint=endpoint_label, path=request.path,
+                            inst_id=inst_id, model=model_name)
+
+    stream = bool(body.get("stream", False))
+    stream_returned = False
+    t_start = time.monotonic()
+    try:
+        try:
+            resp = request_local_worker(
+                f"http://{server_host}:{server_port}{upstream_path}",
+                json=body, stream=stream,
+            )
+        except Exception as e:
+            _report_local_worker_unreachable(inst_id, e)
+            raise
+        if stream:
+            def _relay():
+                acc = SSEAccumulator() if handle else None
+                try:
+                    for chunk in resp.iter_content(chunk_size=None):
+                        if acc is not None:
+                            acc.feed(chunk)
+                        if handle and chunk:
+                            handle.mark_first_token()
+                        yield chunk
+                finally:
+                    resp.close()
+                    if gate:
+                        gate.release()
+                    _touch_instance(inst_id)
+                    update_instance_stats(inst_id)
+                    if handle:
+                        text, usage = acc.finish() if acc else ("", None)
+                        handle.set_response(text=text, usage=usage, status_code=resp.status_code)
+                        handle.finalize(streamed=True)
+            stream_returned = True
+            mimetype = (resp.headers.get("Content-Type") or "text/event-stream").split(";")[0].strip()
+            return Response(_relay(), mimetype=mimetype or "text/event-stream",
+                            headers={"Cache-Control": "no-cache"})
+        with resp:
+            _touch_instance(inst_id)
+            data = resp.json()
+            usage = _completion_usage(data)
+            c_tokens = (usage or {}).get("completion_tokens", 0)
+            elapsed = time.monotonic() - t_start
+            tps = c_tokens / elapsed if c_tokens and elapsed > 0 else None
+            if tps:
+                update_instance_stats(inst_id, tokens_per_sec=tps)
+            if handle:
+                handle.set_response(text=_extract_completion_text(data),
+                                    usage=usage, status_code=resp.status_code)
+                if tps:
+                    handle.set_metrics(tokens_per_sec=tps)
+            return jsonify(data), resp.status_code
+    except Exception as e:
+        if handle:
+            handle.set_error(500, str(e))
+        return jsonify({"error": {"message": str(e)}}), 500
+    finally:
+        if gate and not stream_returned:
+            gate.release()
+        if handle and not stream_returned:
+            finalize_async(handle, streamed=False)
+
+
+@bp.route("/v1/completions", methods=["POST"])
+def llamaman_v1_completions():
+    """OpenAI legacy text-completions, with the same dispatch/gate/sampling
+    pipeline as chat. Single-node and cluster both supported."""
+    return _proxy_passthrough("/v1/completions", "openai_completions")
+
+
+@bp.route("/completion", methods=["POST"])
+def llamaman_completion():
+    """llama.cpp-native completion, proxied with the same pipeline as chat."""
+    return _proxy_passthrough("/completion", "llamacpp_completion")
 
 
 @bp.route("/v1/embeddings", methods=["POST"])
@@ -1102,25 +1346,16 @@ def llamaman_v1_embeddings():
         model=model_name,
     )
 
-    last_err = None
-    resp = None
     try:
-        for _attempt in range(3):
-            try:
-                resp = http_requests.post(
-                    f"http://{server_host}:{server_port}/v1/embeddings",
-                    json=body,
-                    timeout=REQUEST_TIMEOUT,
-                )
-                break
-            except (http_requests.ConnectionError, http_requests.Timeout,
-                    ConnectionRefusedError) as e:
-                last_err = e
-                time.sleep(2)
-        if resp is None:
+        try:
+            resp = request_local_worker(
+                f"http://{server_host}:{server_port}/v1/embeddings",
+                json=body,
+            )
+        except Exception as e:
             if handle:
-                handle.set_error(502, str(last_err))
-            return jsonify({"error": {"message": str(last_err)}}), 502
+                handle.set_error(502, str(e))
+            return jsonify({"error": {"message": str(e)}}), 502
 
         _touch_instance(inst_id)
         data = resp.json()
@@ -1131,7 +1366,7 @@ def llamaman_v1_embeddings():
         return jsonify(data), resp.status_code
     finally:
         if handle:
-            handle.finalize(streamed=False)
+            finalize_async(handle, streamed=False)
 
 
 def _touch_instance(inst_id: str):

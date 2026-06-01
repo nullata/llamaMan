@@ -42,8 +42,15 @@ setInterval(loadGpuInfo, 10000);
 // Cleanup metadata refresh (every 60s)
 setInterval(refreshCleanupLastRan, 60000);
 
+// Cluster registry refresh (every 5s; drives per-node System/GPU cards and
+// the Cluster tab. No-op rendering when clustering is disabled.)
+if (typeof loadClusterNodes === 'function') {
+  setInterval(loadClusterNodes, 5000);
+}
+
 // Initial load
 loadModels();
+if (typeof loadClusterNodes === 'function') loadClusterNodes();
 loadSystemInfo();
 loadGpuInfo();
 pollInstances().then(() => { updatePortSuggestion(); pollContainerStats(); });
@@ -60,6 +67,45 @@ pollDownloads();
 loadSettings();
 loadApiKeys();
 loadImages();
+if (typeof populateLaunchImageSelect === 'function') populateLaunchImageSelect();
+
+// Cluster grouping fields (alias + fallback) under "Share queue with same model".
+// Only meaningful when share-queue is on; revealed AND cleared on the toggle so
+// the launch form stays uncluttered AND a stale alias typed before the toggle
+// was flipped off can't sneak through on submit. The backend re-enforces this
+// invariant too (launch_instance + preset save force-empty when share_queue
+// is false), so the UI gating is defense in depth, not the only check.
+function updateShareQueueClusterRow() {
+  const t = document.getElementById('f-share-queue');
+  const row = document.getElementById('f-share-queue-cluster');
+  if (!t || !row) return;
+  const on = t.checked;
+  row.hidden = !on;
+  const groupIn = document.getElementById('f-share-queue-group');
+  const fbIn = document.getElementById('f-share-queue-fallback');
+  if (groupIn) {
+    groupIn.disabled = !on;
+    if (!on) groupIn.value = '';
+  }
+  if (fbIn) {
+    fbIn.disabled = !on;
+    if (!on) fbIn.checked = false;
+  }
+}
+const shareQueueToggle = document.getElementById('f-share-queue');
+if (shareQueueToggle) shareQueueToggle.addEventListener('change', updateShareQueueClusterRow);
+updateShareQueueClusterRow();
+
+// Node selector changes (cluster mode): refetch the per-node data on switch.
+const imagesNodeSel = document.getElementById('images-node');
+if (imagesNodeSel) imagesNodeSel.addEventListener('change', loadImages);
+const launchNodeSel = document.getElementById('f-node');
+if (launchNodeSel) launchNodeSel.addEventListener('change', () => {
+  if (typeof onLaunchNodeChanged === 'function') onLaunchNodeChanged();
+  else updatePortSuggestion();
+});
+const downloadNodeSel = document.getElementById('d-node');
+if (downloadNodeSel) downloadNodeSel.addEventListener('change', refreshDownloadDiskSpace);
 
 // Info-tip clipping fallback: when a centered tooltip would extend past the
 // viewport, switch to anchoring it on the icon's right (or left) edge.

@@ -9,3 +9,4 @@ build/
 .env
 *.log
 models/
+test-data/

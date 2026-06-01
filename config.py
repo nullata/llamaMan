@@ -1,10 +1,42 @@
 # Copyright (c) LlamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
 import os
+import sys
 import logging
 from pathlib import Path
 
 VERSION = (Path(__file__).parent / "VERSION").read_text().strip()
+
+# Every llamaman deployment needs a stable identity. It is the partition key for
+# instance/download rows on the (possibly shared) storage backend, the namespace
+# for per-node settings, and the registry key when clustering is enabled. It is
+# REQUIRED even for single-node installs so a later transition to clustering
+# does not silently change the row scope. Operators pick the value (any string -
+# "srv1", a uuid, whatever); changing it after the first boot orphans this
+# node's existing rows, so the rule is "pick once, keep forever".
+LLAMAMAN_NODE_NAME = os.environ.get("LLAMAMAN_NODE_NAME", "").strip()
+if not LLAMAMAN_NODE_NAME:
+    _banner = (
+        "\n"
+        "============================================================\n"
+        "  LLAMAMAN_NODE_NAME is required and was not set.\n"
+        "------------------------------------------------------------\n"
+        "  Set it to any unique string for this deployment, e.g.:\n"
+        "      LLAMAMAN_NODE_NAME=srv1\n"
+        "      LLAMAMAN_NODE_NAME=1234\n"
+        "      LLAMAMAN_NODE_NAME=my-llamaman-host\n"
+        "\n"
+        "  Every instance, download and per-node setting in storage\n"
+        "  is scoped to this name. Pick it ONCE and keep it - changing\n"
+        "  it later orphans this node's existing state.\n"
+        "\n"
+        "  Add it to your docker-compose.yml (or environment) and\n"
+        "  restart.\n"
+        "============================================================\n"
+    )
+    sys.stderr.write(_banner)
+    sys.stderr.flush()
+    sys.exit(78)  # EX_CONFIG
 
 MODELS_DIR = os.environ.get("MODELS_DIR", "/models")
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
@@ -27,6 +59,16 @@ USERS_FILE = os.path.join(DATA_DIR, "users.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", os.path.join(DATA_DIR, "request_log"))
 SECRET_KEY = os.environ.get("SECRET_KEY", "")
+
+# Clustering - off by default; single-node installs are entirely unaffected.
+# When enabled, several llamaman deployments form one logical cluster sharing a
+# coordination store (the storage backend) and trusting one shared secret. The
+# node's identity comes from LLAMAMAN_NODE_NAME above (required for all installs).
+# CLUSTER_SECRET is the bearer token used for all node-to-node HTTP.
+# CLUSTER_ADVERTISE_URL is how peers reach THIS node (e.g. http://srv1:5000).
+CLUSTER_ENABLED = os.environ.get("CLUSTER_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+CLUSTER_SECRET = os.environ.get("CLUSTER_SECRET", "").strip()
+CLUSTER_ADVERTISE_URL = os.environ.get("CLUSTER_ADVERTISE_URL", "").strip().rstrip("/")
 
 # Docker-in-Docker settings
 # Fixed port llama-server listens on inside every spawned container.

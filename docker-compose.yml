@@ -54,6 +54,12 @@ services:
       - LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda
       - LLAMA_NETWORK=llamaman-net
       - LLAMA_CONTAINER_PREFIX=llamaman-
+      # REQUIRED. A unique string identifying THIS deployment. Any value works
+      # (a hostname, a uuid, "srv1", ...). It is the partition key for every
+      # instance/download/per-node setting in storage, so pick once and keep
+      # forever - changing it later orphans this node's existing state. The app
+      # refuses to start without it.
+      - LLAMAMAN_NODE_NAME=srv1
       # How llamaman reaches spawned llama-server containers is auto-detected:
       # in Docker it uses the Docker network (by container name); bare-metal it
       # uses localhost on the published ports. Override only if detection is
@@ -69,6 +75,26 @@ services:
       # - SECRET_KEY=change-me-to-something-random
       # Uncomment to use MariaDB/MySQL instead of JSON file storage
       # - DATABASE_URL=mysql+pymysql://llama:password@mariadb:3306/llamaman
+      #
+      # Clustering (optional) - run several llamaman deployments as one cluster.
+      # Off by default; single-node installs ignore all of these. The node's
+      # identity comes from LLAMAMAN_NODE_NAME above (required for all installs).
+      # Requirements: every node must share the SAME storage backend (point them
+      # all at the same DATABASE_URL above) and the SAME CLUSTER_SECRET. Nodes
+      # discover each other automatically through the shared registry, keyed by
+      # LLAMAMAN_NODE_NAME (which must be unique across the cluster).
+      # - CLUSTER_ENABLED=true
+      # Shared bearer token for all node-to-node calls. Use a long random value,
+      # identical on every node. Send it over a trusted network or behind TLS.
+      # - CLUSTER_SECRET=change-me-to-a-long-shared-random-secret
+      # How peers reach THIS node's UI/API (a hostname/IP routable from the
+      # OTHER hosts, not localhost), e.g. http://srv1:5000.
+      # Needed only for cross-node ACTIONS - launching/pulling/downloading on
+      # this node from another node's UI, and shared-queue inference forwarded
+      # to this node. The shared-DB dashboard (seeing this node's stats and
+      # instances) works without it; a node with no advertise URL just shows up
+      # as view-only and is skipped as an inference target.
+      # - CLUSTER_ADVERTISE_URL=http://srv1:5000
     # NVIDIA native GPU monitoring (pynvml) - uncomment on NVIDIA hosts.
     # Grants the llamaman container read-only NVML access (no compute).
     # Remove or leave commented on AMD/Intel hosts.

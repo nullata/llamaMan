@@ -22,7 +22,7 @@ import logging
 logger = logging.getLogger("llamaman")
 
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 def _migrate_001_timestamps(storage) -> None:
@@ -35,9 +35,16 @@ def _migrate_002_request_metrics(storage) -> None:
     storage.apply_migration_002_request_metrics()
 
 
+def _migrate_003_node_scoped_state(storage) -> None:
+    """Add node_id to instances/downloads and adopt existing rows under the
+    local node id, so a shared database is safe for multi-node clustering."""
+    storage.apply_migration_003_node_scoped_state()
+
+
 MIGRATIONS = {
     1: _migrate_001_timestamps,
     2: _migrate_002_request_metrics,
+    3: _migrate_003_node_scoped_state,
 }
 
 

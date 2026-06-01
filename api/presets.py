@@ -8,6 +8,24 @@ from storage import get_storage
 
 bp = Blueprint("presets", __name__)
 
+# Hardware fields that may be overridden per node (everything else in a preset
+# is shared cluster-wide). A node's overrides live in preset["node_overrides"].
+PRESET_HARDWARE_KEYS = ("n_gpu_layers", "threads", "memory_limit", "gpu_devices", "parallel")
+
+
+def resolve_preset_for_node(preset: dict | None, node_id: str) -> dict | None:
+    """Overlay a node's hardware overrides onto the shared base preset."""
+    if not preset:
+        return preset
+    overrides = (preset.get("node_overrides") or {}).get(node_id)
+    if not overrides:
+        return preset
+    merged = dict(preset)
+    for key in PRESET_HARDWARE_KEYS:
+        if key in overrides and overrides[key] is not None:
+            merged[key] = overrides[key]
+    return merged
+
 
 def _normalize_model_path(model_path: str) -> str:
     """Ensure model_path is an absolute path (leading /).
@@ -53,6 +71,11 @@ def api_preset_save(model_path):
         return jsonify({"error": proxy_sampling_err}), 400
     # Preserve existing meta fields (favorite, note) that aren't part of the launch form
     existing = get_storage().get_preset(model_path) or {}
+    if not isinstance(existing, dict):
+        existing = {}
+    # Group/fallback are meaningless without share_queue; drop them so a stale
+    # value can't leak into the preset and surface on the next launch.
+    share_queue_on = bool(body.get("share_queue", False))
     data = {
         "n_gpu_layers": body.get("n_gpu_layers", -1),
         "ctx_size": ctx_size,
@@ -66,12 +89,31 @@ def api_preset_save(model_path):
         "idle_timeout_min": body.get("idle_timeout_min", 0),
         "max_concurrent": body.get("max_concurrent", 0),
         "max_queue_depth": body.get("max_queue_depth", 200),
-        "share_queue": body.get("share_queue", False),
+        "share_queue": share_queue_on,
+        # Cluster: alias-based group key + fallback role. Normalized at the
+        # boundary so cluster matching (lowercased) stays consistent. Empty
+        # group = legacy "group by filename".
+        "share_queue_group": (body.get("share_queue_group") or "").strip().lower() if share_queue_on else "",
+        "share_queue_fallback": bool(body.get("share_queue_fallback", False)) if share_queue_on else False,
         "embedding_model": body.get("embedding_model", False),
+        "auto_restart_on_crash": body.get("auto_restart_on_crash", False),
         "favorite": body.get("favorite", existing.get("favorite", False)),
         "note": body.get("note", existing.get("note", "")),
         **proxy_sampling_config,
     }
+
+    # Cluster: when a target node is named, the form's hardware fields are that
+    # node's override; the shared base hardware is kept from the existing preset.
+    node_overrides = dict(existing.get("node_overrides", {}))
+    override_node_id = (body.get("override_node_id") or "").strip()
+    if override_node_id:
+        node_overrides[override_node_id] = {k: body.get(k) for k in PRESET_HARDWARE_KEYS}
+        for key in PRESET_HARDWARE_KEYS:
+            if key in existing:
+                data[key] = existing[key]  # don't let an override edit move the base
+    if node_overrides:
+        data["node_overrides"] = node_overrides
+
     get_storage().save_preset(model_path, data)
     _apply_live_preset_changes(model_path, data)
     return jsonify({"status": "saved"})
@@ -111,6 +153,15 @@ def _apply_live_preset_changes(model_path: str, preset: dict) -> None:
             config["max_concurrent"] = preset.get("max_concurrent", 0)
             config["max_queue_depth"] = preset.get("max_queue_depth", 200)
             config["share_queue"] = preset.get("share_queue", False)
+            # share_queue_group propagates live for routing purposes, but
+            # llama-server was launched with the OLD --alias (or none); direct
+            # hits to the instance port still advertise the old name until
+            # relaunch. Routing through the cluster/compat layer uses the
+            # live value, so the inconsistency is cosmetic. share_queue_fallback
+            # is pure routing policy, fully live.
+            config["share_queue_group"] = (preset.get("share_queue_group") or "").strip().lower()
+            config["share_queue_fallback"] = bool(preset.get("share_queue_fallback", False))
+            config["auto_restart_on_crash"] = preset.get("auto_restart_on_crash", False)
             for f in _LIVE_PROXY_SAMPLING_FIELDS:
                 if f in preset:
                     config[f] = preset[f]

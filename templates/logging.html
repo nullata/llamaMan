@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LlamaMan — Logging</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='fontawesome-free-7.1.0-web/css/all.min.css') }}" />
+  <link rel="icon" href="{{ url_for('static', filename='images/logo.svg') }}" type="image/svg+xml" />
+</head>
+
+<body>
+
+  <header>
+    <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="null" class="header-logo" />
+    <h1>LlamaMan</h1>
+    <div class="header-spacer"></div>
+    <nav class="header-nav" aria-label="Primary">
+      <a href="/" class="nav-link" title="Back to dashboard"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
+      <span class="header-separator" aria-hidden="true">|</span>
+      <a href="/logout" class="nav-link nav-link-logout" title="Logout"><i
+          class="fa-solid fa-right-from-bracket"></i></a>
+    </nav>
+  </header>
+
+  <div class="logging-page">
+    <div class="card">
+      <div class="logging-header">
+        <h2 class="logging-title"><i class="fa-solid fa-chart-column"></i> Request Logging</h2>
+        <div class="logging-window" id="logging-window" role="group" aria-label="Time window">
+          <button type="button" class="lw-btn" data-hours="24">24h</button>
+          <button type="button" class="lw-btn" data-hours="168">7d</button>
+          <button type="button" class="lw-btn" data-hours="720">30d</button>
+          <button type="button" class="lw-btn active" data-hours="0">All</button>
+        </div>
+      </div>
+      <div id="logging-recording-banner" class="logging-banner" hidden></div>
+      <div id="logging-stats" class="stats-grid"></div>
+      <div id="logging-span" class="stats-span"></div>
+    </div>
+
+    <div class="card">
+      <h2 class="logging-title">Recent Conversations</h2>
+      <div id="logging-conversations" class="logging-conv-list">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Conversation detail -->
+  <div class="modal-overlay" id="conv-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="conv-modal-title">Conversation</h3>
+        <button class="btn-icon" id="btn-close-conv" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <div id="conv-body">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="{{ url_for('static', filename='js/utils.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/logging.js') }}"></script>
+</body>
+
+</html>
