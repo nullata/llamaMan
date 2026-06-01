@@ -9,7 +9,7 @@
 # See cluster-loadtest.sh for the full rules on ENTRY port choice and what
 # balancing actually requires (Share queue ON, Max Concurrent > 0, >1 node).
 
-SECRET="llm-V8XJNoHTBAYw-mRJ0-1wVgwtvd2l_IFvKhzQP-DJivI"
+SECRET="YOUR_API_KEY_HERE"
 ENTRY="${ENTRY:-http://localhost:42069}"
 
 MODEL="gpt-oss-20b-Q4_K_M"

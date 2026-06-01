@@ -15,7 +15,7 @@
 # ON and Max Concurrent > 0; the requests must overlap (that's why they run
 # concurrently). A single sequential request stays on the entry node by design.
 
-SECRET="llm-V8XJNoHTBAYw-mRJ0-1wVgwtvd2l_IFvKhzQP-DJivI"
+SECRET="YOUR_API_KEY_HERE"
 ENTRY="${ENTRY:-http://localhost:42069}"
 
 MODEL="gpt-oss-20b-Q4_K_M"
