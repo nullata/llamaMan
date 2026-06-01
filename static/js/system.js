@@ -168,6 +168,9 @@ async function loadSettings() {
     const ollamaOverrideToggle = document.getElementById('s-allow-ollama-override-admin');
     if (ollamaOverrideToggle) ollamaOverrideToggle.checked = !!s.allow_ollama_api_override_admin;
 
+    const clusterHideOfflineToggle = document.getElementById('s-cluster-hide-offline-monitoring');
+    if (clusterHideOfflineToggle) clusterHideOfflineToggle.checked = !!s.cluster_hide_offline_monitoring;
+
     const recordingModeSelect = document.getElementById('s-recording-mode');
     if (recordingModeSelect) {
       const mode = s.recording_mode === 'per_request' || s.recording_mode === 'per_conversation'
@@ -257,12 +260,14 @@ function updateAuthHint() {
 }
 
 function updateAdminUiEvictionHint() {
+  // The hint is now the info-tip beside the label, so update its tooltip
+  // (data-tip) rather than textContent - the latter would wipe out the icon.
   const hint = document.getElementById('admin-ui-eviction-hint');
   const toggle = document.getElementById('s-admin-ui-enforce-max-models');
   if (!hint || !toggle) return;
-  hint.textContent = toggle.checked
+  hint.setAttribute('data-tip', toggle.checked
     ? 'Admin UI launches will evict the least-recently-used non-embedding model when the cap is full.'
-    : 'Admin UI launches can go beyond the cap after a confirmation prompt instead of evicting an existing model.';
+    : 'Admin UI launches can go beyond the cap after a confirmation prompt instead of evicting an existing model.');
 }
 
 async function saveRequireAuth() {
@@ -290,13 +295,15 @@ async function saveRequireAuth() {
 async function saveAppSettings() {
   const adminToggle = document.getElementById('s-admin-ui-enforce-max-models');
   const ollamaToggle = document.getElementById('s-allow-ollama-override-admin');
+  const clusterHideOfflineToggle = document.getElementById('s-cluster-hide-offline-monitoring');
   const recordingModeSelect = document.getElementById('s-recording-mode');
   const recordingRetentionInput = document.getElementById('s-recording-retention-days');
-  if (!adminToggle && !ollamaToggle && !recordingModeSelect && !recordingRetentionInput) return;
+  if (!adminToggle && !ollamaToggle && !clusterHideOfflineToggle && !recordingModeSelect && !recordingRetentionInput) return;
   try {
     const payload = {};
     if (adminToggle) payload.admin_ui_enforce_max_models = adminToggle.checked;
     if (ollamaToggle) payload.allow_ollama_api_override_admin = ollamaToggle.checked;
+    if (clusterHideOfflineToggle) payload.cluster_hide_offline_monitoring = clusterHideOfflineToggle.checked;
     if (recordingModeSelect) payload.recording_mode = recordingModeSelect.value;
     if (recordingRetentionInput) {
       const n = parseInt(recordingRetentionInput.value, 10);
@@ -386,6 +393,18 @@ if (adminUiEvictionToggle) {
 const ollamaOverrideToggle = document.getElementById('s-allow-ollama-override-admin');
 if (ollamaOverrideToggle) {
   ollamaOverrideToggle.addEventListener('change', saveAppSettings);
+}
+
+const clusterHideOfflineToggle = document.getElementById('s-cluster-hide-offline-monitoring');
+if (clusterHideOfflineToggle) {
+  clusterHideOfflineToggle.addEventListener('change', () => {
+    saveAppSettings();
+    // Reflect on the monitoring cards now instead of waiting for the cluster poll.
+    if (typeof isClusterActive === 'function' && isClusterActive()
+        && typeof renderClusterStats === 'function' && window.clusterState) {
+      renderClusterStats(window.clusterState.nodes || []);
+    }
+  });
 }
 
 const recordingModeSelect = document.getElementById('s-recording-mode');
@@ -734,7 +753,7 @@ async function loadImages() {
           <span class="list-meta-date">${escHtml(sizeMb)}</span>
           <span class="list-meta-date">pulled: ${escHtml(pulledAt)}</span>
           <button class="btn-xs btn-image-pull" data-image="${escHtml(img.name)}">
-            <i class="fa-solid fa-arrow-down-to-line"></i> Pull
+            <i class="fa-solid fa-arrow-down"></i> Pull
           </button>
           <button class="btn-xs danger btn-image-delete" data-image="${escHtml(img.name)}" title="Delete (blocked while a running instance uses it)">
             <i class="fa-solid fa-trash"></i>

@@ -506,6 +506,20 @@ header span {
   display: contents;
 }
 
+/* Label + info-tip share the first column; keep the icon hugging the label text
+   rather than letting .label-row's space-between push it to the column edge
+   (columns here are sized to the widest row). Mirrors the launch grid override. */
+.cleanup-settings-grid .label-row {
+  width: auto;
+  justify-content: flex-start;
+}
+
+/* These toggle rows used to rely on a col-3 hint paragraph to fill the row; now
+   that the hint lives in the label's info-tip, pin label/toggle to their columns
+   so each pair stays on its own row instead of bleeding into the empty col 3. */
+.cleanup-settings-grid .cleanup-toggle-grid > .label-row { grid-column: 1; }
+.cleanup-settings-grid .cleanup-toggle-grid > .label-row + .toggle-switch { grid-column: 2; }
+
 .cleanup-settings-grid .cleanup-input-row {
   display: contents;
 }
@@ -1922,12 +1936,19 @@ body.login-page {
    Logging page (/logging)
    --------------------------------------------------------------------------- */
 .logging-page {
-  max-width: 1100px;
+  max-width: 1320px;
   margin: 0 auto;
   padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  /* body is height:100vh/overflow:hidden, so this needs to be its own scroll
+     container (like the dashboard's .main) or its content gets clipped with no
+     way to scroll. flex:1 fills the space under the header; min-height:0 lets a
+     tall conversations list actually overflow-scroll instead of pushing out. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .logging-header {
@@ -1984,7 +2005,7 @@ body.login-page {
 
 .logging-conv-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 140px 90px 90px 90px;
+  grid-template-columns: minmax(0, 1fr) 200px 80px 110px 160px;
   align-items: center;
   gap: 12px;
   width: 100%;

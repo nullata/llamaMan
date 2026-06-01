@@ -54,6 +54,7 @@ DEFAULT_RETRY_COUNT_PER_FAILED_DOWNLOAD = 3
 DEFAULT_RECORDING_MODE = "off"
 VALID_RECORDING_MODES = ("off", "per_request", "per_conversation")
 DEFAULT_RECORDING_RETENTION_DAYS = 30
+DEFAULT_CLUSTER_HIDE_OFFLINE_MONITORING = False
 
 
 def _get_hf_tokens() -> list[dict]:
@@ -143,6 +144,11 @@ def _normalize_settings_patch(settings: dict) -> dict:
             default=DEFAULT_RECORDING_RETENTION_DAYS,
             minimum=0,
         )
+    if "cluster_hide_offline_monitoring" in normalized:
+        normalized["cluster_hide_offline_monitoring"] = _coerce_bool(
+            normalized.get("cluster_hide_offline_monitoring"),
+            default=DEFAULT_CLUSTER_HIDE_OFFLINE_MONITORING,
+        )
     return normalized
 
 
@@ -169,6 +175,10 @@ def _apply_settings_defaults(settings: dict) -> dict:
         normalized.get("recording_retention_days"),
         default=DEFAULT_RECORDING_RETENTION_DAYS,
         minimum=0,
+    )
+    normalized["cluster_hide_offline_monitoring"] = _coerce_bool(
+        normalized.get("cluster_hide_offline_monitoring"),
+        default=DEFAULT_CLUSTER_HIDE_OFFLINE_MONITORING,
     )
     return normalized
 

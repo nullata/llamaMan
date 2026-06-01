@@ -64,27 +64,6 @@
     <!-- Main -->
     <main class="main">
 
-      <!-- System Info (CPU & RAM) -->
-      <div class="card" id="system-info-card">
-        <div class="section-heading">
-          <h2>System</h2>
-          <span id="system-cores" class="text-meta"></span>
-          <button class="btn-icon btn-icon-sm" id="btn-refresh-system" title="Refresh system info"><i
-              class="fa-solid fa-arrows-rotate"></i></button>
-        </div>
-        <div id="system-info-bars"></div>
-      </div>
-
-      <!-- GPU VRAM Indicator -->
-      <div class="card" id="gpu-vram-card">
-        <div class="section-heading">
-          <h2>GPU VRAM</h2>
-          <button class="btn-icon btn-icon-sm" id="btn-refresh-gpu" title="Refresh GPU info"><i
-              class="fa-solid fa-arrows-rotate"></i></button>
-        </div>
-        <div id="gpu-vram-bars"></div>
-      </div>
-
       <!-- Settings -->
       <div class="card tabbed-card" data-tab-group="settings" data-default-tab="launch">
         <div class="section-heading collapsible-heading" data-section="settings">
@@ -331,17 +310,19 @@
                       <label for="f-share-queue-group">Queue group name <span class="muted">(optional)</span></label>
                       <span class="info-tip" tabindex="0" role="button" aria-label="Queue group help" data-tip="Override the implicit same-filename grouping. Instances on different nodes with the same group name pool into one queue, even if they're running different quants or files. Empty = group by filename (default)."><i class="fa-solid fa-circle-info"></i></span>
                     </span>
-                    <input id="f-share-queue-group" type="text" placeholder="qwen2.5-14b" />
+                    <input id="f-share-queue-group" type="text" placeholder="llama3.1-8b" />
                   </div>
                   <div class="form-group launch-toggle-table" style="margin-top: 8px;">
                     <div class="launch-toggle-pair">
-                      <label for="f-share-queue-fallback">Fallback only</label>
+                      <span class="label-row">
+                        <label for="f-share-queue-fallback">Fallback only</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="Fallback only help" data-tip="Serve only when every non-fallback instance in the group is at capacity or unreachable."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
                       <label class="toggle-switch" for="f-share-queue-fallback" aria-label="Fallback only">
                         <input id="f-share-queue-fallback" type="checkbox" />
                         <span class="toggle-slider"></span>
                       </label>
                     </div>
-                    <span class="muted" style="grid-column: 3 / -1; align-self: center;">Serve only when every non-fallback instance in the group is at capacity or unreachable.</span>
                   </div>
                 </div>
               </div>
@@ -422,23 +403,27 @@
             aria-labelledby="settings-tab-btn-appsettings" data-tab-panel="appsettings" hidden>
             <div class="cleanup-settings-grid">
               <div class="form-group cleanup-toggle-grid">
-                <label for="s-admin-ui-enforce-max-models">Enforce <code>LLAMAMAN_MAX_MODELS</code> for admin UI launches</label>
+                <span class="label-row">
+                  <label for="s-admin-ui-enforce-max-models">Enforce <code>LLAMAMAN_MAX_MODELS</code> for admin UI launches</label>
+                  <span id="admin-ui-eviction-hint" class="info-tip" tabindex="0" role="button" aria-label="Enforce LLAMAMAN_MAX_MODELS help" data-tip="Admin UI launches can go beyond the cap after a confirmation prompt instead of evicting an existing model."><i class="fa-solid fa-circle-info"></i></span>
+                </span>
                 <label class="toggle-switch" for="s-admin-ui-enforce-max-models"
                   aria-label="Enforce LLAMAMAN_MAX_MODELS for admin UI launches">
                   <input id="s-admin-ui-enforce-max-models" type="checkbox" />
                   <span class="toggle-slider"></span>
                 </label>
               </div>
-              <p id="admin-ui-eviction-hint" class="hint-text">When off, admin UI launches can go beyond the cap after a confirmation prompt instead of evicting an existing model.</p>
               <div class="form-group cleanup-toggle-grid">
-                <label for="s-allow-ollama-override-admin">Allow Ollama API to evict admin-launched models</label>
+                <span class="label-row">
+                  <label for="s-allow-ollama-override-admin">Allow Ollama API to evict admin-launched models</label>
+                  <span class="info-tip" tabindex="0" role="button" aria-label="Allow Ollama API eviction help" data-tip="When off (default), the API cannot load models if admin-launched models fill the cap. When on, the API may evict admin-launched models using LRU."><i class="fa-solid fa-circle-info"></i></span>
+                </span>
                 <label class="toggle-switch" for="s-allow-ollama-override-admin"
                   aria-label="Allow Ollama API to evict admin-launched models">
                   <input id="s-allow-ollama-override-admin" type="checkbox" />
                   <span class="toggle-slider"></span>
                 </label>
               </div>
-              <p class="hint-text">When off (default), the API cannot load models if admin-launched models fill the cap. When on, the API may evict admin-launched models using LRU.</p>
               <div class="cleanup-section-divider" aria-hidden="true"></div>
               <div class="form-group cleanup-input-row">
                 <label for="s-recording-mode">Request recording</label>
@@ -536,13 +521,14 @@
                   class="fa-solid fa-floppy-disk"></i> Save</button>
               <span id="image-settings-status" class="status-text"></span>
             </div>
-            <p class="hint-text">Changes take effect on the next instance launch.</p>
+            <p class="hint-text" style="margin-top: 12px;">Changes take effect on the next instance launch.</p>
             <div class="cleanup-section-divider" aria-hidden="true"></div>
+            <div class="cluster-section-label">Manage Docker images</div>
             <div class="form-actions">
               <input id="f-image-pull-name" class="form-input" type="text"
                 placeholder="ghcr.io/ggml-org/llama.cpp:server-cuda" style="flex:1" />
               <button class="btn btn-secondary" type="button" id="btn-pull-by-name">
-                <i class="fa-solid fa-arrow-down-to-line"></i> Pull image
+                <i class="fa-solid fa-arrow-down"></i> Pull image
               </button>
             </div>
             <div id="image-pull-status" class="hint-text" hidden></div>
@@ -574,15 +560,48 @@
 
           <div class="tab-panel" id="settings-tab-cluster" role="tabpanel"
             aria-labelledby="settings-tab-btn-cluster" data-tab-panel="cluster" hidden>
-            <p class="hint-text">Run several LlamaMan deployments as one cluster. Nodes discover each other through the shared storage backend and trust one <code>CLUSTER_SECRET</code>. Set <code>CLUSTER_ENABLED</code>, <code>CLUSTER_SECRET</code> and <code>CLUSTER_ADVERTISE_URL</code> on each node, then point them all at the same database.</p>
+            <p class="hint-text">Run several LlamaMan deployments as one cluster. Nodes discover each other through the shared storage backend and trust one <code>CLUSTER_SECRET</code>.</p>
+            <p class="hint-text">Set <code>CLUSTER_ENABLED</code>, <code>CLUSTER_SECRET</code> and <code>CLUSTER_ADVERTISE_URL</code> on each node, then point them all at the same database.</p>
             <div id="cluster-disabled-hint" class="list-empty-state" hidden>
               Clustering is not enabled on this node. Set <code>CLUSTER_ENABLED=true</code>, a shared <code>CLUSTER_SECRET</code>, and this node's <code>CLUSTER_ADVERTISE_URL</code>, then restart.
             </div>
             <div id="cluster-self-card" hidden></div>
+            <div class="form-group cleanup-toggle-grid" style="margin-top: 16px;">
+              <span class="label-row">
+                <label for="s-cluster-hide-offline-monitoring">Hide long-offline nodes from resource monitors</label>
+                <span class="info-tip" tabindex="0" role="button" aria-label="Hide long-offline nodes help" data-tip="When on, a node silent for over 10 minutes is dropped from the System and GPU monitoring cards only. It stays listed under Cluster nodes below, in the node selectors, and remains reachable for inference."><i class="fa-solid fa-circle-info"></i></span>
+              </span>
+              <label class="toggle-switch" for="s-cluster-hide-offline-monitoring"
+                aria-label="Hide long-offline nodes from resource monitors">
+                <input id="s-cluster-hide-offline-monitoring" type="checkbox" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
             <div class="cluster-section-label" id="cluster-nodes-label" hidden>Cluster nodes</div>
             <div id="cluster-nodes-list"></div>
           </div>
         </div>
+      </div>
+
+      <!-- System Info (CPU & RAM) -->
+      <div class="card" id="system-info-card">
+        <div class="section-heading">
+          <h2>System</h2>
+          <span id="system-cores" class="text-meta"></span>
+          <button class="btn-icon btn-icon-sm" id="btn-refresh-system" title="Refresh system info"><i
+              class="fa-solid fa-arrows-rotate"></i></button>
+        </div>
+        <div id="system-info-bars"></div>
+      </div>
+
+      <!-- GPU VRAM Indicator -->
+      <div class="card" id="gpu-vram-card">
+        <div class="section-heading">
+          <h2>GPU VRAM</h2>
+          <button class="btn-icon btn-icon-sm" id="btn-refresh-gpu" title="Refresh GPU info"><i
+              class="fa-solid fa-arrows-rotate"></i></button>
+        </div>
+        <div id="gpu-vram-bars"></div>
       </div>
 
       <!-- Instances -->

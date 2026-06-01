@@ -7,8 +7,27 @@
 // system.js (to yield the System/GPU cards to per-node rendering).
 window.clusterState = { enabled: false, self_id: null, selfName: null, nodes: [] };
 
+// A node silent for longer than this counts as "long offline". When the cluster
+// setting "hide long-offline nodes from monitors" is on, such nodes are dropped
+// from the resource-monitoring cards ONLY - they stay in the Cluster nodes list,
+// the node selectors, and remain routable. This is the longer companion to the
+// server-side online/offline-dot window (NODE_ONLINE_WINDOW_S).
+const CLUSTER_STALE_HIDE_S = 600;  // 10 minutes
+
 function isClusterActive() {
   return !!(window.clusterState && window.clusterState.enabled && window.clusterState.nodes.length > 0);
+}
+
+// Seconds since this node last heartbeated. Prefers the backend's skew-proof
+// DB-clock age (MariaDB sets heartbeat_age_s); falls back to wall-clock from
+// last_heartbeat_at (JSON backend / single host). Unknown => treat as stale.
+function nodeStaleSeconds(n) {
+  if (typeof n.heartbeat_age_s === 'number') return n.heartbeat_age_s;
+  if (n.last_heartbeat_at) {
+    const t = new Date(n.last_heartbeat_at).getTime();
+    if (!isNaN(t)) return (Date.now() - t) / 1000;
+  }
+  return Infinity;
 }
 
 async function loadClusterNodes() {
@@ -203,12 +222,21 @@ function nodeReachBadge(n) {
 // Per-node System + GPU cards (reuses the single-node bar markup)
 // -------------------------------------------------------------------------
 function renderClusterStats(nodes) {
+  // The cluster setting "hide long-offline nodes from monitors" trims nodes silent
+  // past CLUSTER_STALE_HIDE_S from THESE resource cards only - they remain in the
+  // Settings > Cluster nodes list, in the node selectors, and routable. Self (the
+  // local node) is always shown.
+  const hideStale = !!document.getElementById('s-cluster-hide-offline-monitoring')?.checked;
+  const shown = hideStale
+    ? nodes.filter(n => n.is_self || nodeStaleSeconds(n) <= CLUSTER_STALE_HIDE_S)
+    : nodes;
+
   const coresLabel = document.getElementById('system-cores');
-  if (coresLabel) coresLabel.textContent = `${nodes.length} node${nodes.length !== 1 ? 's' : ''}`;
+  if (coresLabel) coresLabel.textContent = `${shown.length} node${shown.length !== 1 ? 's' : ''}`;
 
   const sysContainer = document.getElementById('system-info-bars');
   if (sysContainer) {
-    sysContainer.innerHTML = nodes.map(n => `
+    sysContainer.innerHTML = shown.map(n => `
       <div class="cluster-node-group">
         <div class="cluster-node-head">${nodeOnlineDot(n)} <strong>${escHtml(n.node_name || '')}</strong>
           ${clusterCoresLabel(n)}</div>
@@ -220,7 +248,7 @@ function renderClusterStats(nodes) {
   const gpuContainer = document.getElementById('gpu-vram-bars');
   if (gpuCard) gpuCard.style.display = '';
   if (gpuContainer) {
-    gpuContainer.innerHTML = nodes.map(n => `
+    gpuContainer.innerHTML = shown.map(n => `
       <div class="cluster-node-group">
         <div class="cluster-node-head">${nodeOnlineDot(n)} <strong>${escHtml(n.node_name || '')}</strong></div>
         ${gpuBarsHtml((n.snapshot || {}).gpus)}
