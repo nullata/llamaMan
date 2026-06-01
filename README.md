@@ -10,8 +10,10 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 
 - **Universal GPU support** - one `Dockerfile` and image flow for NVIDIA, AMD (ROCm), Intel Arc, and CPU. The GPU vendor and matching `LLAMA_IMAGE` are auto-detected at startup; `GPU_TYPE` / `LLAMA_IMAGE` override if needed.
 - **Flexible deployment** - run llamaman in Docker (default) or bare-metal on the host (e.g. under WSL). It auto-detects which and reaches spawned containers accordingly.
+- **Multi-node clustering** *(optional)* - run several llamaman deployments as one cluster sharing a database and a secret: aggregated dashboard, cross-node launches/pulls/downloads, and multi-node shared-queue load balancing. Off by default; single-node installs are unaffected.
 - **Model library** - scans `/models` for GGUF files, shows quant type and file size
-- **One-click launch** - configure GPU layers, context size, threads, multi-GPU, extra args
+- **One-click launch** - configure GPU layers, context size, threads, multi-GPU, speculative decoding, extra args
+- **Speculative decoding (MTP)** - optional `--spec-type draft-mtp` toggle with a configurable draft length, for models with MTP heads
 - **Preset configs** - save/load per-model launch settings, with live updates to running instances where possible
 - **Download manager** - pull models from HuggingFace with speed throttling and auto-retry on failure
 - **Model backup and restore** - export all model metadata and presets to JSON, restore on any instance by re-queuing missing downloads automatically
@@ -19,6 +21,7 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **GPU VRAM indicator** - per-GPU VRAM and utilization, queried natively (no running instance required)
 - **Container resource monitoring** - live CPU%, core quota, RAM usage with thin progress bars, and GPU assignment per running instance card
 - **Per-instance stats** - a Stats button on each instance card surfaces throughput (tokens/s), time-to-first-token, latency, and token totals rolled up from the request log
+- **Request log dashboard** - a dedicated Logging page with summary tiles, a conversations list, and per-conversation drill-down over the recorded request log, filterable by time window
 - **Request recording** - optionally record proxied requests/responses per request or per conversation, with configurable retention
 - **Idle timeout** - auto-sleep instances after configurable idle period, wake on next request
 - **Ollama-compatible proxy** - OpenWebUI discovers models and auto-starts servers on demand
@@ -70,6 +73,8 @@ Before starting, edit `docker-compose.yml` and set the two host path variables t
 ```
 
 These must be the real paths on the Docker host. LlamaMan passes them to the Docker daemon when spawning sibling llama-server containers, so they must resolve on the host - not inside the llamaman container.
+
+The bundled `docker-compose.yml` also sets **`LLAMAMAN_NODE_NAME`** (default `srv1`) - a unique, stable identity for this deployment that is **required for every install**. The default is fine for a single node; give each host a distinct value if you run more than one (see [Clustering](#clustering)). Pick it once and keep it - changing it later orphans this node's stored instances and presets.
 
 **NVIDIA:**
 ```bash
@@ -204,6 +209,8 @@ When you select a GGUF model, LlamaMan reads the file's metadata to detect the t
 | **Memory Limit** | _(none)_ | Hard memory cap for the llama-server container (e.g. `32g`, `8192m`). Equivalent to `deploy.resources.limits.memory` in Docker Compose. Leave blank for no limit. |
 | **GPU Devices** | _(global default)_ | Comma-separated GPU indices to make visible to this container (e.g. `0,1`). Overrides `LLAMA_GPU_DEVICES` for this instance. Leave blank (or the literal `all`) to expose all GPUs. The instance card labels exactly the GPUs selected here. Not supported on Intel Arc. |
 | **Extra Args** | _(empty)_ | Additional flags passed directly to llama-server (e.g. `--flash-attn`). |
+| **Speculative Decoding (MTP)** | off | Runs the model with MTP speculative decoding (`--spec-type draft-mtp`). Requires a model built with MTP heads. For other speculative-decoding types, pass the flags via **Extra Args** instead. |
+| **Draft N Max** | `2` | Max tokens drafted per step (`--spec-draft-n-max`), used when speculative decoding is on. Leave blank to use llama.cpp's default. |
 | **Proxy Sampling Overrides** | off | When enabled, the proxy forces the configured sampling parameters on every request forwarded to this instance, regardless of what the client sends. |
 | **Temperature** | `0.8` | Sampling temperature to enforce (range: `0.0`–`2.0`). Only active when proxy sampling overrides are enabled. |
 | **Top K** | `40` | Top-k sampling value to enforce (min: `0`). Only active when proxy sampling overrides are enabled. |
@@ -257,6 +264,10 @@ Each record captures the request/response bodies plus envelope fields - model, e
 ### Per-instance stats
 
 Each instance card has a **Stats** button that opens a modal summarizing that instance's recorded traffic: request count (and errors), average and peak throughput, average time-to-first-token, average latency, prompt/completion/total tokens, and the active time span. Because the numbers are rolled up from the request log, the modal shows an empty state prompting you to enable recording when it's off, and stats persist even after the instance is stopped. Throughput and TTFT use the accurate per-turn metrics captured at generation time rather than re-derived end-to-end figures.
+
+### Request log dashboard
+
+The **Logging** link in the header opens a full-page view of the recorded request log: summary tiles (token totals, average/peak throughput, TTFT, latency, error and streamed counts), a recent-conversations list, and a per-conversation drill-down that shows prompts and responses first with the metrics tucked into a collapsible. A time-window selector (24h / 7d / 30d / All) scopes every figure. Like the per-instance stats, it reads from the request log, so enable **Request recording** for it to populate.
 
 ## Idle Timeout
 
@@ -418,12 +429,43 @@ environment:
 
 Tables are auto-created on first connection. Requires `sqlalchemy` and `pymysql` (included in requirements).
 
+## Clustering
+
+*Optional, off by default - single-node installs are completely unaffected.*
+
+Clustering lets several LlamaMan deployments act as **one logical cluster**: a single dashboard that aggregates every node's GPUs, instances, and downloads, with cross-node launches/pulls/downloads and multi-node shared-queue load balancing. Nodes discover each other automatically through the shared storage backend - no pairwise key exchange.
+
+**Requirements:**
+
+- **A shared storage backend.** Every node must point at the **same** `DATABASE_URL` (MariaDB/MySQL) - the database doubles as the node registry and coordination store. The JSON backend is per-host and cannot be shared.
+- **A unique `LLAMAMAN_NODE_NAME` per node.** This is each node's identity in the cluster (and the partition key for its own rows). Required for every install, clustered or not.
+- **The same `CLUSTER_SECRET` on every node.** It's the bearer token (sent as `X-Cluster-Secret`) for all node-to-node HTTP.
+- **`CLUSTER_ADVERTISE_URL` per node** if you want cross-node *actions*. It's how peers reach this node - a hostname/IP routable from the **other** hosts (not `localhost`), e.g. `http://srv1:5000`. A node without one still appears in the shared dashboard but is view-only and is skipped as an inference target.
+
+Set on **each** node (only `LLAMAMAN_NODE_NAME` and `CLUSTER_ADVERTISE_URL` differ between them):
+
+```yaml
+environment:
+  - LLAMAMAN_NODE_NAME=srv1                 # unique per node
+  - DATABASE_URL=mysql+pymysql://llamaman:pass@db-host:3306/llamaman   # identical on all nodes
+  - CLUSTER_ENABLED=true
+  - CLUSTER_SECRET=a-long-shared-random-secret   # identical on all nodes
+  - CLUSTER_ADVERTISE_URL=http://srv1:5000  # this node's address, routable from peers
+```
+
+Each node heartbeats every ~5s; a node silent past `CLUSTER_NODE_ONLINE_WINDOW_S` (default 45s) is shown offline. Inspect and manage the cluster under **Settings >> Cluster**.
+
+**Per-node vs shared settings:** most settings are shared cluster-wide via the database, but a few are scoped per node because they're host-specific: the tracked **Docker images** (a CUDA host and a ROCm host differ) and the two model-cap eviction toggles (**Enforce `LLAMAMAN_MAX_MODELS` for admin UI launches** and **Allow Ollama API to evict admin-launched models**). Existing single-node values are inherited until a node overrides them.
+
+> **Security:** the cluster secret lets any peer drive actions on this node. Run node-to-node traffic over a trusted network or behind TLS.
+
 ## Environment Variables
 
 ### Core
 
 | Variable | Default | Description |
 |---|---|---|
+| `LLAMAMAN_NODE_NAME` | _(required)_ | **Required - the app refuses to start without it.** Unique, stable identity for this deployment: the partition key for its instances, downloads, and per-node settings in storage, and its key in the cluster registry. Any string (`srv1`, a hostname, a uuid). Pick once and keep it - changing it later orphans this node's stored state. |
 | `MODELS_DIR` | `/models` | Directory scanned for model files (container path) |
 | `DATA_DIR` | `/data` | Directory for persistent config/state (JSON files) |
 | `RECORDINGS_DIR` | `{DATA_DIR}/request_log` | Directory for per-conversation request log records. JSON backend only - ignored when `DATABASE_URL` is set. |
@@ -454,6 +496,17 @@ Tables are auto-created on first connection. Requires `sqlalchemy` and `pymysql`
 | `LLAMA_HOST_ADDR` | `localhost` | Host address used to reach spawned containers' published ports when running bare-metal. Change only if those ports are published on a non-loopback address. |
 | `GPU_TYPE` | _(auto-detect)_ | Override GPU vendor detection: `cuda` (NVIDIA), `rocm` (AMD), `intel` (Intel Arc). Leave unset to let LlamaMan probe the host automatically. |
 | `LLAMA_GPU_DEVICES` | _(unset = all)_ | Comma-separated GPU indices visible to all spawned llama-server containers, e.g. `0,1,3`. Unset exposes all GPUs. Per-instance **GPU Devices** overrides this when set. Not supported on Intel Arc. |
+
+### Clustering
+
+Optional - leave unset for single-node installs. See [Clustering](#clustering). (`LLAMAMAN_NODE_NAME`, listed under **Core**, is required for all installs and is also each node's cluster identity.)
+
+| Variable | Default | Description |
+|---|---|---|
+| `CLUSTER_ENABLED` | `false` | Set `true`/`1`/`yes`/`on` to join this node to a cluster. Requires `CLUSTER_SECRET`; ignored with a warning if the secret is empty. |
+| `CLUSTER_SECRET` | _(unset)_ | Shared bearer secret sent on every node-to-node call (`X-Cluster-Secret`). Must be identical on every node. Use a long random value over a trusted network or behind TLS. |
+| `CLUSTER_ADVERTISE_URL` | _(unset)_ | How peers reach **this** node's UI/API - a hostname/IP routable from the other hosts (e.g. `http://srv1:5000`), not `localhost`. Needed for cross-node actions and shared-queue inference forwarding; a node without it is view-only in the dashboard and skipped as an inference target. |
+| `CLUSTER_NODE_ONLINE_WINDOW_S` | `45` | Seconds since a node's last heartbeat before it's shown offline. Raise it if nodes flap offline under load or clock skew (e.g. an unsynced WSL host). |
 
 ## REST API
 

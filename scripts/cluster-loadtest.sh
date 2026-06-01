@@ -26,7 +26,7 @@ ENTRY="${ENTRY%/}"
 
 [[ -n "$SECRET" && -n "$MODEL" ]] || {
   echo "set CLUSTER_SECRET, MODEL (and ENTRY). e.g.:" >&2
-  echo "  CLUSTER_SECRET=xxx ENTRY=http://srv1:5000 MODEL=Qwen3.6-35B-A3B-UD-IQ1_M $0 8" >&2
+  echo "  CLUSTER_SECRET=xxx ENTRY=http://srv1:5000 MODEL=${MODEL} $0 8" >&2
   exit 1
 }
 

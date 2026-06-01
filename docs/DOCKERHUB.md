@@ -17,6 +17,7 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **GPU VRAM indicator** - per-GPU VRAM and utilization, queried natively (no running instance required)
 - **Container resource monitoring** - live CPU%, core quota, RAM usage with thin progress bars, and GPU assignment per running instance card
 - **Per-instance stats** - a Stats button on each instance card surfaces throughput (tokens/s), time-to-first-token, latency, and token totals rolled up from the request log
+- **Request log dashboard** - a dedicated Logging page with summary tiles, a conversations list, and per-conversation drill-down over the recorded request log, filterable by time window
 - **Request recording** - optionally record proxied requests/responses per request or per conversation, with configurable retention
 - **Idle timeout** - auto-sleep instances after configurable idle period, wake on next request
 - **Ollama-compatible proxy** - OpenWebUI discovers models and auto-starts servers on demand
@@ -24,6 +25,7 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Require auth toggle** - enforce bearer token authentication on all endpoints (including model loading) or leave model endpoints open
 - **Persistent state** - instance history and configs survive container restarts
 - **Storage backends** - JSON files (default) or MariaDB/MySQL via SQLAlchemy
+- **Multi-node clustering** *(optional)* - run several instances as one cluster sharing a database and a secret: aggregated dashboard, cross-node launches/pulls/downloads, and multi-node shared-queue load balancing. Off by default; single-node installs are unaffected.
 - **Proxy sampling overrides** - force temperature, top-k, top-p, presence penalty, and repeat penalty on all proxied requests, configurable per model preset
 - **CPU quota + memory limit** - CPU Threads also applies a Docker CPU quota; a Memory Limit field caps container RAM
 - **Docker image management** - pull any llama.cpp image by name, delete old local images from the UI
@@ -59,6 +61,7 @@ docker run -d \
   -e LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda \
   -e HOST_MODELS_DIR=/path/to/models \
   -e HOST_LOGS_DIR=/path/to/logs \
+  -e LLAMAMAN_NODE_NAME=srv1 \
   --restart unless-stopped \
   nullata/llamaman:latest
 ```
@@ -89,6 +92,7 @@ docker run -d \
   -e LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-rocm \
   -e HOST_MODELS_DIR=/path/to/models \
   -e HOST_LOGS_DIR=/path/to/logs \
+  -e LLAMAMAN_NODE_NAME=srv1 \
   --restart unless-stopped \
   nullata/llamaman:latest
 ```
@@ -114,6 +118,7 @@ docker run -d \
   -e LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-sycl \
   -e HOST_MODELS_DIR=/path/to/models \
   -e HOST_LOGS_DIR=/path/to/logs \
+  -e LLAMAMAN_NODE_NAME=srv1 \
   --restart unless-stopped \
   nullata/llamaman:latest
 ```
@@ -136,6 +141,9 @@ services:
       - /sys/class/drm:/sys/class/drm:ro
     environment:
       - LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda
+      # Required - unique, stable identity for this deployment. Any string; pick
+      # once and keep it. The container refuses to start without it.
+      - LLAMAMAN_NODE_NAME=srv1
       # Must be the absolute host-side paths matching the volume mounts above.
       - HOST_MODELS_DIR=/path/to/models
       - HOST_LOGS_DIR=/path/to/logs
@@ -176,6 +184,7 @@ networks:
 
 | Variable | Default | Description |
 |---|---|---|
+| `LLAMAMAN_NODE_NAME` | *(required)* | **Required - the container refuses to start without it.** Unique, stable identity for this deployment: the partition key for its instances, downloads, and per-node settings in storage, and its key in the cluster registry. Any string (`srv1`, a hostname, a uuid). Pick once and keep it - changing it later orphans this node's stored state. |
 | `LLAMA_IMAGE` | *(auto)* | llama.cpp server image for spawned containers. Auto-selected from detected GPU vendor if not set. Set explicitly to pin a version or backend (`server-cuda`, `server-rocm`, `server-sycl`, `server`). |
 | `GPU_TYPE` | *(auto-detect)* | Override GPU vendor detection: `cuda`, `rocm`, or `intel`. Leave unset to auto-detect. |
 | `LLAMA_GPU_DEVICES` | *(all)* | Comma-separated GPU indices visible to spawned containers, e.g. `0,1`. Not supported on Intel Arc. |
@@ -197,6 +206,10 @@ networks:
 | `HEALTH_CHECK_TIMEOUT` | `3` | Timeout in seconds for instance health checks. |
 | `MODEL_LOAD_TIMEOUT` | `300` | Seconds to wait for a model to become healthy during launch/relaunch. Increase for very large models. |
 | `REQUEST_TIMEOUT` | `300` | Timeout in seconds for upstream requests to llama-server and gate acquire waits. |
+| `CLUSTER_ENABLED` | `false` | Set `true`/`1`/`yes`/`on` to join this node to a cluster. Requires `CLUSTER_SECRET` and a shared `DATABASE_URL`. See [Clustering](#clustering). |
+| `CLUSTER_SECRET` | *(unset)* | Shared bearer secret sent on every node-to-node call (`X-Cluster-Secret`). Must be identical on every node. Use a long random value over a trusted network or behind TLS. |
+| `CLUSTER_ADVERTISE_URL` | *(unset)* | How peers reach **this** node's UI/API - a hostname/IP routable from the other hosts (e.g. `http://srv1:5000`), not `localhost`. Needed for cross-node actions and shared-queue inference forwarding; a node without it is view-only and skipped as an inference target. |
+| `CLUSTER_NODE_ONLINE_WINDOW_S` | `45` | Seconds since a node's last heartbeat before it's shown offline. Raise it if nodes flap offline under load or clock skew (e.g. an unsynced WSL host). |
 
 ## First Launch
 
@@ -220,6 +233,8 @@ Cleanup runs periodically in the background. These settings only remove or updat
 Under **Settings >> App Settings >> Request recording**, choose how proxied inference traffic is logged: **Off** (default), **Per request**, or **Per conversation** (turns grouped by a hash of the system prompt + first user message). Each record captures the request/response bodies plus envelope fields and accurate per-turn metrics - generation throughput (tokens/s, measured over the generation window) and time-to-first-token. Records are stored under `RECORDINGS_DIR` (inside `/data`) for the JSON backend or the `request_log` table for MariaDB; a **Retention (days)** setting prunes older records hourly (`0` = keep forever).
 
 Each instance card then exposes a **Stats** button that opens a modal summarizing that instance's recorded traffic - request count (with errors), average and peak throughput, average time-to-first-token, average latency, prompt/completion/total tokens, and the active time span. Stats are rolled up from the request log, so they persist after an instance is stopped and the modal prompts you to enable recording when it's off.
+
+The **Logging** link in the header opens a full-page dashboard over the same request log - summary tiles, a recent-conversations list, and a per-conversation drill-down (prompts and responses with metrics in a collapsible), all scoped by a 24h / 7d / 30d / All time-window selector.
 
 ## OpenWebUI Integration
 
@@ -292,6 +307,34 @@ DATABASE_URL=mysql+pymysql://llamaman:yourpassword@host:3306/llamaman
 ```
 
 Tables are auto-created on first connection.
+
+## Clustering
+
+*Optional, off by default - single-node installs are completely unaffected.*
+
+Clustering lets several LlamaMan deployments act as **one logical cluster**: a single dashboard that aggregates every node's GPUs, instances, and downloads, with cross-node launches/pulls/downloads and multi-node shared-queue load balancing. Nodes discover each other automatically through the shared storage backend.
+
+**Requirements:**
+
+- **A shared storage backend** - every node must point at the **same** `DATABASE_URL` (MariaDB/MySQL). The JSON backend is per-host and cannot be shared.
+- **A unique `LLAMAMAN_NODE_NAME` per node** - each node's identity in the cluster (required for every install regardless).
+- **The same `CLUSTER_SECRET` on every node** - the bearer token for all node-to-node HTTP.
+- **`CLUSTER_ADVERTISE_URL` per node** for cross-node *actions* - how peers reach this node (a hostname/IP routable from the other hosts, e.g. `http://srv1:5000`). A node without one appears in the dashboard but is view-only and skipped as an inference target.
+
+Set on **each** node (only `LLAMAMAN_NODE_NAME` and `CLUSTER_ADVERTISE_URL` differ between them):
+
+```yaml
+environment:
+  - LLAMAMAN_NODE_NAME=srv1                 # unique per node
+  - DATABASE_URL=mysql+pymysql://llamaman:pass@db-host:3306/llamaman   # identical on all nodes
+  - CLUSTER_ENABLED=true
+  - CLUSTER_SECRET=a-long-shared-random-secret   # identical on all nodes
+  - CLUSTER_ADVERTISE_URL=http://srv1:5000  # this node's address, routable from peers
+```
+
+Each node heartbeats every ~5s; a node silent past `CLUSTER_NODE_ONLINE_WINDOW_S` (default 45s) is shown offline. Inspect and manage the cluster under **Settings >> Cluster**. A few settings are scoped per node because they're host-specific (tracked Docker images and the two model-cap eviction toggles); everything else is shared cluster-wide via the database.
+
+> **Security:** the cluster secret lets any peer drive actions on this node. Run node-to-node traffic over a trusted network or behind TLS.
 
 ## Per-Instance Proxy
 
