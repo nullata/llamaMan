@@ -1,4 +1,4 @@
-# Copyright (c) LlamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
+# Copyright (c) llamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
 """GPU vendor auto-detection and native VRAM/load query.
 

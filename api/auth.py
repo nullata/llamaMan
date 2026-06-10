@@ -1,4 +1,4 @@
-# Copyright (c) LlamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
+# Copyright (c) llamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
 from flask import Blueprint, jsonify, make_response, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash

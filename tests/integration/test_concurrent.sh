@@ -56,7 +56,7 @@ fi
 # Connectivity check
 # ---------------------------------------------------------------------------
 echo ""
-printf "${CYAN}=== LlamaMan concurrent request test ===${NC}\n"
+printf "${CYAN}=== llamaMan concurrent request test ===${NC}\n"
 printf "  Target:   %s\n" "${BASE_URL}"
 printf "  Model:    %s\n" "${MODEL}"
 printf "  Requests: %d\n" "${NUM_REQUESTS}"

@@ -1,6 +1,6 @@
-# LlamaMan
+# llamaMan
 
-![LlamaMan](https://raw.githubusercontent.com/nullata/llamaman/main/docs/llamaman.jpg)
+![llamaMan](https://raw.githubusercontent.com/nullata/llamaman/main/docs/llamaman.jpg)
 
 A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](https://github.com/ggerganov/llama.cpp) server instances from inside a Docker container. Includes an Ollama-compatible API proxy so it works as a drop-in replacement for Ollama with [Open WebUI](https://github.com/open-webui/open-webui).
 
@@ -36,9 +36,9 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 
 ## Quick Start
 
-Pull the llama.cpp image for your GPU first, then run LlamaMan.
+Pull the llama.cpp image for your GPU first, then run llamaMan.
 
-`HOST_MODELS_DIR` and `HOST_LOGS_DIR` must be the **absolute paths on the Docker host** that match your volume mounts. LlamaMan passes these to the Docker daemon when spawning sibling llama-server containers.
+`HOST_MODELS_DIR` and `HOST_LOGS_DIR` must be the **absolute paths on the Docker host** that match your volume mounts. llamaMan passes these to the Docker daemon when spawning sibling llama-server containers.
 
 ### NVIDIA
 
@@ -195,7 +195,7 @@ networks:
 | `DATA_DIR` | `/data` | Directory for persistent config/state. |
 | `RECORDINGS_DIR` | `{DATA_DIR}/request_log` | Directory for recorded request-log records (JSON backend only; ignored when `DATABASE_URL` is set). |
 | `LOGS_DIR` | `/tmp/llama-logs` | Directory for instance and download logs (container path). |
-| `HOST_MODELS_DIR` | *(same as `MODELS_DIR`)* | **Host-side** absolute path of the models volume. Must match the left side of `-v /host/path/models:/models`. LlamaMan passes this to the Docker daemon when spawning sibling containers. |
+| `HOST_MODELS_DIR` | *(same as `MODELS_DIR`)* | **Host-side** absolute path of the models volume. Must match the left side of `-v /host/path/models:/models`. llamaMan passes this to the Docker daemon when spawning sibling containers. |
 | `HOST_LOGS_DIR` | *(same as `LOGS_DIR`)* | **Host-side** absolute path of the logs volume. Same requirement as `HOST_MODELS_DIR`. |
 | `PORT_RANGE_START` | `8000` | Start of public llama-server/proxy port pool. |
 | `PORT_RANGE_END` | `8020` | End of public llama-server/proxy port pool. |
@@ -246,7 +246,7 @@ open-webui:
     - OLLAMA_BASE_URL=http://llamaman:42069
 ```
 
-LlamaMan auto-launches models on demand:
+llamaMan auto-launches models on demand:
 
 1. OpenWebUI calls `/api/tags` and gets the available models.
 2. A request to `/api/chat` or `/api/generate` starts the selected model automatically using saved presets or defaults.
@@ -258,7 +258,7 @@ Also supports OpenAI-compatible auto-start endpoints: `/v1/models`, `/v1/chat/co
 
 ### With authentication enabled (default)
 
-Create an API key in the LlamaMan UI, then configure OpenWebUI:
+Create an API key in the llamaMan UI, then configure OpenWebUI:
 
 ```yaml
 open-webui:
@@ -291,7 +291,7 @@ Other details:
 
 ## MariaDB / MySQL Setup
 
-By default LlamaMan uses JSON files. To use MariaDB/MySQL, create a database and dedicated user:
+By default llamaMan uses JSON files. To use MariaDB/MySQL, create a database and dedicated user:
 
 ```sql
 CREATE DATABASE llamaman CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -312,7 +312,7 @@ Tables are auto-created on first connection.
 
 *Optional, off by default - single-node installs are completely unaffected.*
 
-Clustering lets several LlamaMan deployments act as **one logical cluster**: a single dashboard that aggregates every node's GPUs, instances, and downloads, with cross-node launches/pulls/downloads and multi-node shared-queue load balancing. Nodes discover each other automatically through the shared storage backend.
+Clustering lets several llamaMan deployments act as **one logical cluster**: a single dashboard that aggregates every node's GPUs, instances, and downloads, with cross-node launches/pulls/downloads and multi-node shared-queue load balancing. Nodes discover each other automatically through the shared storage backend.
 
 **Requirements:**
 
@@ -338,7 +338,7 @@ Each node heartbeats every ~5s; a node silent past `CLUSTER_NODE_ONLINE_WINDOW_S
 
 ## Per-Instance Proxy
 
-When **Idle Timeout**, **Max Concurrent**, or **Proxy Sampling Overrides** are enabled for an instance, LlamaMan places a proxy in front of that instance's port. The proxy handles auth, concurrency gating, wake-on-request, and model name validation.
+When **Idle Timeout**, **Max Concurrent**, or **Proxy Sampling Overrides** are enabled for an instance, llamaMan places a proxy in front of that instance's port. The proxy handles auth, concurrency gating, wake-on-request, and model name validation.
 
 Saving a preset propagates idle-timeout, queue, and proxy-sampling fields to running instances live without a relaunch. If the instance was launched with all three of the above off, no proxy was spawned, so toggling **Proxy Sampling Overrides** on live applies only to requests routed through the main app's Ollama/OpenAI compat endpoints; direct hits to the public port require a relaunch to take effect.
 
@@ -361,7 +361,7 @@ For sleeping instances, a mismatched model name returns 404 without waking the i
 
 ## License
 
-LlamaMan is licensed under the [Elastic License 2.0](https://github.com/nullata/llamaman/blob/main/LICENSE). You may use, copy, distribute, and modify the software, subject to the following limitations:
+llamaMan is licensed under the [Elastic License 2.0](https://github.com/nullata/llamaman/blob/main/LICENSE). You may use, copy, distribute, and modify the software, subject to the following limitations:
 
 - You may not provide the software to third parties as a hosted or managed service where the service gives users access to a substantial set of its features or functionality.
 - You may not remove or obscure any licensing, copyright, or other notices of the licensor.

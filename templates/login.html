@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ "Setup" if setup else "Login" }} - LlamaMan</title>
+  <title>{{ "Setup" if setup else "Login" }} - llamaMan</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='fontawesome-free-7.1.0-web/css/all.min.css') }}" />
   <link rel="icon" href="{{ url_for('static', filename='images/logo.svg') }}" type="image/svg+xml" />
@@ -14,7 +14,7 @@
   <div class="login-card">
     <h1>
       <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="null" class="login-logo" />
-      LlamaMan
+      llamaMan
     </h1>
     {% if setup %}
     <p class="subtitle">Create your admin account to get started.</p>

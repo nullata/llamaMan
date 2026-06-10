@@ -1,4 +1,4 @@
-# Copyright (c) LlamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
+# Copyright (c) llamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
 DEFAULT_PROXY_SAMPLING_TEMPERATURE = 0.8
 MAX_PROXY_SAMPLING_TEMPERATURE = 2.0

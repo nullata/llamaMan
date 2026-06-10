@@ -1,4 +1,4 @@
-# Copyright (c) LlamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
+# Copyright (c) llamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
 """Auto-restart-on-crash loop guard. The relaunch itself needs Docker, but the
 bounding logic (at most N relaunches per rolling window) is what keeps a model

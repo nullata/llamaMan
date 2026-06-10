@@ -1,10 +1,10 @@
 # <img src="static/images/logo.svg" alt="logo" width="24"> llamaMan
 
 <p align="center">
-  <img src="docs/llamaman.jpg" alt="LlamaMan" width="400">
+  <img src="docs/llamaman.jpg" alt="llamaMan" width="400">
 </p>
 
-A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](https://github.com/ggerganov/llama.cpp) server instances. LlamaMan runs as a lightweight Python container and spawns llama-server as sibling Docker containers using the official llama.cpp images. Includes an Ollama-compatible API proxy so it works as a drop-in replacement for Ollama with [Open WebUI](https://github.com/open-webui/open-webui).
+A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](https://github.com/ggerganov/llama.cpp) server instances. llamaMan runs as a lightweight Python container and spawns llama-server as sibling Docker containers using the official llama.cpp images. Includes an Ollama-compatible API proxy so it works as a drop-in replacement for Ollama with [Open WebUI](https://github.com/open-webui/open-webui).
 
 ## Features
 
@@ -35,7 +35,7 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 
 ## How It Works
 
-LlamaMan is a lightweight Python web app with no dependency on llama.cpp itself. When you launch a model, LlamaMan uses the Docker socket to spawn a `ghcr.io/ggml-org/llama.cpp:server-*` container as a sibling on the host. GPU passthrough, port binding, and volume mounts are configured per-container via the Docker SDK.
+llamaMan is a lightweight Python web app with no dependency on llama.cpp itself. When you launch a model, llamaMan uses the Docker socket to spawn a `ghcr.io/ggml-org/llama.cpp:server-*` container as a sibling on the host. GPU passthrough, port binding, and volume mounts are configured per-container via the Docker SDK.
 
 ```
 Host machine
@@ -72,7 +72,7 @@ Before starting, edit `docker-compose.yml` and set the two host path variables t
 - HOST_LOGS_DIR=/absolute/host/path/to/logs
 ```
 
-These must be the real paths on the Docker host. LlamaMan passes them to the Docker daemon when spawning sibling llama-server containers, so they must resolve on the host - not inside the llamaman container.
+These must be the real paths on the Docker host. llamaMan passes them to the Docker daemon when spawning sibling llama-server containers, so they must resolve on the host - not inside the llamaman container.
 
 The bundled `docker-compose.yml` also sets **`LLAMAMAN_NODE_NAME`** (default `srv1`) - a unique, stable identity for this deployment that is **required for every install**. The default is fine for a single node; give each host a distinct value if you run more than one (see [Clustering](#clustering)). Pick it once and keep it - changing it later orphans this node's stored instances and presets.
 
@@ -111,11 +111,11 @@ docker compose up --build
 
 On first launch, visit the UI to create an admin account via `/setup`.
 
-> **Note:** LlamaMan needs access to the Docker socket (`/var/run/docker.sock`) to spawn llama-server containers. This is already configured in `docker-compose.yml`. Be aware of the security implications - a container with Docker socket access has the ability to manage other containers on the host.
+> **Note:** llamaMan needs access to the Docker socket (`/var/run/docker.sock`) to spawn llama-server containers. This is already configured in `docker-compose.yml`. Be aware of the security implications - a container with Docker socket access has the ability to manage other containers on the host.
 
 ### Running bare-metal
 
-LlamaMan can also run directly on the host instead of in a container - useful for development or on hosts (e.g. WSL) where running the manager itself in Docker is awkward. It still spawns llama-server **containers** via the Docker socket, but talks to them over `localhost` on their published ports rather than the Docker network.
+llamaMan can also run directly on the host instead of in a container - useful for development or on hosts (e.g. WSL) where running the manager itself in Docker is awkward. It still spawns llama-server **containers** via the Docker socket, but talks to them over `localhost` on their published ports rather than the Docker network.
 
 ```bash
 pip install -r requirements.txt
@@ -131,7 +131,7 @@ A single process serves both the management UI/API (port 5000) and the Ollama-co
 
 ## Authentication
 
-LlamaMan has a built-in auth system with two layers:
+llamaMan has a built-in auth system with two layers:
 
 ### User accounts (session-based)
 
@@ -184,14 +184,14 @@ Or use the **Download** button in the UI to pull from HuggingFace.
 
 1. Select a model from the sidebar
 2. Configure launch settings (GPU layers, context size, idle timeout, etc.)
-3. Click **Launch** - LlamaMan spawns a llama-server container and the instance appears with a status badge
+3. Click **Launch** - llamaMan spawns a llama-server container and the instance appears with a status badge
 4. Optionally click **Save Preset** to remember settings for that model
 
 Each instance exposes an OpenAI-compatible API on its assigned port.
 
 ### Layer autodetection
 
-When you select a GGUF model, LlamaMan reads the file's metadata to detect the total number of layers (block count). This is displayed next to the **GPU Layers** input so you can see exactly how many layers are available to offload (e.g. `/ 32`). Set GPU Layers to `-1` to offload all layers to GPU.
+When you select a GGUF model, llamaMan reads the file's metadata to detect the total number of layers (block count). This is displayed next to the **GPU Layers** input so you can see exactly how many layers are available to offload (e.g. `/ 32`). Set GPU Layers to `-1` to offload all layers to GPU.
 
 ### Launch settings reference
 
@@ -229,15 +229,15 @@ Saving a preset (**Save Preset** in the Launch tab) updates already-running inst
 
 ### Concurrency and queueing
 
-When **Max Concurrent** is set to a value greater than 0, LlamaMan places a concurrency gate in front of the instance. Requests that exceed the limit are held in a FIFO queue (up to **Max Queue Depth**). If the queue is also full, new requests are rejected with HTTP 429.
+When **Max Concurrent** is set to a value greater than 0, llamaMan places a concurrency gate in front of the instance. Requests that exceed the limit are held in a FIFO queue (up to **Max Queue Depth**). If the queue is also full, new requests are rejected with HTTP 429.
 
 The gate tracks active and queued request counts, which are visible in the instance list via the API.
 
-**Parallel vs Max Concurrent:** `Parallel` controls how many sequences the llama-server processes internally (KV cache slots). `Max Concurrent` is an external gate that limits how many requests LlamaMan forwards to the server at once. You can use both together - for example, `Parallel=4` with `Max Concurrent=4` ensures the server always has enough KV slots for the requests it receives.
+**Parallel vs Max Concurrent:** `Parallel` controls how many sequences the llama-server processes internally (KV cache slots). `Max Concurrent` is an external gate that limits how many requests llamaMan forwards to the server at once. You can use both together - for example, `Parallel=4` with `Max Concurrent=4` ensures the server always has enough KV slots for the requests it receives.
 
 ## GPU Stats
 
-LlamaMan queries GPU VRAM and utilization natively - no running llama-server instance required.
+llamaMan queries GPU VRAM and utilization natively - no running llama-server instance required.
 
 | Vendor | Method | Requirement |
 |---|---|---|
@@ -245,7 +245,7 @@ LlamaMan queries GPU VRAM and utilization natively - no running llama-server ins
 | AMD | `/sys/class/drm` sysfs | `/sys/class/drm:ro` volume mount (included in `docker-compose.yml` by default) |
 | Intel Arc | `/sys/class/drm` sysfs | Same mount as AMD |
 
-When native access is not configured, LlamaMan falls back to exec-ing `nvidia-smi` / `rocm-smi` inside a running llama-server container (previous behavior). Stats always reflect the full host GPU state, not just a single container's usage.
+When native access is not configured, llamaMan falls back to exec-ing `nvidia-smi` / `rocm-smi` inside a running llama-server container (previous behavior). Stats always reflect the full host GPU state, not just a single container's usage.
 
 ## Request Recording & Stats
 
@@ -282,7 +282,7 @@ For instances managed by the llamaman proxy (OpenWebUI), use the `LLAMAMAN_IDLE_
 
 ## Per-Instance Proxy
 
-When any of the following are enabled for an instance, LlamaMan inserts a WSGI proxy in front of the llama-server container on that port: **Idle Timeout**, **Max Concurrent**, or **Proxy Sampling Overrides**. The public port (e.g. 8000) is handled by the proxy; the llama-server container listens internally on a separate port.
+When any of the following are enabled for an instance, llamaMan inserts a WSGI proxy in front of the llama-server container on that port: **Idle Timeout**, **Max Concurrent**, or **Proxy Sampling Overrides**. The public port (e.g. 8000) is handled by the proxy; the llama-server container listens internally on a separate port.
 
 ### Model name validation
 
@@ -350,9 +350,9 @@ open-webui:
 
 **How it works:**
 
-1. OpenWebUI calls `/api/tags` -> LlamaMan returns all available GGUF models
+1. OpenWebUI calls `/api/tags` -> llamaMan returns all available GGUF models
 2. User selects a model in OpenWebUI -> `/api/chat` request arrives
-3. LlamaMan spawns a llama-server container (using saved preset or defaults)
+3. llamaMan spawns a llama-server container (using saved preset or defaults)
 4. Waits for healthy, then proxies the request with format translation
 5. When `LLAMAMAN_MAX_MODELS` limit is reached, the least-recently-used **Ollama-managed** model is evicted. Admin UI launched models are never evicted by the Ollama API by default (see [Model eviction policy](#model-eviction-policy))
 
@@ -433,7 +433,7 @@ Tables are auto-created on first connection. Requires `sqlalchemy` and `pymysql`
 
 *Optional, off by default - single-node installs are completely unaffected.*
 
-Clustering lets several LlamaMan deployments act as **one logical cluster**: a single dashboard that aggregates every node's GPUs, instances, and downloads, with cross-node launches/pulls/downloads and multi-node shared-queue load balancing. Nodes discover each other automatically through the shared storage backend - no pairwise key exchange.
+Clustering lets several llamaMan deployments act as **one logical cluster**: a single dashboard that aggregates every node's GPUs, instances, and downloads, with cross-node launches/pulls/downloads and multi-node shared-queue load balancing. Nodes discover each other automatically through the shared storage backend - no pairwise key exchange.
 
 **Requirements:**
 
@@ -490,11 +490,11 @@ Each node heartbeats every ~5s; a node silent past `CLUSTER_NODE_ONLINE_WINDOW_S
 | Variable | Default | Description |
 |---|---|---|
 | `LLAMA_IMAGE` | _(auto)_ | llama.cpp Docker image used for all spawned containers. Auto-selected from the detected GPU vendor if not set (`server-cuda` / `server-rocm` / `server-sycl` / `server`). Set explicitly to pin a specific image or version. |
-| `LLAMA_NETWORK` | `llamaman-net` | Docker network that LlamaMan and all llama-server containers are attached to. Created automatically if it doesn't exist. |
+| `LLAMA_NETWORK` | `llamaman-net` | Docker network that llamaMan and all llama-server containers are attached to. Created automatically if it doesn't exist. |
 | `LLAMA_CONTAINER_PREFIX` | `llamaman-` | Name prefix for spawned llama-server containers (e.g. `llamaman-abcd1234`). |
 | `LLAMAMAN_IN_DOCKER` | _(auto-detect)_ | Whether llamaman itself runs in a container. Auto-detected from runtime marker files and cgroups. In Docker it reaches spawned containers by name on the Docker network; bare-metal it uses `localhost` on their published ports. Set `true`/`false` to override detection. |
 | `LLAMA_HOST_ADDR` | `localhost` | Host address used to reach spawned containers' published ports when running bare-metal. Change only if those ports are published on a non-loopback address. |
-| `GPU_TYPE` | _(auto-detect)_ | Override GPU vendor detection: `cuda` (NVIDIA), `rocm` (AMD), `intel` (Intel Arc). Leave unset to let LlamaMan probe the host automatically. |
+| `GPU_TYPE` | _(auto-detect)_ | Override GPU vendor detection: `cuda` (NVIDIA), `rocm` (AMD), `intel` (Intel Arc). Leave unset to let llamaMan probe the host automatically. |
 | `LLAMA_GPU_DEVICES` | _(unset = all)_ | Comma-separated GPU indices visible to all spawned llama-server containers, e.g. `0,1,3`. Unset exposes all GPUs. Per-instance **GPU Devices** overrides this when set. Not supported on Intel Arc. |
 
 ### Clustering
@@ -685,7 +685,7 @@ Available when request recording is enabled (see [Request Recording & Stats](#re
 |---|---|
 | Instance stuck on **starting** | Check logs via the Logs button. Common causes: OOM, model path typo, corrupt GGUF, image not pulled. |
 | _"Docker image not found"_ | Pull the matching image: `docker pull ghcr.io/ggml-org/llama.cpp:server-cuda` (NVIDIA), `server-rocm` (AMD), `server-sycl` (Intel Arc), or `server` (CPU). |
-| _"Docker API error"_ on launch | Ensure `/var/run/docker.sock` is mounted into the LlamaMan container (it is by default in `docker-compose.yml`). |
+| _"Docker API error"_ on launch | Ensure `/var/run/docker.sock` is mounted into the llamaMan container (it is by default in `docker-compose.yml`). |
 | No GPU / CUDA error | Ensure the NVIDIA Container Toolkit is installed and `docker run --gpus all` works on the host. |
 | No GPU / ROCm error | Ensure `/dev/kfd` and `/dev/dri` exist on the host and your user is in the `video`/`render` groups. |
 | No GPU / Intel Arc error | Ensure `/dev/dri` is accessible and your user is in the `video`/`render` groups. |
@@ -698,7 +698,7 @@ Available when request recording is enabled (see [Request Recording & Stats](#re
 | Model not showing in OpenWebUI | Ensure `OLLAMA_BASE_URL` points to `http://llamaman:42069`. Check `/api/tags` returns models. |
 | OpenWebUI gets 401 errors | `require_auth` is on (default). Create an API key in the UI and set `OPENAI_API_KEYS` in OpenWebUI's environment. |
 | _"API key required"_ on all requests | Either create an API key, or turn off the "Require authentication" toggle in the API Keys section. |
-| Containers not cleaned up after stop | LlamaMan stops and removes containers when instances are stopped. If containers are orphaned after a crash, run `docker ps --filter name=llamaman-` to find and remove them manually, or restart LlamaMan (orphan adoption runs on startup). |
+| Containers not cleaned up after stop | llamaMan stops and removes containers when instances are stopped. If containers are orphaned after a crash, run `docker ps --filter name=llamaman-` to find and remove them manually, or restart llamaMan (orphan adoption runs on startup). |
 | Client (Hermes / OpenWebUI / etc.) reports the trained context window instead of the preset cap | Upgrade to 1.1.2+. `/api/ps` now includes a `context_length` field set to the runtime ctx the instance was launched with, and `/api/show`'s `model_info["<arch>.context_length"]` is overridden with the *effective* cap (running instance > preset > GGUF default). Clients reading either will see the preset value (e.g. 64K) instead of the GGUF's trained max (e.g. 256K). |
 
 ## Credits
@@ -707,13 +707,13 @@ This work would not be possible without the work of [ggml-org/llama.cpp](https:/
 
 ## License
 
-LlamaMan is licensed under the [Elastic License 2.0](LICENSE). You may use, copy, distribute, and modify the software, subject to the following limitations:
+llamaMan is licensed under the [Elastic License 2.0](LICENSE). You may use, copy, distribute, and modify the software, subject to the following limitations:
 
 - You may not provide the software to third parties as a hosted or managed service where the service gives users access to a substantial set of its features or functionality.
 - You may not remove or obscure any licensing, copyright, or other notices of the licensor.
 
 ### Third-party licenses
 
-LlamaMan bundles the following third-party assets, each under their own license:
+llamaMan bundles the following third-party assets, each under their own license:
 
 - **[Font Awesome Free 7.1.0](https://fontawesome.com/)** by Fonticons, Inc. - icons (CC BY 4.0), fonts (SIL OFL 1.1), and code (MIT). The full license text ships in [`static/fontawesome-free-7.1.0-web/LICENSE.txt`](static/fontawesome-free-7.1.0-web/LICENSE.txt).

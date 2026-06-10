@@ -1,4 +1,4 @@
-# Copyright (c) LlamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
+# Copyright (c) llamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
 """Recording/extraction for the raw completion endpoints (/v1/completions and
 /completion). The handlers need a live llama-server to exercise end to end, but

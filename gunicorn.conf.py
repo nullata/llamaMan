@@ -1,6 +1,6 @@
-# Copyright (c) LlamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
+# Copyright (c) llamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
-# Gunicorn configuration for LlamaMan
+# Gunicorn configuration for llamaMan
 #
 # Usage:
 #   gunicorn app:app

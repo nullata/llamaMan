@@ -1,8 +1,8 @@
-# Copyright (c) LlamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
+# Copyright (c) llamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
 """Cluster node identity and peer-to-peer transport.
 
-Clustering lets several LlamaMan deployments act as one logical cluster. This
+Clustering lets several llamaMan deployments act as one logical cluster. This
 module owns the local node's stable identity and the authenticated HTTP used for
 node-to-node calls. Everything here is inert unless CLUSTER_ENABLED is set and a
 CLUSTER_SECRET is configured, so single-node installs are unaffected.

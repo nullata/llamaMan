@@ -247,7 +247,7 @@ INSTANCE_PROXY_PATHS=(
 # Main
 # ---------------------------------------------------------------------------
 echo ""
-printf "${CYAN}=== LlamaMan auth integration tests ===${NC}\n"
+printf "${CYAN}=== llamaMan auth integration tests ===${NC}\n"
 printf "  Main:     %s\n" "${MAIN_URL}"
 printf "  Proxy:    %s\n" "${PROXY_URL}"
 if [[ -n "${INSTANCE_URL}" ]]; then

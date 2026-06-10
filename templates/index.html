@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LlamaMan</title>
+  <title>llamaMan</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='fontawesome-free-7.1.0-web/css/all.min.css') }}" />
   <link rel="icon" href="{{ url_for('static', filename='images/logo.svg') }}" type="image/svg+xml" />
@@ -15,7 +15,7 @@
 
   <header>
     <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="null" class="header-logo" />
-    <h1>LlamaMan</h1>
+    <h1>llamaMan</h1>
     <div class="header-spacer"></div>
     <nav class="header-nav" aria-label="Primary">
       <a href="/logging" class="nav-link" title="Request logging"><i class="fa-solid fa-chart-column"></i> Logging</a>
@@ -560,7 +560,7 @@
 
           <div class="tab-panel" id="settings-tab-cluster" role="tabpanel"
             aria-labelledby="settings-tab-btn-cluster" data-tab-panel="cluster" hidden>
-            <p class="hint-text">Run several LlamaMan deployments as one cluster. Nodes discover each other through the shared storage backend and trust one <code>CLUSTER_SECRET</code>.</p>
+            <p class="hint-text">Run several llamaMan deployments as one cluster. Nodes discover each other through the shared storage backend and trust one <code>CLUSTER_SECRET</code>.</p>
             <p class="hint-text">Set <code>CLUSTER_ENABLED</code>, <code>CLUSTER_SECRET</code> and <code>CLUSTER_ADVERTISE_URL</code> on each node, then point them all at the same database.</p>
             <div id="cluster-disabled-hint" class="list-empty-state" hidden>
               Clustering is not enabled on this node. Set <code>CLUSTER_ENABLED=true</code>, a shared <code>CLUSTER_SECRET</code>, and this node's <code>CLUSTER_ADVERTISE_URL</code>, then restart.
