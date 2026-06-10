@@ -1,5 +1,3 @@
-# llamaMan
-
 <p align="center">
   <img src="https://raw.githubusercontent.com/nullata/llamaman/main/docs/llamaman-logo-wide.jpg" alt="llamaMan" width="1000">
 </p>
