@@ -1,4 +1,4 @@
-# <img src="static/images/logo.svg" alt="logo" width="24"> LlamaMan
+# <img src="static/images/logo.svg" alt="logo" width="24"> llamaMan
 
 <p align="center">
   <img src="docs/llamaman.jpg" alt="LlamaMan" width="400">
