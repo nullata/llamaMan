@@ -1000,20 +1000,35 @@ def llamaman_generate():
     return _handle_request(mode="generate")
 
 
+def _openai_model_entry(m: dict) -> dict:
+    """Build a /v1/models entry. The OpenAI Model object proper is just
+    id/object/created/owned_by; context window has no place in the spec. We add
+    the two non-standard fields the OpenAI-compatible ecosystem actually reads -
+    `context_length` (OpenRouter) and `max_model_len` (vLLM) - set to the
+    *effective* runtime cap a client would get (running instance > preset > GGUF
+    trained max), matching what /api/show publishes. Omitted when unknown so we
+    never advertise a bogus 0."""
+    path = m["path"]
+    entry = {
+        "id": model_name_from_path(path),
+        "object": "model",
+        "created": int(Path(path).stat().st_mtime) if Path(path).exists() else 0,
+        "owned_by": "local",
+    }
+    gguf_meta = _gguf_meta_for(path, m.get("type"))
+    ctx = _effective_ctx_for_model(path, gguf_meta)
+    if ctx > 0:
+        entry["context_length"] = ctx
+        entry["max_model_len"] = ctx
+    return entry
+
+
 @bp.route("/v1/models", methods=["GET"])
 def llamaman_v1_models():
     models = discover_models(MODELS_DIR)
     return jsonify({
         "object": "list",
-        "data": [
-            {
-                "id": model_name_from_path(m["path"]),
-                "object": "model",
-                "created": int(Path(m["path"]).stat().st_mtime) if Path(m["path"]).exists() else 0,
-                "owned_by": "local",
-            }
-            for m in models
-        ],
+        "data": [_openai_model_entry(m) for m in models],
     })
 
 
