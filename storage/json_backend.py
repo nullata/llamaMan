@@ -630,3 +630,30 @@ class JsonBackend(StorageBackend):
             except OSError as e:
                 logger.warning("failed to prune %s: %s", date_dir, e)
         return pruned
+
+    def clear_request_log(self) -> int:
+        if not os.path.isdir(self._recordings_dir):
+            return 0
+        cleared = 0
+        with self._request_log_lock:
+            for date in os.listdir(self._recordings_dir):
+                date_dir = os.path.join(self._recordings_dir, date)
+                if not os.path.isdir(date_dir):
+                    continue
+                try:
+                    for fn in os.listdir(date_dir):
+                        full = os.path.join(date_dir, fn)
+                        # Rough count: one turn per line
+                        try:
+                            with open(full, "r", encoding="utf-8") as f:
+                                cleared += sum(1 for _ in f)
+                        except OSError:
+                            pass
+                        try:
+                            os.unlink(full)
+                        except OSError:
+                            pass
+                    os.rmdir(date_dir)
+                except OSError as e:
+                    logger.warning("failed to clear %s: %s", date_dir, e)
+        return cleared

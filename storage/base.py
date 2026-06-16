@@ -181,6 +181,11 @@ class StorageBackend(ABC):
         ...
 
     @abstractmethod
+    def clear_request_log(self) -> int:
+        """Delete every recorded turn. Returns count deleted."""
+        ...
+
+    @abstractmethod
     def request_log_stats(self, inst_id: str | None = None,
                           since=None) -> dict:
         """Aggregate recorded turns into rollup metrics for the stats UI.

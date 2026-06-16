@@ -41,8 +41,30 @@
     </div>
 
     <div class="card">
-      <h2 class="logging-title">Recent Conversations</h2>
+      <div class="logging-header">
+        <h2 class="logging-title">Recent Conversations</h2>
+        <button type="button" class="btn btn-danger" id="btn-clear-logs">
+          <i class="fa-solid fa-trash"></i> Clear all
+        </button>
+      </div>
       <div id="logging-conversations" class="logging-conv-list">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Confirm dialog (shared showConfirm() target) -->
+  <div class="modal-overlay" id="confirm-modal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3 id="confirm-modal-title">Confirm</h3>
+        <button class="btn-icon" id="btn-confirm-close"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-modal-message" class="confirm-message"></p>
+        <div class="form-actions form-actions-end">
+          <button class="btn btn-secondary" id="btn-confirm-cancel">Cancel</button>
+          <button class="btn btn-danger" id="btn-confirm-ok">Confirm</button>
+        </div>
+      </div>
     </div>
   </div>
 

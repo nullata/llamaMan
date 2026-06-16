@@ -777,3 +777,16 @@ class MariaDBBackend(StorageBackend):
             return 0
         finally:
             self._session_factory.remove()
+
+    def clear_request_log(self) -> int:
+        session = self._session()
+        try:
+            count = session.query(RequestLogRow).delete(synchronize_session=False)
+            session.commit()
+            return int(count or 0)
+        except Exception as e:
+            session.rollback()
+            logger.warning("request_log clear failed: %s", e)
+            return 0
+        finally:
+            self._session_factory.remove()

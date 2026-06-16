@@ -206,6 +206,29 @@ document.getElementById('logging-window').addEventListener('click', (e) => {
   loadConversations();
 });
 
+async function clearAllLogs() {
+  const ok = await showConfirm(
+    'Clear all logs',
+    'Delete every recorded conversation and request? This cannot be undone.');
+  if (!ok) return;
+  const btn = document.getElementById('btn-clear-logs');
+  btn.disabled = true;
+  try {
+    const res = await apiFetch('/api/request-log', { method: 'DELETE' });
+    if (!res) return;
+    if (!res.ok) { toast('Failed to clear logs', 'error'); return; }
+    const data = await res.json().catch(() => ({}));
+    toast(`Cleared ${fmtInt(data.cleared || 0)} request${data.cleared === 1 ? '' : 's'}`, 'success');
+    loadStats();
+    loadConversations();
+  } catch (e) {
+    toast('Failed to clear logs', 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('btn-clear-logs').addEventListener('click', clearAllLogs);
 document.getElementById('btn-close-conv').addEventListener('click', closeConversation);
 document.getElementById('conv-modal').addEventListener('click', (e) => {
   if (e.target.id === 'conv-modal') closeConversation();
