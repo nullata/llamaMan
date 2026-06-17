@@ -33,7 +33,7 @@ class LlamamanEvictionTests(unittest.TestCase):
 
         self.assertIsNone(err)
         self.assertEqual(inst["id"], "inst-embed")
-        evict_mock.assert_called_once_with(incoming_embedding_model=True)
+        evict_mock.assert_called_once_with(incoming_embedding_model=True, can_evict_admin=None)
         self.assertTrue(launch_mock.called)
         self.assertTrue(launch_mock.call_args.kwargs["embedding_model"])
 
@@ -59,7 +59,7 @@ class LlamamanEvictionTests(unittest.TestCase):
 
         self.assertIsNone(err)
         self.assertEqual(inst["id"], "inst-chat")
-        evict_mock.assert_called_once_with(incoming_embedding_model=False)
+        evict_mock.assert_called_once_with(incoming_embedding_model=False, can_evict_admin=None)
         self.assertTrue(launch_mock.called)
         self.assertFalse(launch_mock.call_args.kwargs["embedding_model"])
 

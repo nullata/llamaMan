@@ -167,6 +167,8 @@ async function loadSettings() {
     }
     const ollamaOverrideToggle = document.getElementById('s-allow-ollama-override-admin');
     if (ollamaOverrideToggle) ollamaOverrideToggle.checked = !!s.allow_ollama_api_override_admin;
+    const openaiOverrideToggle = document.getElementById('s-allow-openai-override-admin');
+    if (openaiOverrideToggle) openaiOverrideToggle.checked = !!s.allow_openai_api_override_admin;
 
     const clusterHideOfflineToggle = document.getElementById('s-cluster-hide-offline-monitoring');
     if (clusterHideOfflineToggle) clusterHideOfflineToggle.checked = !!s.cluster_hide_offline_monitoring;
@@ -295,14 +297,16 @@ async function saveRequireAuth() {
 async function saveAppSettings() {
   const adminToggle = document.getElementById('s-admin-ui-enforce-max-models');
   const ollamaToggle = document.getElementById('s-allow-ollama-override-admin');
+  const openaiToggle = document.getElementById('s-allow-openai-override-admin');
   const clusterHideOfflineToggle = document.getElementById('s-cluster-hide-offline-monitoring');
   const recordingModeSelect = document.getElementById('s-recording-mode');
   const recordingRetentionInput = document.getElementById('s-recording-retention-days');
-  if (!adminToggle && !ollamaToggle && !clusterHideOfflineToggle && !recordingModeSelect && !recordingRetentionInput) return;
+  if (!adminToggle && !ollamaToggle && !openaiToggle && !clusterHideOfflineToggle && !recordingModeSelect && !recordingRetentionInput) return;
   try {
     const payload = {};
     if (adminToggle) payload.admin_ui_enforce_max_models = adminToggle.checked;
     if (ollamaToggle) payload.allow_ollama_api_override_admin = ollamaToggle.checked;
+    if (openaiToggle) payload.allow_openai_api_override_admin = openaiToggle.checked;
     if (clusterHideOfflineToggle) payload.cluster_hide_offline_monitoring = clusterHideOfflineToggle.checked;
     if (recordingModeSelect) payload.recording_mode = recordingModeSelect.value;
     if (recordingRetentionInput) {
@@ -393,6 +397,11 @@ if (adminUiEvictionToggle) {
 const ollamaOverrideToggle = document.getElementById('s-allow-ollama-override-admin');
 if (ollamaOverrideToggle) {
   ollamaOverrideToggle.addEventListener('change', saveAppSettings);
+}
+
+const openaiOverrideToggle = document.getElementById('s-allow-openai-override-admin');
+if (openaiOverrideToggle) {
+  openaiOverrideToggle.addEventListener('change', saveAppSettings);
 }
 
 const clusterHideOfflineToggle = document.getElementById('s-cluster-hide-offline-monitoring');

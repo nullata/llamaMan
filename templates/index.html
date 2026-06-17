@@ -424,6 +424,17 @@
                   <span class="toggle-slider"></span>
                 </label>
               </div>
+              <div class="form-group cleanup-toggle-grid">
+                <span class="label-row">
+                  <label for="s-allow-openai-override-admin">Allow OpenAI API to evict admin-launched models</label>
+                  <span class="info-tip" tabindex="0" role="button" aria-label="Allow OpenAI API eviction help" data-tip="When off (default), the OpenAI API never evicts running models - it only loads a model if a slot is free, otherwise returns 503. When on, the OpenAI API may evict the least-recently-used models (Ollama-managed first, then admin-launched) to make room."><i class="fa-solid fa-circle-info"></i></span>
+                </span>
+                <label class="toggle-switch" for="s-allow-openai-override-admin"
+                  aria-label="Allow OpenAI API to evict admin-launched models">
+                  <input id="s-allow-openai-override-admin" type="checkbox" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
               <div class="cleanup-section-divider" aria-hidden="true"></div>
               <div class="form-group cleanup-input-row">
                 <label for="s-recording-mode">Request recording</label>

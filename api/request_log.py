@@ -28,6 +28,13 @@ def get_conversation(conversation_id: str):
     return jsonify({"conversation_id": conversation_id, "turns": turns})
 
 
+@bp.route("/api/request-log", methods=["DELETE"])
+def clear_request_log():
+    """Delete every recorded turn. Returns the number of turns cleared."""
+    cleared = get_storage().clear_request_log()
+    return jsonify({"cleared": cleared})
+
+
 @bp.route("/api/request-log/stats", methods=["GET"])
 def request_log_stats():
     """Rolled-up metrics over the recorded turns.

@@ -158,7 +158,13 @@ def _ollama_can_evict_admin_instances() -> bool:
     return bool(effective_from_settings(get_storage().get_settings(), "allow_ollama_api_override_admin", False))
 
 
-def _evict_llamaman_instances_if_needed(incoming_embedding_model: bool = False) -> bool:
+def _openai_can_evict_admin_instances() -> bool:
+    from core.node_settings import effective_from_settings
+    return bool(effective_from_settings(get_storage().get_settings(), "allow_openai_api_override_admin", False))
+
+
+def _evict_llamaman_instances_if_needed(incoming_embedding_model: bool = False,
+                                        can_evict_admin: bool | None = None) -> bool:
     """Evict oldest llamaman-managed instances to stay within limits.
 
     Returns True if there is room for a new instance after eviction (or if no
@@ -167,9 +173,13 @@ def _evict_llamaman_instances_if_needed(incoming_embedding_model: bool = False) 
 
     The limit is checked against ALL running instances (manual + managed),
     but only llamaman-managed instances are evicted by default.  Manually
-    launched instances are never touched unless allow_ollama_api_override_admin
-    is enabled.
+    launched instances are never touched unless ``can_evict_admin`` is set.
+    ``can_evict_admin`` defaults to the Ollama API override toggle
+    (``allow_ollama_api_override_admin``) when left as ``None``; the OpenAI API
+    passes its own toggle explicitly.
     """
+    if can_evict_admin is None:
+        can_evict_admin = _ollama_can_evict_admin_instances()
     from api.instances import stop_instance_by_id
 
     if LLAMAMAN_MAX_MODELS <= 0:
@@ -200,7 +210,7 @@ def _evict_llamaman_instances_if_needed(incoming_embedding_model: bool = False) 
 
     # Still over limit - only proceed if the override setting allows evicting
     # admin-UI launched instances as well.
-    if not _ollama_can_evict_admin_instances():
+    if not can_evict_admin:
         return False
 
     # Second pass: also evict admin-UI instances (LRU order).
@@ -225,6 +235,7 @@ def _wait_for_model_ready(host: str, port: int, timeout: float) -> bool:
 def _ensure_model_running(
     model_name: str,
     allow_eviction: bool = True,
+    can_evict_admin: bool | None = None,
 ) -> tuple[dict | None, str | None]:
     """Ensure a model instance exists and is at least launched.
 
@@ -233,8 +244,11 @@ def _ensure_model_running(
     on the server port before forwarding the actual request.
 
     allow_eviction controls whether LRU eviction may be used to free a slot.
-    The Ollama API sets this True; the OpenAI API sets it False so it never
-    displaces a running model - it either finds a free slot or returns 503.
+    The Ollama API sets this True; the OpenAI API leaves it False by default so
+    it never displaces a running model - it either finds a free slot or returns
+    503 - unless its "evict admin-launched models" toggle is on.
+    can_evict_admin is threaded into eviction to say whether admin-UI launched
+    instances may also be evicted; None defers to the Ollama override toggle.
     """
     from api.instances import (
         launch_instance, relaunch_inactive_instance, wait_for_healthy,
@@ -289,6 +303,7 @@ def _ensure_model_running(
             # override toggle is on) to stay within LLAMAMAN_MAX_MODELS.
             room = _evict_llamaman_instances_if_needed(
                 incoming_embedding_model=incoming_embedding_model,
+                can_evict_admin=can_evict_admin,
             )
             if not room:
                 return None, (
@@ -1045,7 +1060,10 @@ def llamaman_v1_chat():
     if forwarded is not None:
         return forwarded
 
-    inst, err = _ensure_model_running(model_name, allow_eviction=False)
+    _openai_evict = _openai_can_evict_admin_instances()
+    inst, err = _ensure_model_running(
+        model_name, allow_eviction=_openai_evict, can_evict_admin=_openai_evict
+    )
     if err:
         return jsonify({"error": {"message": err}}), 503
 
@@ -1217,7 +1235,10 @@ def _proxy_passthrough(upstream_path: str, endpoint_label: str):
     if forwarded is not None:
         return forwarded
 
-    inst, err = _ensure_model_running(model_name, allow_eviction=False)
+    _openai_evict = _openai_can_evict_admin_instances()
+    inst, err = _ensure_model_running(
+        model_name, allow_eviction=_openai_evict, can_evict_admin=_openai_evict
+    )
     if err:
         return jsonify({"error": {"message": err}}), 503
     if inst.get("config", {}).get("embedding_model"):
@@ -1335,7 +1356,10 @@ def llamaman_v1_embeddings():
     if not model_name:
         return jsonify({"error": {"message": "model is required"}}), 400
 
-    inst, err = _ensure_model_running(model_name, allow_eviction=False)
+    _openai_evict = _openai_can_evict_admin_instances()
+    inst, err = _ensure_model_running(
+        model_name, allow_eviction=_openai_evict, can_evict_admin=_openai_evict
+    )
     if err:
         return jsonify({"error": {"message": err}}), 503
 

@@ -372,7 +372,7 @@ Admin UI launched models have ultimate priority. The two API surfaces have diffe
 |----------|--------------------|--------------|
 | **Admin UI** | Evicts Ollama-managed models first (LRU), then admin UI models if needed | - |
 | **Ollama API** (`/api/chat`, `/api/generate`) | Evicts Ollama-managed models (LRU) | Admin UI launched models (by default) |
-| **OpenAI API** (`/v1/chat/completions`) | No eviction - starts model only if a slot is free | Everything |
+| **OpenAI API** (`/v1/chat/completions`) | No eviction by default - starts model only if a slot is free | Everything (by default) |
 
 If the cap is full, requests that cannot evict return HTTP 503:
 ```
@@ -382,10 +382,11 @@ model limit reached (LLAMAMAN_MAX_MODELS=N); the OpenAI API does not evict runni
 
 #### App Settings toggles
 
-Two toggles in **Settings >> App Settings** control eviction behaviour:
+Three toggles in **Settings >> App Settings** control eviction behaviour:
 
 - **Enforce `LLAMAMAN_MAX_MODELS` for admin UI launches** - when on, the admin UI silently evicts the LRU model (Ollama-managed first) before launching. When off (default), the UI prompts you to confirm before exceeding the cap.
-- **Allow Ollama API to evict admin-launched models** - when on, the Ollama API can also evict admin UI launched models as a fallback if no Ollama-managed models are available to evict. Off by default. Has no effect on the OpenAI API, which never evicts.
+- **Allow Ollama API to evict admin-launched models** - when on, the Ollama API can also evict admin UI launched models as a fallback if no Ollama-managed models are available to evict. Off by default.
+- **Allow OpenAI API to evict admin-launched models** - when on, the OpenAI API gains LRU eviction (Ollama-managed first, then admin UI launched models) to make room, just like the Ollama API with its override enabled. Off by default, in which case the OpenAI API never evicts and only loads a model when a slot is free (returning 503 otherwise).
 
 #### Other details
 
@@ -455,7 +456,7 @@ environment:
 
 Each node heartbeats every ~5s; a node silent past `CLUSTER_NODE_ONLINE_WINDOW_S` (default 45s) is shown offline. Inspect and manage the cluster under **Settings >> Cluster**.
 
-**Per-node vs shared settings:** most settings are shared cluster-wide via the database, but a few are scoped per node because they're host-specific: the tracked **Docker images** (a CUDA host and a ROCm host differ) and the two model-cap eviction toggles (**Enforce `LLAMAMAN_MAX_MODELS` for admin UI launches** and **Allow Ollama API to evict admin-launched models**). Existing single-node values are inherited until a node overrides them.
+**Per-node vs shared settings:** most settings are shared cluster-wide via the database, but a few are scoped per node because they're host-specific: the tracked **Docker images** (a CUDA host and a ROCm host differ) and the model-cap eviction toggles (**Enforce `LLAMAMAN_MAX_MODELS` for admin UI launches**, **Allow Ollama API to evict admin-launched models**, and **Allow OpenAI API to evict admin-launched models**). Existing single-node values are inherited until a node overrides them.
 
 > **Security:** the cluster secret lets any peer drive actions on this node. Run node-to-node traffic over a trusted network or behind TLS.
 

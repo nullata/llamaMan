@@ -410,6 +410,7 @@ class DispatchTests(unittest.TestCase):
             class R:
                 status_code = 200
                 headers = {"Content-Type": "application/json"}
+                content = b'{"ok":1}'  # non-streaming bodies are buffered via .content
                 def iter_content(self, chunk_size=None): yield b'{"ok":1}'
                 def close(self): pass
             return R()
@@ -449,6 +450,7 @@ class DispatchTests(unittest.TestCase):
         class FakeResp:
             status_code = 200
             headers = {"Content-Type": "application/json"}
+            content = b"{}"  # non-streaming bodies are buffered via .content
             def iter_content(self, chunk_size=None): yield b"{}"
             def close(self): pass
 
@@ -574,7 +576,10 @@ class DispatchTests(unittest.TestCase):
         # runs; draining the relay must NOT decrement it (it ages out instead).
         class ROK:
             status_code = 200
-            headers = {"Content-Type": "application/json"}
+            # A streaming content type so _forward_inference relays via a
+            # generator (resp.response) rather than buffering - the path this
+            # test's drain-doesn't-decrement assertion is about.
+            headers = {"Content-Type": "text/event-stream"}
             def iter_content(self, chunk_size=None): yield b"{}"
             def close(self): pass
         with self.app.test_request_context("/v1/chat/completions", **ctx):

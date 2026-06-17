@@ -207,7 +207,8 @@ def _sanitize_settings(settings: dict) -> dict:
         safe["huggingface_tokens"] = [serialize_hf_token(token) for token in _get_hf_tokens()]
     # Surface the local node's value for per-node keys the UI reads from here
     # (the eviction toggles); never leak the raw per-node namespace.
-    for key in ("admin_ui_enforce_max_models", "allow_ollama_api_override_admin"):
+    for key in ("admin_ui_enforce_max_models", "allow_ollama_api_override_admin",
+                "allow_openai_api_override_admin"):
         safe[key] = bool(effective_from_settings(settings, key, safe.get(key, False)))
     safe.pop("nodes", None)
     return safe

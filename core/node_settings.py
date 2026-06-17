@@ -20,6 +20,7 @@ NODE_SCOPED_KEYS = (
     "docker_images",
     "admin_ui_enforce_max_models",
     "allow_ollama_api_override_admin",
+    "allow_openai_api_override_admin",
 )
 
 
