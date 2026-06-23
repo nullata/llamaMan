@@ -1,5 +1,6 @@
 # Copyright (c) llamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
+import base64
 import json
 import os
 import threading
@@ -551,6 +552,54 @@ def _list_loaded_models() -> list[dict]:
 # Ollama >> OpenAI translation
 # ---------------------------------------------------------------------------
 
+def _sniff_image_mime(b64: str) -> str:
+    """Best-effort MIME type from a base64-encoded image's magic bytes.
+
+    Ollama sends raw base64 with no media type, but llama.cpp's OpenAI endpoint
+    wants a `data:` URI that carries one. Defaults to image/jpeg when the bytes
+    aren't recognized.
+    """
+    try:
+        header = base64.b64decode(b64[:32], validate=False)
+    except Exception:
+        return "image/jpeg"
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if header.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if header.startswith(b"GIF8"):
+        return "image/gif"
+    if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        return "image/webp"
+    if header.startswith(b"BM"):
+        return "image/bmp"
+    return "image/jpeg"
+
+
+def _translate_message(msg: dict) -> dict:
+    """Convert an Ollama-style message into an OpenAI one, lifting the native
+    `images` array (base64 strings) into `image_url` content blocks so vision
+    models served via llama.cpp's OpenAI endpoint actually see them."""
+    if not isinstance(msg, dict):
+        return msg
+    images = msg.get("images")
+    if not images or not isinstance(images, list):
+        return msg
+    out = {k: v for k, v in msg.items() if k != "images"}
+    content = out.get("content")
+    blocks = list(content) if isinstance(content, list) else [
+        {"type": "text", "text": content or ""}
+    ]
+    for img in images:
+        if not isinstance(img, str):
+            continue
+        url = img if img.startswith("data:") else \
+            f"data:{_sniff_image_mime(img)};base64,{img}"
+        blocks.append({"type": "image_url", "image_url": {"url": url}})
+    out["content"] = blocks
+    return out
+
+
 def _translate_to_openai(body: dict) -> dict:
     openai_body = {
         "model": body.get("model", ""),
@@ -558,13 +607,17 @@ def _translate_to_openai(body: dict) -> dict:
     }
 
     if "messages" in body:
-        openai_body["messages"] = body["messages"]
+        openai_body["messages"] = [_translate_message(m) for m in body["messages"]]
 
     if "prompt" in body and "messages" not in body:
         msgs = []
         if body.get("system"):
             msgs.append({"role": "system", "content": body["system"]})
-        msgs.append({"role": "user", "content": body["prompt"]})
+        # /api/generate carries images at the top level alongside the prompt.
+        user_msg = {"role": "user", "content": body["prompt"]}
+        if isinstance(body.get("images"), list) and body["images"]:
+            user_msg["images"] = body["images"]
+        msgs.append(_translate_message(user_msg))
         openai_body["messages"] = msgs
 
     opts = body.get("options", {})
