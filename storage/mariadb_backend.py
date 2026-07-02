@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 from copy import deepcopy
 from datetime import datetime, timezone
 
@@ -118,10 +119,31 @@ class MariaDBBackend(StorageBackend):
     """Stores data in MariaDB/MySQL via SQLAlchemy."""
 
     def __init__(self, database_url: str):
-        self._engine = create_engine(database_url, pool_pre_ping=True)
+        # Pool sizing is load-bearing, not tuning. The single gunicorn worker
+        # runs many threads (gunicorn.conf.py: threads=32) and each thread
+        # holds one connection for the whole duration of its query via the
+        # thread-local scoped_session; background daemons (request-log
+        # finalize_async, the cluster heartbeat) borrow connections on top of
+        # that. SQLAlchemy's default pool (size=5 + overflow=10 = 15 max) is
+        # far below the thread count, so under concurrent load threads block on
+        # checkout and eventually raise "QueuePool limit ... reached" - which
+        # surfaces as 500s on /api/request-log/stats and dropped heartbeats.
+        # Size the pool to cover the worker's threads plus daemon headroom.
+        pool_size = int(os.environ.get("DB_POOL_SIZE", "32"))
+        max_overflow = int(os.environ.get("DB_MAX_OVERFLOW", "16"))
+        pool_timeout = int(os.environ.get("DB_POOL_TIMEOUT", "30"))
+        self._engine = create_engine(
+            database_url,
+            pool_pre_ping=True,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_timeout=pool_timeout,
+            pool_recycle=3600,   # refresh conns before MySQL wait_timeout drops them
+        )
         Base.metadata.create_all(self._engine)
         self._session_factory = scoped_session(sessionmaker(bind=self._engine))
-        logger.info("MariaDB backend connected: %s", database_url.split("@")[-1])
+        logger.info("MariaDB backend connected: %s (pool=%d+%d)",
+                    database_url.split("@")[-1], pool_size, max_overflow)
 
     def _session(self):
         return self._session_factory()
@@ -634,6 +656,39 @@ class MariaDBBackend(StorageBackend):
             return prompt[:120]
         return ""
 
+    def _conversation_titles(self, cids: list[str]) -> dict[str, str]:
+        """Map each conversation id to its title (first user message of the
+        earliest turn), resolved in a single query.
+
+        Runs on the caller's thread-local session, so it reuses the already
+        checked-out connection rather than taking another from the pool.
+        """
+        cids = [c for c in cids if c]
+        if not cids:
+            return {}
+        R = RequestLogRow
+        session = self._session()
+        # Earliest created_at per conversation, then join back to pull that
+        # row's request_body. Exact-timestamp ties yield >1 row per id; the
+        # first one wins (title is best-effort either way).
+        earliest = (
+            session.query(R.conversation_id, func.min(R.created_at).label("mc"))
+            .filter(R.conversation_id.in_(cids))
+            .group_by(R.conversation_id)
+            .subquery()
+        )
+        body_rows = (
+            session.query(R.conversation_id, R.request_body)
+            .join(earliest, (R.conversation_id == earliest.c.conversation_id)
+                  & (R.created_at == earliest.c.mc))
+            .all()
+        )
+        titles: dict[str, str] = {}
+        for cid, body in body_rows:
+            if cid not in titles:
+                titles[cid] = self._extract_title(body or "")
+        return titles
+
     def list_conversations(self, limit: int = 100) -> list[dict]:
         session = self._session()
         try:
@@ -652,16 +707,15 @@ class MariaDBBackend(StorageBackend):
                 .limit(limit)
                 .all()
             )
+            # Titles: fetch the earliest row's request_body for every
+            # conversation on this page in ONE query instead of a per-row
+            # subquery. The old loop issued `limit` extra round trips (up to
+            # 200), each holding the pooled connection long enough to starve
+            # the pool - the actual cause of the slow/never-loading page.
+            titles = self._conversation_titles([r[0] for r in rows])
+
             out = []
             for cid, first, last, count, model, ptok, ctok in rows:
-                # Title: pull the earliest row's request_body for this conversation
-                first_row = (
-                    session.query(RequestLogRow.request_body)
-                    .filter(RequestLogRow.conversation_id == cid)
-                    .order_by(RequestLogRow.created_at.asc())
-                    .limit(1)
-                    .scalar()
-                )
                 out.append({
                     "conversation_id": cid,
                     "model": model or "",
@@ -670,7 +724,7 @@ class MariaDBBackend(StorageBackend):
                     "turn_count": int(count),
                     "prompt_tokens": int(ptok or 0),
                     "completion_tokens": int(ctok or 0),
-                    "title": self._extract_title(first_row or ""),
+                    "title": titles.get(cid, ""),
                 })
             return out
         finally:
