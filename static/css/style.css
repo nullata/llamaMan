@@ -2074,3 +2074,195 @@ body.login-page {
 .conv-metrics { font-size: 12px; color: var(--muted); }
 .conv-metrics summary { cursor: pointer; }
 .conv-metrics-body { margin-top: 6px; font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+   Responsive / mobile
+   ------------------------------------------------------------
+   The desktop layout is a fixed two-pane flexbox (260px sidebar +
+   independently scrolling .main) inside a height:100vh, overflow:hidden
+   body. That model has no room to breathe below ~820px, so there we
+   collapse to a single column that scrolls as one natural document.
+   ============================================================ */
+@media (max-width: 820px) {
+  /* Scroll the whole document instead of two independent panes, and
+     clamp horizontal overflow from any stray fixed-width child. */
+  html,
+  body {
+    overflow-x: hidden;
+  }
+  body {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow-y: auto;
+  }
+
+  header {
+    padding: 12px 16px;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+  }
+
+  #gpu-warning {
+    padding: 8px 16px;
+  }
+
+  /* Stack the sidebar above main; both size to their content. */
+  .layout {
+    flex-direction: column;
+    flex: none;
+    overflow: visible;
+  }
+  .sidebar {
+    width: 100%;
+    min-width: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow: visible;
+  }
+  /* Keep the model library from pushing everything else off-screen;
+     it scrolls internally while the page scrolls around it. */
+  #model-list {
+    max-height: 50vh;
+  }
+  .main {
+    flex: none;
+    overflow: visible;
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .card {
+    padding: 16px;
+  }
+
+  /* Paired launch fields (Target node + Docker Image, etc.) stack. */
+  .launch-pair {
+    flex-direction: column;
+  }
+
+  /* Action rows wrap rather than overflow the card. */
+  .form-actions {
+    flex-wrap: wrap;
+  }
+
+  /* Modals go (near) full-screen instead of a centered 900px box. */
+  .modal-overlay {
+    padding: 10px;
+  }
+  .modal,
+  .modal-sm {
+    width: 100%;
+    max-width: 100%;
+    max-height: 90vh;
+    max-height: 90dvh;
+  }
+
+  /* The logging page is its own scroll container on desktop; let it
+     flow with the document on mobile like .main does. */
+  .logging-page {
+    overflow: visible;
+    height: auto;
+    padding: 16px;
+  }
+
+  /* The 5-column conversation row (~550px of fixed columns) collapses
+     to a wrapping list: title on its own line, then model / turns /
+     tokens inline with the timestamp pushed to the right. */
+  .logging-conv-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+  }
+  .lc-title {
+    flex: 1 1 100%;
+    white-space: normal;
+  }
+  .lc-model,
+  .lc-meta {
+    text-align: left;
+  }
+  .lc-when {
+    margin-left: auto;
+  }
+
+  /* 16px font on focusable fields stops iOS Safari auto-zooming. */
+  input[type="text"],
+  input[type="number"],
+  input[type="password"],
+  input[type="search"],
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  header {
+    padding: 10px 12px;
+  }
+  header h1 {
+    font-size: 16px;
+  }
+  .main,
+  .logging-page {
+    padding: 12px;
+  }
+  .card {
+    padding: 13px;
+  }
+
+  /* Stack instance card content so actions/bars aren't crushed into a
+     sliver next to the model name. */
+  .instance-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .inst-info {
+    min-width: 0;
+  }
+
+  /* Segmented time-window control spans the row and splits evenly. */
+  .logging-window {
+    width: 100%;
+  }
+  .lw-btn {
+    flex: 1;
+  }
+}
+
+/* ---- Portrait phones: monitoring-first order ----
+   Landscape phones are ≥820px wide and keep the desktop two-column layout, so
+   this never touches them. In portrait the width-based stack above applies,
+   but it leads with the Model Library (eating the top ~50vh) and buries
+   Running Instances at the very bottom — a config-first layout on a device you
+   mostly open to *monitor and control*. Flip the priority: Running Instances
+   and the live System/GPU widgets float to the top, launch/settings config
+   sits below them, and the Model Library (only needed while launching) drops
+   to the bottom. Reorder only — collapse stays JS-driven so the chevrons and
+   localStorage state stay in sync across orientations. */
+@media (max-width: 820px) and (orientation: portrait) {
+  /* Model Library (sidebar) drops below the main content. */
+  .main {
+    order: 1;
+  }
+  .sidebar {
+    order: 2;
+    border-bottom: none;
+    border-top: 1px solid var(--border);
+  }
+
+  /* Within main: Instances first, then the compact monitoring widgets,
+     then the (natural-order) launch/settings card. */
+  .instances-card {
+    order: -3;
+  }
+  #system-info-card {
+    order: -2;
+  }
+  #gpu-vram-card {
+    order: -1;
+  }
+}
