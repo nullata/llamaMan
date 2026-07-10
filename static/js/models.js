@@ -207,6 +207,7 @@ async function loadModels() {
     const res = await apiFetch('/api/models');
     allModels = await res.json();
     renderModels();
+    populateSpecDraftModelOptions();
   } catch (e) {
     list.innerHTML = '<div id="model-empty">Error loading models</div>';
   }
@@ -394,6 +395,10 @@ async function selectModel(model, el) {
       if (p.ctx_size != null && ctxField) ctxField.value = p.ctx_size;
       document.getElementById('f-extra').value = p.extra_args || '';
       document.getElementById('f-spec-enabled').checked = !!p.spec_enabled;
+      const specTypeSel = document.getElementById('f-spec-type');
+      specTypeSel.value = p.spec_type || 'draft-mtp';
+      if (!specTypeSel.value) specTypeSel.value = 'draft-mtp';  // preset names a type we don't offer
+      document.getElementById('f-spec-draft-model').value = p.spec_draft_model || '';
       document.getElementById('f-spec-draft-n-max').value = p.spec_draft_n_max ?? '';
       document.getElementById('f-idle-timeout').value = p.idle_timeout_min || 0;
       document.getElementById('f-max-concurrent').value = p.max_concurrent || 0;
@@ -420,8 +425,23 @@ async function selectModel(model, el) {
       toast('Preset loaded', 'info');
     }
   } catch (e) { /* no preset, use defaults */ }
+  if (typeof updateQuickLaunchVisibility === 'function') updateQuickLaunchVisibility();
   // Detect layer count for model
   await updateGpuLayersTotal(model.path);
+}
+
+// Suggestions for the DFlash drafter field: the GGUFs on the target node.
+function populateSpecDraftModelOptions() {
+  const dl = document.getElementById('spec-draft-model-options');
+  if (!dl) return;
+  const { present } = _modelSets();
+  dl.innerHTML = '';
+  present.filter(m => m.type === 'gguf').forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.path;
+    opt.textContent = m.name;
+    dl.appendChild(opt);
+  });
 }
 
 // Populate the launch Docker-image dropdown from the target node's images,
@@ -497,6 +517,7 @@ function resetLaunchForm() {
   if (sugg) { sugg.textContent = ''; sugg.classList.remove('text-success'); }
   if (typeof updateProxySamplingOverrideState === 'function') updateProxySamplingOverrideState();
   if (typeof updateSpecState === 'function') updateSpecState();
+  if (typeof updateQuickLaunchVisibility === 'function') updateQuickLaunchVisibility();
 }
 
 // Called when the launch Target node changes. Different node = different model
@@ -505,6 +526,7 @@ function resetLaunchForm() {
 async function onLaunchNodeChanged() {
   resetLaunchForm();
   renderModels();
+  populateSpecDraftModelOptions();
   populateLaunchImageSelect();
   updatePortSuggestion();
 }

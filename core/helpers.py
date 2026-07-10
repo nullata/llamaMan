@@ -113,7 +113,12 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
     if alias:
         cmd += ["--alias", alias]
     if config.get("spec_enabled"):
-        cmd += ["--spec-type", "draft-mtp"]
+        from core.spec_decoding import DEFAULT_SPEC_TYPE, spec_type_needs_draft_model
+        spec_type = (config.get("spec_type") or DEFAULT_SPEC_TYPE).strip() or DEFAULT_SPEC_TYPE
+        draft_model = (config.get("spec_draft_model") or "").strip()
+        if draft_model and spec_type_needs_draft_model(spec_type):
+            cmd += ["--model-draft", draft_model]
+        cmd += ["--spec-type", spec_type]
         try:
             n_max = int(config.get("spec_draft_n_max") or 0)
         except (TypeError, ValueError):

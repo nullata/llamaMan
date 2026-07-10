@@ -1023,6 +1023,19 @@ select option {
   transition: transform .2s;
 }
 
+/* Buttons parked in a collapsible heading, next to the chevron. They stop
+   click propagation so they don't also toggle the section. */
+.heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.btn-compact {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
 .collapsible-heading.collapsed .chevron {
   transform: rotate(-90deg);
 }
@@ -1644,6 +1657,20 @@ body.login-page {
 
 .launch-settings-input {
   width: 90px;
+}
+
+.launch-settings-select {
+  width: auto;
+}
+
+/* The `hidden` attribute alone loses to .form-group's display:flex. */
+.spec-draft-model-row {
+  padding-top: 12px;
+  padding-bottom: 0;
+}
+
+.spec-draft-model-row[hidden] {
+  display: none;
 }
 
 .gpu-layers-suggestion {

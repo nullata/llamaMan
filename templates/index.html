@@ -68,7 +68,12 @@
       <div class="card tabbed-card" data-tab-group="settings" data-default-tab="launch">
         <div class="section-heading collapsible-heading" data-section="settings">
           <h2>Settings</h2>
-          <span class="chevron"><i class="fa-solid fa-chevron-down"></i></span>
+          <span class="heading-actions">
+            <button class="btn btn-primary btn-compact" type="button" id="btn-quick-launch"
+              title="Launch the selected model with its saved preset" hidden><i class="fa-solid fa-rocket"></i>
+              Quick Launch</button>
+            <span class="chevron"><i class="fa-solid fa-chevron-down"></i></span>
+          </span>
         </div>
         <div class="collapsible-body" data-section="settings">
           <div class="settings-tabs" role="tablist" aria-label="Settings sections">
@@ -259,8 +264,18 @@
                       <span class="toggle-slider"></span>
                     </label>
                   </div>
-                  <p class="hint-text">When enabled, runs the model with MTP speculative decoding (<code>--spec-type draft-mtp</code>). Requires a model with MTP heads. For other speculative-decoding types, set them via Extra Args instead.</p>
+                  <p class="hint-text">When enabled, runs the model with speculative decoding (<code>--spec-type</code>). MTP requires a model with MTP heads; DFlash requires a separate DFlash drafter model. For other speculative-decoding types, set them via Extra Args instead.</p>
                   <div class="launch-inline-settings-grid">
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-spec-type">Draft Type</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="Draft Type help" data-tip="Value passed to --spec-type. draft-mtp uses the main model's built-in MTP heads. draft-dflash runs a separate DFlash drafter model alongside it."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <select id="f-spec-type" class="launch-settings-select">
+                        <option value="draft-mtp" selected>MTP (draft-mtp)</option>
+                        <option value="draft-dflash">DFlash (draft-dflash)</option>
+                      </select>
+                    </div>
                     <div class="form-group">
                       <span class="label-row">
                         <label for="f-spec-draft-n-max">Draft N Max</label>
@@ -268,6 +283,14 @@
                       </span>
                       <input id="f-spec-draft-n-max" class="launch-settings-input" type="number" min="0" step="1" placeholder="2" value="2" />
                     </div>
+                  </div>
+                  <div class="form-group spec-draft-model-row" id="spec-draft-model-row" hidden>
+                    <span class="label-row">
+                      <label for="f-spec-draft-model">Draft Model</label>
+                      <span class="info-tip" tabindex="0" role="button" aria-label="Draft Model help" data-tip="Path to the drafter model passed as -md. Pick a downloaded model from the list or type a path under the models directory."><i class="fa-solid fa-circle-info"></i></span>
+                    </span>
+                    <input id="f-spec-draft-model" type="text" list="spec-draft-model-options" placeholder="/models/Qwen3.6-27B-DFlash-Q4_K_M/Qwen3.6-27B-DFlash-Q4_K_M.gguf" />
+                    <datalist id="spec-draft-model-options"></datalist>
                   </div>
                 </div>
                 <div class="form-group full">

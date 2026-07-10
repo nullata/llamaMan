@@ -28,6 +28,7 @@ from core.helpers import (
     request_local_worker,
 )
 from core.proxy_sampling import apply_proxy_sampling_overrides
+from core.spec_decoding import DEFAULT_SPEC_TYPE
 from core.request_log import record_request, finalize_async, SSEAccumulator
 from api.models import (
     detect_quant,
@@ -341,6 +342,8 @@ def _ensure_model_running(
             parallel=preset.get("parallel"),
             extra_args=preset.get("extra_args", ""),
             spec_enabled=preset.get("spec_enabled", False),
+            spec_type=preset.get("spec_type") or DEFAULT_SPEC_TYPE,
+            spec_draft_model=preset.get("spec_draft_model") or "",
             spec_draft_n_max=preset.get("spec_draft_n_max"),
             gpu_devices=preset.get("gpu_devices") or None,
             idle_timeout_min=preset.get("idle_timeout_min", 0),

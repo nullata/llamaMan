@@ -3,6 +3,7 @@
 from flask import Blueprint, jsonify, request
 
 from core.proxy_sampling import parse_proxy_sampling_config
+from core.spec_decoding import parse_spec_config
 from core.state import instances, instances_lock, save_state
 from storage import get_storage
 
@@ -69,6 +70,9 @@ def api_preset_save(model_path):
     proxy_sampling_config, proxy_sampling_err = parse_proxy_sampling_config(body)
     if proxy_sampling_err:
         return jsonify({"error": proxy_sampling_err}), 400
+    spec_config, spec_err = parse_spec_config(body)
+    if spec_err:
+        return jsonify({"error": spec_err}), 400
     # Preserve existing meta fields (favorite, note) that aren't part of the launch form
     existing = get_storage().get_preset(model_path) or {}
     if not isinstance(existing, dict):
@@ -83,8 +87,6 @@ def api_preset_save(model_path):
         "memory_limit": body.get("memory_limit", ""),
         "parallel": body.get("parallel"),
         "extra_args": body.get("extra_args", ""),
-        "spec_enabled": body.get("spec_enabled", False),
-        "spec_draft_n_max": body.get("spec_draft_n_max"),
         "gpu_devices": body.get("gpu_devices", ""),
         "idle_timeout_min": body.get("idle_timeout_min", 0),
         "max_concurrent": body.get("max_concurrent", 0),
@@ -99,6 +101,7 @@ def api_preset_save(model_path):
         "auto_restart_on_crash": body.get("auto_restart_on_crash", False),
         "favorite": body.get("favorite", existing.get("favorite", False)),
         "note": body.get("note", existing.get("note", "")),
+        **spec_config,
         **proxy_sampling_config,
     }
 

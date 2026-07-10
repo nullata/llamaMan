@@ -359,12 +359,34 @@ function updateProxySamplingOverrideState() {
   });
 }
 
+// --spec-type values that need a separate drafter model passed as -md.
+const SPEC_TYPES_WITH_DRAFT_MODEL = ['draft-dflash'];
+const DEFAULT_SPEC_TYPE = 'draft-mtp';
+
+function currentSpecType() {
+  return document.getElementById('f-spec-type')?.value || DEFAULT_SPEC_TYPE;
+}
+
 function updateSpecState() {
   const enabled = !!document.getElementById('f-spec-enabled')?.checked;
-  ['f-spec-draft-n-max'].forEach((id) => {
+  ['f-spec-type', 'f-spec-draft-n-max', 'f-spec-draft-model'].forEach((id) => {
     const input = document.getElementById(id);
     if (input) input.disabled = !enabled;
   });
+  const draftRow = document.getElementById('spec-draft-model-row');
+  if (draftRow) draftRow.hidden = !SPEC_TYPES_WITH_DRAFT_MODEL.includes(currentSpecType());
+}
+
+// The Quick Launch button lives in the Settings heading and only makes sense
+// when the card is collapsed (an expanded card has its own Launch button) and a
+// model is selected (its preset is already loaded into the hidden form).
+function updateQuickLaunchVisibility() {
+  const btn = document.getElementById('btn-quick-launch');
+  if (!btn) return;
+  const body = document.querySelector('.collapsible-body[data-section="settings"]');
+  const collapsed = !!body && body.classList.contains('hidden');
+  const hasModel = !!document.getElementById('f-model-path')?.value.trim();
+  btn.hidden = !(collapsed && hasModel);
 }
 
 async function updatePortSuggestion() {
@@ -405,6 +427,8 @@ function readLaunchForm() {
     auto_restart_on_crash: document.getElementById('f-auto-restart').checked,
     embedding_model: document.getElementById('f-embedding-model').checked,
     spec_enabled: document.getElementById('f-spec-enabled').checked,
+    spec_type: currentSpecType(),
+    spec_draft_model: document.getElementById('f-spec-draft-model').value.trim(),
     proxy_sampling_override_enabled: document.getElementById('f-proxy-sampling-override-enabled').checked,
     proxy_sampling_temperature: parseFloat(document.getElementById('f-proxy-sampling-temperature').value),
     proxy_sampling_top_k: parseInt(document.getElementById('f-proxy-sampling-top-k').value, 10),
@@ -427,6 +451,9 @@ function readLaunchForm() {
   if (!Number.isFinite(body.proxy_sampling_repeat_penalty) || body.proxy_sampling_repeat_penalty < 0 || body.proxy_sampling_repeat_penalty > 2) {
     throw new Error('Proxy-side repeat penalty must be between 0 and 2');
   }
+  if (body.spec_enabled && SPEC_TYPES_WITH_DRAFT_MODEL.includes(body.spec_type) && !body.spec_draft_model) {
+    throw new Error(`Speculative decoding with ${body.spec_type} requires a draft model`);
+  }
   const threads = document.getElementById('f-threads').value.trim();
   if (threads) body.threads = parseInt(threads);
   const memoryLimit = document.getElementById('f-memory-limit').value.trim();
@@ -440,16 +467,21 @@ function readLaunchForm() {
   return body;
 }
 
-const launchForm = document.getElementById('launch-form');
-if (launchForm) launchForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const btn = document.getElementById('btn-launch');
-  const status = document.getElementById('launch-status');
+// Shared by the in-card Launch button and the heading's Quick Launch button.
+// Returns {invalidForm:true} when the form itself didn't pass validation, so a
+// caller launching from the collapsed card can open it for the user to fix.
+async function submitLaunchForm(btn, status) {
   btn.disabled = true;
-  status.textContent = 'Launching…';
+  if (status) status.textContent = 'Launching…';
 
   try {
-    const body = readLaunchForm();
+    let body;
+    try {
+      body = readLaunchForm();
+    } catch (e) {
+      toast('Launch error: ' + e.message, 'error');
+      return { invalidForm: true };
+    }
     body.model_path = document.getElementById('f-model-path').value.trim();
     body.port = parseInt(document.getElementById('f-port').value);
 
@@ -473,10 +505,7 @@ if (launchForm) launchForm.addEventListener('submit', async (e) => {
     };
 
     const result = await attemptLaunch();
-    if (result.cancelled) {
-      status.textContent = '';
-      return;
-    }
+    if (result.cancelled) return {};
 
     const { res, data } = result;
     if (res.ok) {
@@ -484,19 +513,36 @@ if (launchForm) launchForm.addEventListener('submit', async (e) => {
         ? `Instance launched: public ${data.port}, llama-server ${data.internal_port}`
         : `Instance launched on port ${data.port}`;
       toast(msg, 'success');
-      status.textContent = '';
       updatePortSuggestion();
       await pollInstances();
     } else {
       toast(`Launch failed: ${data.error}`, 'error');
-      status.textContent = '';
     }
+    return { launched: res.ok };
   } catch (e) {
     toast('Launch error: ' + e.message, 'error');
-    status.textContent = '';
+    return {};
   } finally {
     btn.disabled = false;
+    if (status) status.textContent = '';
   }
+}
+
+const launchForm = document.getElementById('launch-form');
+if (launchForm) launchForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  await submitLaunchForm(
+    document.getElementById('btn-launch'),
+    document.getElementById('launch-status'),
+  );
+});
+
+const quickLaunchBtn = document.getElementById('btn-quick-launch');
+if (quickLaunchBtn) quickLaunchBtn.addEventListener('click', async (e) => {
+  e.stopPropagation();  // the heading it sits in toggles the section on click
+  const result = await submitLaunchForm(quickLaunchBtn, null);
+  // Nothing is visible to correct while the card is collapsed, so open it.
+  if (result.invalidForm && typeof toggleSection === 'function') toggleSection('settings');
 });
 
 // -------------------------------------------------------------------------
@@ -545,3 +591,10 @@ if (specToggle) {
   specToggle.addEventListener('change', updateSpecState);
   updateSpecState();
 }
+
+const specTypeSelect = document.getElementById('f-spec-type');
+if (specTypeSelect) specTypeSelect.addEventListener('change', updateSpecState);
+
+// A model can also be set by typing a path, not just by clicking the library.
+const quickLaunchModelField = document.getElementById('f-model-path');
+if (quickLaunchModelField) quickLaunchModelField.addEventListener('input', updateQuickLaunchVisibility);

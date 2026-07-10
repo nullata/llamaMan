@@ -19,6 +19,8 @@ from flask import Blueprint, Response, jsonify, request
 from config import REQUEST_TIMEOUT, logger
 from core import cluster as cl
 from core.helpers import model_name_from_path
+from core.proxy_sampling import PROXY_SAMPLING_OVERRIDE_KEYS
+from core.spec_decoding import SPEC_CONFIG_KEYS
 from core.timeutil import now_iso, now_utc, parse_iso
 from storage import get_storage
 
@@ -285,13 +287,8 @@ def _request_hops() -> int:
 
 # Sampling/spec fields shared across a group (last writer wins). Spec decoding is
 # launch-time only, so it is stored for the next launch but not applied per call.
-_GROUP_OVERRIDE_KEYS = (
-    "proxy_sampling_override_enabled", "proxy_sampling_temperature",
-    "proxy_sampling_top_k", "proxy_sampling_top_p",
-    "proxy_sampling_presence_penalty", "proxy_sampling_repeat_penalty",
-    "spec_enabled", "spec_draft_n_max",
-)
-_GROUP_SAMPLING_KEYS = _GROUP_OVERRIDE_KEYS[:6]
+_GROUP_SAMPLING_KEYS = PROXY_SAMPLING_OVERRIDE_KEYS
+_GROUP_OVERRIDE_KEYS = _GROUP_SAMPLING_KEYS + SPEC_CONFIG_KEYS
 
 
 def effective_group_key(model_path: str, config: dict | None) -> str:

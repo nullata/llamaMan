@@ -73,6 +73,7 @@ function toggleSection(section) {
   const collapsed = body.classList.toggle('hidden');
   heading.classList.toggle('collapsed', collapsed);
   saveSectionState(section, collapsed);
+  if (typeof updateQuickLaunchVisibility === 'function') updateQuickLaunchVisibility();
 }
 
 function restoreSectionStates() {

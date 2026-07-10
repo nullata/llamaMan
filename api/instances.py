@@ -37,6 +37,7 @@ from core.helpers import (
     stop_container, stream_log_file,
 )
 from core.proxy_sampling import parse_proxy_sampling_config
+from core.spec_decoding import DEFAULT_SPEC_TYPE, parse_spec_config
 from core.state import (
     instances, instances_lock, save_state,
 )
@@ -89,6 +90,8 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
             "parallel",
             "extra_args",
             "spec_enabled",
+            "spec_type",
+            "spec_draft_model",
             "spec_draft_n_max",
             "gpu_devices",
             "idle_timeout_min",
@@ -459,7 +462,8 @@ def relaunch_sleeping_instance(inst_id: str) -> bool:
 
 def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
                     threads=None, memory_limit=None, parallel=None, extra_args="",
-                    spec_enabled=False, spec_draft_n_max=None,
+                    spec_enabled=False, spec_type=DEFAULT_SPEC_TYPE,
+                    spec_draft_model="", spec_draft_n_max=None,
                     gpu_devices=None, idle_timeout_min=0,
                     max_concurrent=0, max_queue_depth=200,
                     share_queue=False, share_queue_group="",
@@ -508,6 +512,8 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
         "parallel": parallel,
         "extra_args": extra_args,
         "spec_enabled": spec_enabled,
+        "spec_type": spec_type,
+        "spec_draft_model": spec_draft_model,
         "spec_draft_n_max": spec_draft_n_max,
         "gpu_devices": gpu_devices,
         "idle_timeout_min": idle_timeout_min,
@@ -793,6 +799,9 @@ def api_instances_create():
     proxy_sampling_config, proxy_sampling_err = parse_proxy_sampling_config(body)
     if proxy_sampling_err:
         return jsonify({"error": proxy_sampling_err}), 400
+    spec_config, spec_err = parse_spec_config(body)
+    if spec_err:
+        return jsonify({"error": spec_err}), 400
 
     incoming_embedding_model = bool(body.get("embedding_model", False))
     confirm_overcommit = bool(body.get("confirm_overcommit", False))
@@ -815,8 +824,6 @@ def api_instances_create():
         memory_limit=body.get("memory_limit", "").strip() or None,
         parallel=body.get("parallel"),
         extra_args=body.get("extra_args", "").strip(),
-        spec_enabled=bool(body.get("spec_enabled", False)),
-        spec_draft_n_max=body.get("spec_draft_n_max"),
         gpu_devices=body.get("gpu_devices", "").strip() or None,
         idle_timeout_min=int(body.get("idle_timeout_min", 0)),
         max_concurrent=int(body.get("max_concurrent", 0)),
@@ -827,6 +834,7 @@ def api_instances_create():
         embedding_model=bool(body.get("embedding_model", False)),
         auto_restart_on_crash=bool(body.get("auto_restart_on_crash", False)),
         image=body.get("image", "").strip() or None,
+        **spec_config,
         **proxy_sampling_config,
     )
     if err:
@@ -901,6 +909,8 @@ def api_instances_restart(inst_id):
         parallel=config.get("parallel"),
         extra_args=config.get("extra_args", ""),
         spec_enabled=config.get("spec_enabled", False),
+        spec_type=config.get("spec_type") or DEFAULT_SPEC_TYPE,
+        spec_draft_model=config.get("spec_draft_model") or "",
         spec_draft_n_max=config.get("spec_draft_n_max"),
         gpu_devices=config.get("gpu_devices"),
         idle_timeout_min=config.get("idle_timeout_min", 0),
