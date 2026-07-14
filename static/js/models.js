@@ -208,6 +208,7 @@ async function loadModels() {
     allModels = await res.json();
     renderModels();
     populateSpecDraftModelOptions();
+    populateMmprojModelOptions();
   } catch (e) {
     list.innerHTML = '<div id="model-empty">Error loading models</div>';
   }
@@ -400,6 +401,8 @@ async function selectModel(model, el) {
       if (!specTypeSel.value) specTypeSel.value = 'draft-mtp';  // preset names a type we don't offer
       document.getElementById('f-spec-draft-model').value = p.spec_draft_model || '';
       document.getElementById('f-spec-draft-n-max').value = p.spec_draft_n_max ?? '';
+      document.getElementById('f-mmproj-enabled').checked = !!p.mmproj_enabled;
+      document.getElementById('f-mmproj-path').value = p.mmproj_path || '';
       document.getElementById('f-idle-timeout').value = p.idle_timeout_min || 0;
       document.getElementById('f-max-concurrent').value = p.max_concurrent || 0;
       document.getElementById('f-max-queue-depth').value = p.max_queue_depth || 200;
@@ -422,6 +425,7 @@ async function selectModel(model, el) {
       applyPresetHardwareForNode(p, _launchNode());
       if (typeof updateProxySamplingOverrideState === 'function') updateProxySamplingOverrideState();
       if (typeof updateSpecState === 'function') updateSpecState();
+      if (typeof updateMmprojState === 'function') updateMmprojState();
       toast('Preset loaded', 'info');
     }
   } catch (e) { /* no preset, use defaults */ }
@@ -433,6 +437,21 @@ async function selectModel(model, el) {
 // Suggestions for the DFlash drafter field: the GGUFs on the target node.
 function populateSpecDraftModelOptions() {
   const dl = document.getElementById('spec-draft-model-options');
+  if (!dl) return;
+  const { present } = _modelSets();
+  dl.innerHTML = '';
+  present.filter(m => m.type === 'gguf').forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.path;
+    opt.textContent = m.name;
+    dl.appendChild(opt);
+  });
+}
+
+// Suggestions for the MMPROJ field: the GGUFs on the target node (multimodal
+// projectors ship as GGUFs alongside their vision model).
+function populateMmprojModelOptions() {
+  const dl = document.getElementById('mmproj-model-options');
   if (!dl) return;
   const { present } = _modelSets();
   dl.innerHTML = '';
@@ -517,6 +536,7 @@ function resetLaunchForm() {
   if (sugg) { sugg.textContent = ''; sugg.classList.remove('text-success'); }
   if (typeof updateProxySamplingOverrideState === 'function') updateProxySamplingOverrideState();
   if (typeof updateSpecState === 'function') updateSpecState();
+  if (typeof updateMmprojState === 'function') updateMmprojState();
   if (typeof updateQuickLaunchVisibility === 'function') updateQuickLaunchVisibility();
 }
 
@@ -527,6 +547,7 @@ async function onLaunchNodeChanged() {
   resetLaunchForm();
   renderModels();
   populateSpecDraftModelOptions();
+  populateMmprojModelOptions();
   populateLaunchImageSelect();
   updatePortSuggestion();
 }

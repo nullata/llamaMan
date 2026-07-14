@@ -346,8 +346,35 @@ async function removeInstance(id, nodeId) {
 // -------------------------------------------------------------------------
 // Launch form
 // -------------------------------------------------------------------------
+// Expand/collapse a launch section's body. The inner element clips its overflow
+// while the height animates (so it doesn't spill over the fields below); once
+// fully open we switch to overflow:visible so upward info-tip tooltips on the
+// first field row aren't cut off at the section's top edge.
+function toggleLaunchSectionReveal(reveal, open) {
+  if (!reveal) return;
+  if (!open) {
+    reveal.classList.remove('reveal-expanded');
+    reveal.classList.remove('open');
+    return;
+  }
+  reveal.classList.add('open');
+  if (reveal.classList.contains('reveal-expanded')) return;
+  // No transition to wait on (unsupported/disabled) — unclip immediately.
+  if (parseFloat(getComputedStyle(reveal).transitionDuration) === 0) {
+    reveal.classList.add('reveal-expanded');
+    return;
+  }
+  const onEnd = (e) => {
+    if (e.target !== reveal || e.propertyName !== 'grid-template-rows') return;
+    reveal.removeEventListener('transitionend', onEnd);
+    if (reveal.classList.contains('open')) reveal.classList.add('reveal-expanded');
+  };
+  reveal.addEventListener('transitionend', onEnd);
+}
+
 function updateProxySamplingOverrideState() {
   const enabled = !!document.getElementById('f-proxy-sampling-override-enabled')?.checked;
+  toggleLaunchSectionReveal(document.getElementById('proxy-sampling-reveal'), enabled);
   [
     'f-proxy-sampling-temperature',
     'f-proxy-sampling-top-k',
@@ -369,12 +396,20 @@ function currentSpecType() {
 
 function updateSpecState() {
   const enabled = !!document.getElementById('f-spec-enabled')?.checked;
+  toggleLaunchSectionReveal(document.getElementById('spec-decoding-reveal'), enabled);
   ['f-spec-type', 'f-spec-draft-n-max', 'f-spec-draft-model'].forEach((id) => {
     const input = document.getElementById(id);
     if (input) input.disabled = !enabled;
   });
   const draftRow = document.getElementById('spec-draft-model-row');
   if (draftRow) draftRow.hidden = !SPEC_TYPES_WITH_DRAFT_MODEL.includes(currentSpecType());
+}
+
+function updateMmprojState() {
+  const enabled = !!document.getElementById('f-mmproj-enabled')?.checked;
+  toggleLaunchSectionReveal(document.getElementById('mmproj-reveal'), enabled);
+  const input = document.getElementById('f-mmproj-path');
+  if (input) input.disabled = !enabled;
 }
 
 // The Quick Launch button lives in the Settings heading and only makes sense
@@ -429,6 +464,8 @@ function readLaunchForm() {
     spec_enabled: document.getElementById('f-spec-enabled').checked,
     spec_type: currentSpecType(),
     spec_draft_model: document.getElementById('f-spec-draft-model').value.trim(),
+    mmproj_enabled: document.getElementById('f-mmproj-enabled').checked,
+    mmproj_path: document.getElementById('f-mmproj-path').value.trim(),
     proxy_sampling_override_enabled: document.getElementById('f-proxy-sampling-override-enabled').checked,
     proxy_sampling_temperature: parseFloat(document.getElementById('f-proxy-sampling-temperature').value),
     proxy_sampling_top_k: parseInt(document.getElementById('f-proxy-sampling-top-k').value, 10),
@@ -453,6 +490,9 @@ function readLaunchForm() {
   }
   if (body.spec_enabled && SPEC_TYPES_WITH_DRAFT_MODEL.includes(body.spec_type) && !body.spec_draft_model) {
     throw new Error(`Speculative decoding with ${body.spec_type} requires a draft model`);
+  }
+  if (body.mmproj_enabled && !body.mmproj_path) {
+    throw new Error('Image input requires an MMPROJ model path');
   }
   const threads = document.getElementById('f-threads').value.trim();
   if (threads) body.threads = parseInt(threads);
@@ -590,6 +630,12 @@ const specToggle = document.getElementById('f-spec-enabled');
 if (specToggle) {
   specToggle.addEventListener('change', updateSpecState);
   updateSpecState();
+}
+
+const mmprojToggle = document.getElementById('f-mmproj-enabled');
+if (mmprojToggle) {
+  mmprojToggle.addEventListener('change', updateMmprojState);
+  updateMmprojState();
 }
 
 const specTypeSelect = document.getElementById('f-spec-type');

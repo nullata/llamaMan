@@ -125,6 +125,10 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
             n_max = 0
         if n_max > 0:
             cmd += ["--spec-draft-n-max", str(n_max)]
+    if config.get("mmproj_enabled"):
+        mmproj_path = (config.get("mmproj_path") or "").strip()
+        if mmproj_path:
+            cmd += ["--mmproj", mmproj_path]
     if config.get("extra_args"):
         cmd += shlex.split(config["extra_args"])
     return cmd

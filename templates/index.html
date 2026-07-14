@@ -216,42 +216,47 @@
                       <span class="toggle-slider"></span>
                     </label>
                   </div>
-                  <p class="hint-text">When enabled, the instance public port stays behind a proxy that forces these sampling values on forwarded requests.</p>
-                  <div class="launch-inline-settings-grid">
-                    <div class="form-group">
-                      <span class="label-row">
-                        <label for="f-proxy-sampling-temperature">Temperature</label>
-                        <span class="info-tip" tabindex="0" role="button" aria-label="Temperature help" data-tip="Sampling temperature applied at the proxy. Higher = more random. Typical range 0.6–1.0."><i class="fa-solid fa-circle-info"></i></span>
-                      </span>
-                      <input id="f-proxy-sampling-temperature" class="launch-settings-input" type="number" value="0.8" min="0" max="2" step="0.01" />
-                    </div>
-                    <div class="form-group">
-                      <span class="label-row">
-                        <label for="f-proxy-sampling-top-k">Top K</label>
-                        <span class="info-tip" tabindex="0" role="button" aria-label="Top K help" data-tip="Limits sampling to the K most likely next tokens. 0 = disabled."><i class="fa-solid fa-circle-info"></i></span>
-                      </span>
-                      <input id="f-proxy-sampling-top-k" class="launch-settings-input" type="number" value="40" min="0" step="1" />
-                    </div>
-                    <div class="form-group">
-                      <span class="label-row">
-                        <label for="f-proxy-sampling-top-p">Top P</label>
-                        <span class="info-tip" tabindex="0" role="button" aria-label="Top P help" data-tip="Nucleus sampling threshold (0–1). Sample from the smallest set of tokens whose cumulative probability ≥ this value."><i class="fa-solid fa-circle-info"></i></span>
-                      </span>
-                      <input id="f-proxy-sampling-top-p" class="launch-settings-input" type="number" value="0.95" min="0.01" max="1" step="0.01" />
-                    </div>
-                    <div class="form-group">
-                      <span class="label-row">
-                        <label for="f-proxy-sampling-presence-penalty">Presence Penalty</label>
-                        <span class="info-tip" tabindex="0" role="button" aria-label="Presence Penalty help" data-tip="Penalty applied to tokens that already appeared in the response. Discourages topic repetition."><i class="fa-solid fa-circle-info"></i></span>
-                      </span>
-                      <input id="f-proxy-sampling-presence-penalty" class="launch-settings-input" type="number" value="0.0" min="-2" max="2" step="0.01" />
-                    </div>
-                    <div class="form-group">
-                      <span class="label-row">
-                        <label for="f-proxy-sampling-repeat-penalty">Repeat Penalty</label>
-                        <span class="info-tip" tabindex="0" role="button" aria-label="Repeat Penalty help" data-tip="Penalty applied to repeated tokens to discourage tight loops."><i class="fa-solid fa-circle-info"></i></span>
-                      </span>
-                      <input id="f-proxy-sampling-repeat-penalty" class="launch-settings-input" type="number" value="0.0" min="0" max="2" step="0.01" />
+                  <!-- Collapsed until Proxy-Side Sampling Overrides is toggled on; expands with a height transition. -->
+                  <div class="launch-settings-reveal" id="proxy-sampling-reveal">
+                    <div class="launch-settings-reveal-inner">
+                      <p class="hint-text">When enabled, the instance public port stays behind a proxy that forces these sampling values on forwarded requests.</p>
+                      <div class="launch-inline-settings-grid">
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-proxy-sampling-temperature">Temperature</label>
+                            <span class="info-tip" tabindex="0" role="button" aria-label="Temperature help" data-tip="Sampling temperature applied at the proxy. Higher = more random. Typical range 0.6–1.0."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-proxy-sampling-temperature" class="launch-settings-input" type="number" value="0.8" min="0" max="2" step="0.01" />
+                        </div>
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-proxy-sampling-top-k">Top K</label>
+                            <span class="info-tip" tabindex="0" role="button" aria-label="Top K help" data-tip="Limits sampling to the K most likely next tokens. 0 = disabled."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-proxy-sampling-top-k" class="launch-settings-input" type="number" value="40" min="0" step="1" />
+                        </div>
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-proxy-sampling-top-p">Top P</label>
+                            <span class="info-tip" tabindex="0" role="button" aria-label="Top P help" data-tip="Nucleus sampling threshold (0–1). Sample from the smallest set of tokens whose cumulative probability ≥ this value."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-proxy-sampling-top-p" class="launch-settings-input" type="number" value="0.95" min="0.01" max="1" step="0.01" />
+                        </div>
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-proxy-sampling-presence-penalty">Presence Penalty</label>
+                            <span class="info-tip" tabindex="0" role="button" aria-label="Presence Penalty help" data-tip="Penalty applied to tokens that already appeared in the response. Discourages topic repetition."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-proxy-sampling-presence-penalty" class="launch-settings-input" type="number" value="0.0" min="-2" max="2" step="0.01" />
+                        </div>
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-proxy-sampling-repeat-penalty">Repeat Penalty</label>
+                            <span class="info-tip" tabindex="0" role="button" aria-label="Repeat Penalty help" data-tip="Penalty applied to repeated tokens to discourage tight loops."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-proxy-sampling-repeat-penalty" class="launch-settings-input" type="number" value="0.0" min="0" max="2" step="0.01" />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -264,33 +269,62 @@
                       <span class="toggle-slider"></span>
                     </label>
                   </div>
-                  <p class="hint-text">When enabled, runs the model with speculative decoding (<code>--spec-type</code>). MTP requires a model with MTP heads; DFlash requires a separate DFlash drafter model. For other speculative-decoding types, set them via Extra Args instead.</p>
-                  <div class="launch-inline-settings-grid">
-                    <div class="form-group">
-                      <span class="label-row">
-                        <label for="f-spec-type">Draft Type</label>
-                        <span class="info-tip" tabindex="0" role="button" aria-label="Draft Type help" data-tip="Value passed to --spec-type. draft-mtp uses the main model's built-in MTP heads. draft-dflash runs a separate DFlash drafter model alongside it."><i class="fa-solid fa-circle-info"></i></span>
-                      </span>
-                      <select id="f-spec-type" class="launch-settings-select">
-                        <option value="draft-mtp" selected>MTP (draft-mtp)</option>
-                        <option value="draft-dflash">DFlash (draft-dflash)</option>
-                      </select>
-                    </div>
-                    <div class="form-group">
-                      <span class="label-row">
-                        <label for="f-spec-draft-n-max">Draft N Max</label>
-                        <span class="info-tip" tabindex="0" role="button" aria-label="Draft N Max help" data-tip="Value passed to --spec-draft-n-max: max tokens to draft per step. Leave blank to use llama.cpp's default (3)."><i class="fa-solid fa-circle-info"></i></span>
-                      </span>
-                      <input id="f-spec-draft-n-max" class="launch-settings-input" type="number" min="0" step="1" placeholder="2" value="2" />
+                  <!-- Collapsed until Speculative Decoding is toggled on; expands with a height transition. -->
+                  <div class="launch-settings-reveal" id="spec-decoding-reveal">
+                    <div class="launch-settings-reveal-inner">
+                      <p class="hint-text">When enabled, runs the model with speculative decoding (<code>--spec-type</code>). MTP requires a model with MTP heads; DFlash requires a separate DFlash drafter model. For other speculative-decoding types, set them via Extra Args instead.</p>
+                      <div class="launch-inline-settings-grid">
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-spec-type">Draft Type</label>
+                            <span class="info-tip" tabindex="0" role="button" aria-label="Draft Type help" data-tip="Value passed to --spec-type. draft-mtp uses the main model's built-in MTP heads. draft-dflash runs a separate DFlash drafter model alongside it."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <select id="f-spec-type" class="launch-settings-select">
+                            <option value="draft-mtp" selected>MTP (draft-mtp)</option>
+                            <option value="draft-dflash">DFlash (draft-dflash)</option>
+                          </select>
+                        </div>
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-spec-draft-n-max">Draft N Max</label>
+                            <span class="info-tip" tabindex="0" role="button" aria-label="Draft N Max help" data-tip="Value passed to --spec-draft-n-max: max tokens to draft per step. Leave blank to use llama.cpp's default (3)."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-spec-draft-n-max" class="launch-settings-input" type="number" min="0" step="1" placeholder="2" value="2" />
+                        </div>
+                      </div>
+                      <div class="form-group spec-draft-model-row" id="spec-draft-model-row" hidden>
+                        <span class="label-row">
+                          <label for="f-spec-draft-model">Draft Model</label>
+                          <span class="info-tip" tabindex="0" role="button" aria-label="Draft Model help" data-tip="Path to the drafter model passed as -md. Pick a downloaded model from the list or type a path under the models directory."><i class="fa-solid fa-circle-info"></i></span>
+                        </span>
+                        <input id="f-spec-draft-model" type="text" list="spec-draft-model-options" placeholder="/models/Qwen3.6-27B-DFlash-Q4_K_M/Qwen3.6-27B-DFlash-Q4_K_M.gguf" />
+                        <datalist id="spec-draft-model-options"></datalist>
+                      </div>
                     </div>
                   </div>
-                  <div class="form-group spec-draft-model-row" id="spec-draft-model-row" hidden>
-                    <span class="label-row">
-                      <label for="f-spec-draft-model">Draft Model</label>
-                      <span class="info-tip" tabindex="0" role="button" aria-label="Draft Model help" data-tip="Path to the drafter model passed as -md. Pick a downloaded model from the list or type a path under the models directory."><i class="fa-solid fa-circle-info"></i></span>
-                    </span>
-                    <input id="f-spec-draft-model" type="text" list="spec-draft-model-options" placeholder="/models/Qwen3.6-27B-DFlash-Q4_K_M/Qwen3.6-27B-DFlash-Q4_K_M.gguf" />
-                    <datalist id="spec-draft-model-options"></datalist>
+                </div>
+                <div class="form-group full launch-settings-section">
+                  <div class="launch-settings-section-header">
+                    <h3>Image Input</h3>
+                    <label class="toggle-switch" for="f-mmproj-enabled"
+                      aria-label="Enable image input">
+                      <input id="f-mmproj-enabled" type="checkbox" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                  <!-- Collapsed until Image Input is toggled on; expands with a height transition. -->
+                  <div class="launch-settings-reveal" id="mmproj-reveal">
+                    <div class="launch-settings-reveal-inner">
+                      <p class="hint-text">When enabled, loads a multimodal projector (<code>--mmproj</code>) so a vision model can accept image inputs. Point it at the model's mmproj GGUF alongside the main weights.</p>
+                      <div class="form-group">
+                        <span class="label-row">
+                          <label for="f-mmproj-path">MMPROJ Model</label>
+                          <span class="info-tip" tabindex="0" role="button" aria-label="MMPROJ Model help" data-tip="Path to the multimodal projector passed as --mmproj. Pick a downloaded GGUF from the list or type a path under the models directory."><i class="fa-solid fa-circle-info"></i></span>
+                        </span>
+                        <input id="f-mmproj-path" type="text" list="mmproj-model-options" placeholder="/models/Qwen2-VL-7B-Instruct/mmproj-Qwen2-VL-7B-Instruct-f16.gguf" />
+                        <datalist id="mmproj-model-options"></datalist>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div class="form-group full">

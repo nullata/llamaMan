@@ -484,6 +484,32 @@ header span {
   align-items: end;
 }
 
+/* Collapsible body for the Speculative Decoding / Proxy Sampling sections:
+   hidden until its section toggle is on, then it expands into view. Animating
+   grid-template-rows 0fr->1fr grows to the content's natural height with no
+   magic max-height; the inner element clips its overflow while collapsed. */
+.launch-settings-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows .2s ease;
+}
+
+.launch-settings-reveal.open {
+  grid-template-rows: 1fr;
+}
+
+.launch-settings-reveal-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Once fully expanded, stop clipping so the first field row's info-tip tooltips
+   (which open upward) aren't cut off at the section's top edge. Clipping only
+   matters while the height animates. JS adds this after the transition ends. */
+.launch-settings-reveal.reveal-expanded .launch-settings-reveal-inner {
+  overflow: visible;
+}
+
 .cleanup-toggle-grid {
   display: grid;
   grid-template-columns: minmax(0, max-content) 40px;
@@ -2257,6 +2283,28 @@ body.login-page {
   }
   .lw-btn {
     flex: 1;
+  }
+
+  /* Launch toggle pairs (Share queue / Auto Restart / Embedding) collapse from
+     the desktop two-column table to a single label|toggle column. The 4-column
+     max-content grid never wrapped, so the right column (Auto Restart) ran off
+     the viewport on phones. */
+  .launch-toggle-table {
+    grid-template-columns: 1fr 40px;
+  }
+  .launch-toggle-pair.toggle-right > label:not(.toggle-switch) {
+    padding-left: 0;
+  }
+
+  /* Request recording / Retention: stack label above its control instead of
+     pinning the fixed-width input to the narrow toggle column, which pushed it
+     off the right edge once the label column consumed the row. */
+  .cleanup-settings-grid .cleanup-input-row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+    grid-column: 1 / -1;
   }
 }
 

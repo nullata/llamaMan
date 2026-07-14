@@ -38,6 +38,7 @@ from core.helpers import (
 )
 from core.proxy_sampling import parse_proxy_sampling_config
 from core.spec_decoding import DEFAULT_SPEC_TYPE, parse_spec_config
+from core.multimodal import parse_mmproj_config
 from core.state import (
     instances, instances_lock, save_state,
 )
@@ -93,6 +94,8 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
             "spec_type",
             "spec_draft_model",
             "spec_draft_n_max",
+            "mmproj_enabled",
+            "mmproj_path",
             "gpu_devices",
             "idle_timeout_min",
             "max_concurrent",
@@ -464,6 +467,7 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
                     threads=None, memory_limit=None, parallel=None, extra_args="",
                     spec_enabled=False, spec_type=DEFAULT_SPEC_TYPE,
                     spec_draft_model="", spec_draft_n_max=None,
+                    mmproj_enabled=False, mmproj_path="",
                     gpu_devices=None, idle_timeout_min=0,
                     max_concurrent=0, max_queue_depth=200,
                     share_queue=False, share_queue_group="",
@@ -515,6 +519,8 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
         "spec_type": spec_type,
         "spec_draft_model": spec_draft_model,
         "spec_draft_n_max": spec_draft_n_max,
+        "mmproj_enabled": mmproj_enabled,
+        "mmproj_path": mmproj_path,
         "gpu_devices": gpu_devices,
         "idle_timeout_min": idle_timeout_min,
         "max_concurrent": max_concurrent,
@@ -802,6 +808,9 @@ def api_instances_create():
     spec_config, spec_err = parse_spec_config(body)
     if spec_err:
         return jsonify({"error": spec_err}), 400
+    mmproj_config, mmproj_err = parse_mmproj_config(body)
+    if mmproj_err:
+        return jsonify({"error": mmproj_err}), 400
 
     incoming_embedding_model = bool(body.get("embedding_model", False))
     confirm_overcommit = bool(body.get("confirm_overcommit", False))
@@ -835,6 +844,7 @@ def api_instances_create():
         auto_restart_on_crash=bool(body.get("auto_restart_on_crash", False)),
         image=body.get("image", "").strip() or None,
         **spec_config,
+        **mmproj_config,
         **proxy_sampling_config,
     )
     if err:
@@ -912,6 +922,8 @@ def api_instances_restart(inst_id):
         spec_type=config.get("spec_type") or DEFAULT_SPEC_TYPE,
         spec_draft_model=config.get("spec_draft_model") or "",
         spec_draft_n_max=config.get("spec_draft_n_max"),
+        mmproj_enabled=config.get("mmproj_enabled", False),
+        mmproj_path=config.get("mmproj_path") or "",
         gpu_devices=config.get("gpu_devices"),
         idle_timeout_min=config.get("idle_timeout_min", 0),
         max_concurrent=config.get("max_concurrent", 0),

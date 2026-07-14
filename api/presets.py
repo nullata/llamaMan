@@ -4,6 +4,7 @@ from flask import Blueprint, jsonify, request
 
 from core.proxy_sampling import parse_proxy_sampling_config
 from core.spec_decoding import parse_spec_config
+from core.multimodal import parse_mmproj_config
 from core.state import instances, instances_lock, save_state
 from storage import get_storage
 
@@ -73,6 +74,9 @@ def api_preset_save(model_path):
     spec_config, spec_err = parse_spec_config(body)
     if spec_err:
         return jsonify({"error": spec_err}), 400
+    mmproj_config, mmproj_err = parse_mmproj_config(body)
+    if mmproj_err:
+        return jsonify({"error": mmproj_err}), 400
     # Preserve existing meta fields (favorite, note) that aren't part of the launch form
     existing = get_storage().get_preset(model_path) or {}
     if not isinstance(existing, dict):
@@ -102,6 +106,7 @@ def api_preset_save(model_path):
         "favorite": body.get("favorite", existing.get("favorite", False)),
         "note": body.get("note", existing.get("note", "")),
         **spec_config,
+        **mmproj_config,
         **proxy_sampling_config,
     }
 
