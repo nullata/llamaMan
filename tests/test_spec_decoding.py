@@ -21,6 +21,7 @@ class BuildSpecCmdTests(unittest.TestCase):
         self.assertNotIn("--model-draft", cmd)
 
     def test_defaults_to_mtp_without_a_draft_model(self):
+        # No drafter set: llama-server falls back to the main model's MTP heads.
         cmd = build_llama_cmd("/models/m.gguf", 8080, {"spec_enabled": True})
         self.assertIn("--spec-type", cmd)
         self.assertEqual(cmd[cmd.index("--spec-type") + 1], "draft-mtp")
@@ -37,11 +38,23 @@ class BuildSpecCmdTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--spec-type") + 1], "draft-dflash")
         self.assertEqual(cmd[cmd.index("--spec-draft-n-max") + 1], "2")
 
-    def test_mtp_ignores_a_leftover_draft_model(self):
-        # The field is kept in the preset when the user switches type back to
-        # MTP; MTP drafts from the main model's heads, so -md must not be sent.
+    def test_mtp_emits_a_separate_drafter_when_set(self):
+        # A standalone MTP-head GGUF (e.g. Gemma 4's assistant-MTP drafter) is
+        # passed as -md alongside --spec-type draft-mtp.
         cmd = build_llama_cmd("/models/m.gguf", 8080, {
             "spec_enabled": True,
+            "spec_type": "draft-mtp",
+            "spec_draft_model": "/models/gemma-4-12B-assistant-MTP.gguf",
+            "spec_draft_n_max": 4,
+        })
+        self.assertEqual(cmd[cmd.index("--model-draft") + 1],
+                         "/models/gemma-4-12B-assistant-MTP.gguf")
+        self.assertEqual(cmd[cmd.index("--spec-type") + 1], "draft-mtp")
+        self.assertEqual(cmd[cmd.index("--spec-draft-n-max") + 1], "4")
+
+    def test_spec_disabled_drops_a_saved_draft_model(self):
+        cmd = build_llama_cmd("/models/m.gguf", 8080, {
+            "spec_enabled": False,
             "spec_type": "draft-mtp",
             "spec_draft_model": "/models/drafter/drafter.gguf",
         })
@@ -97,6 +110,37 @@ class PresetSpecTests(unittest.TestCase):
             resp.get_json()["error"],
             "spec_draft_model is required when spec_type is draft-dflash",
         )
+
+    def test_preset_save_allows_mtp_with_a_draft_model(self):
+        storage = Mock()
+        storage.get_preset.return_value = {}
+        with patch("api.presets.get_storage", return_value=storage), \
+             patch("api.presets._apply_live_preset_changes"):
+            resp = self.client.put("/api/presets/models/chat.gguf", json={
+                "ctx_size": 4096,
+                "spec_enabled": True,
+                "spec_type": "draft-mtp",
+                "spec_draft_model": "/models/gemma-4-12B-assistant-MTP.gguf",
+            })
+
+        self.assertEqual(resp.status_code, 200)
+        _, saved_preset = storage.save_preset.call_args.args
+        self.assertEqual(saved_preset["spec_type"], "draft-mtp")
+        self.assertEqual(saved_preset["spec_draft_model"],
+                         "/models/gemma-4-12B-assistant-MTP.gguf")
+
+    def test_preset_save_allows_mtp_without_a_draft_model(self):
+        # Blank drafter stays valid for MTP: built-in heads are the fallback.
+        storage = Mock()
+        storage.get_preset.return_value = {}
+        with patch("api.presets.get_storage", return_value=storage), \
+             patch("api.presets._apply_live_preset_changes"):
+            resp = self.client.put("/api/presets/models/chat.gguf", json={
+                "ctx_size": 4096,
+                "spec_enabled": True,
+                "spec_type": "draft-mtp",
+            })
+        self.assertEqual(resp.status_code, 200)
 
     def test_preset_save_rejects_unknown_spec_type(self):
         resp = self.client.put("/api/presets/models/chat.gguf",

@@ -13,7 +13,7 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Multi-node clustering** *(optional)* - run several llamaman deployments as one cluster sharing a database and a secret: aggregated dashboard, cross-node launches/pulls/downloads, and multi-node shared-queue load balancing. Off by default; single-node installs are unaffected.
 - **Model library** - scans `/models` for GGUF files, shows quant type and file size
 - **One-click launch** - configure GPU layers, context size, threads, multi-GPU, speculative decoding, extra args. With the Settings card collapsed, a Quick Launch button starts the selected model straight from its preset
-- **Speculative decoding** - optional `--spec-type` toggle with a configurable draft length: `draft-mtp` for models with MTP heads, or `draft-dflash` with a separate DFlash drafter model
+- **Speculative decoding** - optional `--spec-type` toggle with a configurable draft length: `draft-mtp` with either a standalone MTP drafter model or the main model's built-in MTP heads, or `draft-dflash` with a separate DFlash drafter model
 - **Preset configs** - save/load per-model launch settings, with live updates to running instances where possible
 - **Download manager** - pull models from HuggingFace with speed throttling and auto-retry on failure
 - **Model backup and restore** - export all model metadata and presets to JSON, restore on any instance by re-queuing missing downloads automatically
@@ -210,8 +210,8 @@ When you select a GGUF model, llamaMan reads the file's metadata to detect the t
 | **GPU Devices** | _(global default)_ | Comma-separated GPU indices to make visible to this container (e.g. `0,1`). Overrides `LLAMA_GPU_DEVICES` for this instance. Leave blank (or the literal `all`) to expose all GPUs. The instance card labels exactly the GPUs selected here. Not supported on Intel Arc. |
 | **Extra Args** | _(empty)_ | Additional flags passed directly to llama-server (e.g. `--flash-attn`). |
 | **Speculative Decoding** | off | Runs the model with speculative decoding. For types other than the ones below, pass the flags via **Extra Args** instead. |
-| **Draft Type** | `draft-mtp` | Which drafter to use (`--spec-type`). `draft-mtp` drafts from the main model's MTP heads and needs a model built with them. `draft-dflash` drafts from a separate DFlash model, set under **Draft Model**. |
-| **Draft Model** | _(none)_ | Path to the drafter model (`-md`), required for `draft-dflash`. Pick one of the models on the target node or type a path under the models directory. |
+| **Draft Type** | `draft-mtp` | Which drafter to use (`--spec-type`). `draft-mtp` drafts from a separate MTP-head model set under **Draft Model**, or from the main model's own MTP heads if that's left blank (which needs a model built with them). `draft-dflash` drafts from a separate DFlash model, set under **Draft Model**. |
+| **Draft Model** | _(none)_ | Path to the drafter model (`-md`). Required for `draft-dflash`; optional for `draft-mtp`, where it points at a standalone MTP-head GGUF (e.g. a Gemma 4 assistant-MTP drafter) and blank falls back to the main model's built-in heads. Pick one of the models on the target node or type a path under the models directory. |
 | **Draft N Max** | `2` | Max tokens drafted per step (`--spec-draft-n-max`), used when speculative decoding is on. Leave blank to use llama.cpp's default. |
 | **Proxy Sampling Overrides** | off | When enabled, the proxy forces the configured sampling parameters on every request forwarded to this instance, regardless of what the client sends. |
 | **Temperature** | `0.8` | Sampling temperature to enforce (range: `0.0`–`2.0`). Only active when proxy sampling overrides are enabled. |

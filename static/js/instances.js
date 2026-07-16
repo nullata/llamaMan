@@ -386,8 +386,10 @@ function updateProxySamplingOverrideState() {
   });
 }
 
-// --spec-type values that need a separate drafter model passed as -md.
-const SPEC_TYPES_WITH_DRAFT_MODEL = ['draft-dflash'];
+// --spec-type values that *require* a drafter model passed as -md. Both types
+// accept one; draft-mtp falls back to the main model's built-in MTP heads when
+// the field is left blank, so only DFlash makes it mandatory.
+const SPEC_TYPES_NEEDING_DRAFT_MODEL = ['draft-dflash'];
 const DEFAULT_SPEC_TYPE = 'draft-mtp';
 
 function currentSpecType() {
@@ -401,8 +403,10 @@ function updateSpecState() {
     const input = document.getElementById(id);
     if (input) input.disabled = !enabled;
   });
-  const draftRow = document.getElementById('spec-draft-model-row');
-  if (draftRow) draftRow.hidden = !SPEC_TYPES_WITH_DRAFT_MODEL.includes(currentSpecType());
+  const req = document.getElementById('spec-draft-model-req');
+  if (req) req.textContent = SPEC_TYPES_NEEDING_DRAFT_MODEL.includes(currentSpecType())
+    ? '(required)'
+    : '(optional)';
 }
 
 function updateMmprojState() {
@@ -488,7 +492,7 @@ function readLaunchForm() {
   if (!Number.isFinite(body.proxy_sampling_repeat_penalty) || body.proxy_sampling_repeat_penalty < 0 || body.proxy_sampling_repeat_penalty > 2) {
     throw new Error('Proxy-side repeat penalty must be between 0 and 2');
   }
-  if (body.spec_enabled && SPEC_TYPES_WITH_DRAFT_MODEL.includes(body.spec_type) && !body.spec_draft_model) {
+  if (body.spec_enabled && SPEC_TYPES_NEEDING_DRAFT_MODEL.includes(body.spec_type) && !body.spec_draft_model) {
     throw new Error(`Speculative decoding with ${body.spec_type} requires a draft model`);
   }
   if (body.mmproj_enabled && !body.mmproj_path) {

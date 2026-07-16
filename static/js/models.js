@@ -434,7 +434,7 @@ async function selectModel(model, el) {
   await updateGpuLayersTotal(model.path);
 }
 
-// Suggestions for the DFlash drafter field: the GGUFs on the target node.
+// Suggestions for the drafter field (MTP or DFlash): the GGUFs on the target node.
 function populateSpecDraftModelOptions() {
   const dl = document.getElementById('spec-draft-model-options');
   if (!dl) return;

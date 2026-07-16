@@ -272,12 +272,12 @@
                   <!-- Collapsed until Speculative Decoding is toggled on; expands with a height transition. -->
                   <div class="launch-settings-reveal" id="spec-decoding-reveal">
                     <div class="launch-settings-reveal-inner">
-                      <p class="hint-text">When enabled, runs the model with speculative decoding (<code>--spec-type</code>). MTP requires a model with MTP heads; DFlash requires a separate DFlash drafter model. For other speculative-decoding types, set them via Extra Args instead.</p>
+                      <p class="hint-text">When enabled, runs the model with speculative decoding (<code>--spec-type</code>). MTP drafts from a separate MTP drafter model, or from the main model's own MTP heads when no drafter is set; DFlash requires a separate DFlash drafter model. For other speculative-decoding types, set them via Extra Args instead.</p>
                       <div class="launch-inline-settings-grid">
                         <div class="form-group">
                           <span class="label-row">
                             <label for="f-spec-type">Draft Type</label>
-                            <span class="info-tip" tabindex="0" role="button" aria-label="Draft Type help" data-tip="Value passed to --spec-type. draft-mtp uses the main model's built-in MTP heads. draft-dflash runs a separate DFlash drafter model alongside it."><i class="fa-solid fa-circle-info"></i></span>
+                            <span class="info-tip" tabindex="0" role="button" aria-label="Draft Type help" data-tip="Value passed to --spec-type. draft-mtp drafts from an MTP drafter model, falling back to the main model's built-in MTP heads when no Draft Model is set. draft-dflash runs a separate DFlash drafter model alongside it."><i class="fa-solid fa-circle-info"></i></span>
                           </span>
                           <select id="f-spec-type" class="launch-settings-select">
                             <option value="draft-mtp" selected>MTP (draft-mtp)</option>
@@ -292,12 +292,12 @@
                           <input id="f-spec-draft-n-max" class="launch-settings-input" type="number" min="0" step="1" placeholder="2" value="2" />
                         </div>
                       </div>
-                      <div class="form-group spec-draft-model-row" id="spec-draft-model-row" hidden>
+                      <div class="form-group spec-draft-model-row" id="spec-draft-model-row">
                         <span class="label-row">
-                          <label for="f-spec-draft-model">Draft Model</label>
-                          <span class="info-tip" tabindex="0" role="button" aria-label="Draft Model help" data-tip="Path to the drafter model passed as -md. Pick a downloaded model from the list or type a path under the models directory."><i class="fa-solid fa-circle-info"></i></span>
+                          <label for="f-spec-draft-model">Draft Model <span class="muted" id="spec-draft-model-req">(optional)</span></label>
+                          <span class="info-tip" tabindex="0" role="button" aria-label="Draft Model help" data-tip="Path to the drafter model passed as -md. Pick a downloaded model from the list or type a path under the models directory. Required for DFlash; optional for MTP, where leaving it blank uses the main model's built-in MTP heads."><i class="fa-solid fa-circle-info"></i></span>
                         </span>
-                        <input id="f-spec-draft-model" type="text" list="spec-draft-model-options" placeholder="/models/Qwen3.6-27B-DFlash-Q4_K_M/Qwen3.6-27B-DFlash-Q4_K_M.gguf" />
+                        <input id="f-spec-draft-model" type="text" list="spec-draft-model-options" placeholder="/models/gemma-4-12B-it-qat-assistant-MTP/gemma-4-12B-it-qat-assistant-MTP-Q8_0.gguf" />
                         <datalist id="spec-draft-model-options"></datalist>
                       </div>
                     </div>

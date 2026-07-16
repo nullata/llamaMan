@@ -2,8 +2,11 @@
 
 DEFAULT_SPEC_TYPE = "draft-mtp"
 
-# Values accepted by llama-server's --spec-type. draft-mtp uses the main model's
-# MTP heads; draft-dflash needs a separate DFlash drafter passed via -md.
+# Values accepted by llama-server's --spec-type. Both types take a drafter via
+# -md; they differ in whether one is mandatory. draft-dflash always needs a
+# separate DFlash drafter. draft-mtp takes an optional separate MTP-head GGUF
+# (e.g. Gemma 4's assistant-MTP drafter) and falls back to heads built into the
+# main model when none is given.
 SPEC_TYPES = (DEFAULT_SPEC_TYPE, "draft-dflash")
 SPEC_TYPES_NEEDING_DRAFT_MODEL = frozenset({"draft-dflash"})
 
@@ -16,6 +19,7 @@ SPEC_CONFIG_KEYS = (
 
 
 def spec_type_needs_draft_model(spec_type: str | None) -> bool:
+    """Whether a drafter is mandatory. All types *accept* one; only some require it."""
     return (spec_type or DEFAULT_SPEC_TYPE) in SPEC_TYPES_NEEDING_DRAFT_MODEL
 
 

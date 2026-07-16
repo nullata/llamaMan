@@ -11,7 +11,7 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Universal GPU support** - single image for NVIDIA, AMD (ROCm), Intel Arc, and CPU. The GPU vendor and matching `LLAMA_IMAGE` are auto-detected at startup; `GPU_TYPE` / `LLAMA_IMAGE` override if needed.
 - **Model library** - scans `/models` for GGUF files, shows quant type and file size
 - **One-click launch** - configure GPU layers, context size, threads, multi-GPU, speculative decoding, extra args
-- **Speculative decoding** - optional `--spec-type` toggle with a configurable draft length: `draft-mtp` for models with MTP heads, or `draft-dflash` with a separate DFlash drafter model
+- **Speculative decoding** - optional `--spec-type` toggle with a configurable draft length: `draft-mtp` with either a standalone MTP drafter model or the main model's built-in MTP heads, or `draft-dflash` with a separate DFlash drafter model
 - **Preset configs** - save/load per-model launch settings, with live updates to running instances where possible
 - **Download manager** - pull models from HuggingFace with speed throttling and auto-retry on failure
 - **Model backup and restore** - export model metadata and presets to JSON, restore on any instance with downloads queued automatically for missing models
