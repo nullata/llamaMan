@@ -304,6 +304,60 @@ def effective_group_key(model_path: str, config: dict | None) -> str:
     return alias or model_name_from_path(model_path)
 
 
+def cluster_group_models() -> list[dict]:
+    """Distinct `share_queue_group` aliases currently served somewhere in the
+    cluster, for advertising in the model-listing APIs.
+
+    Each entry is {"name", "path"} where `path` is a representative model file on
+    THIS node when the group runs here (so the listing can borrow its GGUF
+    metadata), else None for a peer-only group.
+
+    A group is the cross-node, load-balanced entry point - a client sends the
+    alias and `dispatch_inference` routes it to the least-loaded node. The
+    per-file `/api/tags` listing never mentions it, so a client has no way to
+    discover the name it should send. This surfaces it, but only when it means
+    something: clustering enabled, the alias actually set, and at least one
+    non-stopped instance (on any node) serving it - which is exactly when a
+    request for the alias can be routed rather than 404'd.
+    """
+    if not cl.is_cluster_enabled():
+        return []
+
+    # (alias, status, local_model_path_or_None) from every instance we know of.
+    seen: list[tuple[str, str, str | None]] = []
+
+    from core.state import instances, instances_lock
+    with instances_lock:
+        for inst in instances.values():
+            alias = ((inst.get("config") or {}).get("share_queue_group") or "").strip()
+            if alias:
+                seen.append((alias, inst.get("status") or "", inst.get("model_path")))
+
+    try:
+        nodes = get_storage().list_nodes() or []
+    except Exception:
+        nodes = []
+    self_id = cl.get_node_id()
+    for node in nodes:
+        if node.get("node_id") == self_id:
+            continue  # this node's live instances are already counted above
+        snapshot = node.get("snapshot") or {}
+        for inst in snapshot.get("instances") or []:
+            alias = ((inst.get("config") or {}).get("share_queue_group") or "").strip()
+            if alias:
+                seen.append((alias, inst.get("status") or "", None))
+
+    groups: dict[str, dict] = {}
+    for alias, status, local_path in seen:
+        if status == "stopped":
+            continue
+        key = alias.lower()
+        entry = groups.setdefault(key, {"name": alias, "path": None})
+        if local_path and entry["path"] is None:
+            entry["path"] = local_path
+    return list(groups.values())
+
+
 def _inst_matches_request(inst: dict, requested: str) -> bool:
     """True if `requested` matches this instance's group key (alias or filename)
     under the same fuzzy/case-insensitive substring rule the rest of cluster
@@ -607,6 +661,14 @@ def dispatch_inference(model_name: str):
         return None  # already routed here by a peer - the gate/overflow path takes over
     if not cl.is_cluster_enabled():
         return None
+
+    # Translate a pretty name to its canonical file stem before any group
+    # matching runs. Everything below (group keys, peer load maps, work-stealing)
+    # speaks stems and share_queue_group aliases only; an untranslated pretty
+    # name would match no group and silently disable cross-node routing, or
+    # worse, substring-match the wrong one. Non-alias names pass through as-is.
+    from core.model_alias import canonical_name
+    model_name = canonical_name(model_name)
 
     candidates = _group_candidates(model_name)
     if not candidates or not any(not c["is_self"] for c in candidates):
