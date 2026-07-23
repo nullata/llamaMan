@@ -10,3 +10,4 @@ build/
 *.log
 models/
 test-data/
+.vessel_*
