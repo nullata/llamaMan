@@ -59,6 +59,10 @@ USERS_FILE = os.path.join(DATA_DIR, "users.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", os.path.join(DATA_DIR, "request_log"))
 SECRET_KEY = os.environ.get("SECRET_KEY", "")
+# Cookies are scoped by host+path, NOT by port, so a second Flask app on the same
+# host using the default "session" cookie name would clobber ours (and vice versa),
+# logging users out of one app whenever they log into the other.
+SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "llamaman_session").strip()
 
 # Clustering - off by default; single-node installs are entirely unaffected.
 # When enabled, several llamaman deployments form one logical cluster sharing a

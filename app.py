@@ -5,7 +5,7 @@ import os
 
 from flask import Flask, jsonify, make_response, render_template
 
-from config import SECRET_KEY, logger
+from config import SECRET_KEY, SESSION_COOKIE_NAME, logger
 from core.migrations import run_pending_migrations
 from core.state import load_state
 from proxy import start_idle_proxy
@@ -29,6 +29,11 @@ import api.cluster as cluster
 
 def create_app() -> Flask:
     application = Flask(__name__)
+
+    # Namespaced cookie name so we coexist with any other Flask app on the same
+    # host - cookies ignore the port, so two apps both using the default "session"
+    # name overwrite each other's login.
+    application.config["SESSION_COOKIE_NAME"] = SESSION_COOKIE_NAME
 
     # Secret key for session cookies - derived from SECRET_KEY env var,
     # or auto-generated from machine-id for zero-config single-user setups.
