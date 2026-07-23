@@ -161,7 +161,10 @@ def list_repo_files(rid=None, tok=None):
     """
     rid = rid or repo_id
     tok = tok if tok is not None else token
-    url = f"{HF_API}/api/models/{rid}"
+    # blobs=true is what makes HF populate `size` and the `lfs` object on each
+    # sibling; without it the API returns rfilename only, so sizes came back
+    # None and there was no content hash to compare against for updates.
+    url = f"{HF_API}/api/models/{rid}?blobs=true"
     r = requests.get(url, headers=_headers(tok), timeout=30)
     if r.status_code in (401, 403):
         raise RuntimeError(f"Authentication failed ({r.status_code}). Check your HF token.")
@@ -169,7 +172,16 @@ def list_repo_files(rid=None, tok=None):
         raise RuntimeError(f"Repository not found: {rid}")
     r.raise_for_status()
     siblings = r.json().get("siblings", [])
-    return [{"name": s["rfilename"], "size": s.get("size") or s.get("lfs", {}).get("size")} for s in siblings]
+    return [
+        {
+            "name": s["rfilename"],
+            "size": s.get("size") or s.get("lfs", {}).get("size"),
+            # sha256 of the file content, present only for LFS-tracked files
+            # (which is every GGUF). Plain git blobs have no content hash here.
+            "sha256": (s.get("lfs") or {}).get("sha256", ""),
+        }
+        for s in siblings
+    ]
 
 
 def download_file(fname, file_num=None, total_files=None, part_idx=None):
