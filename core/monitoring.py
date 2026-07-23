@@ -1,5 +1,6 @@
 # Copyright (c) llamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
+import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,9 @@ _IMAGE_CHECK_INTERVAL = 3600  # check hourly whether auto-update is due
 
 _last_request_log_prune_at: float = 0.0
 _REQUEST_LOG_PRUNE_INTERVAL = 3600  # prune request_log once per hour
+
+# Opt-in model update scan; its interval comes from settings, not a constant.
+_last_update_scan_at: float = 0.0
 
 
 def _run_cleanup() -> None:
@@ -196,6 +200,38 @@ def _get_failed_download_retry_settings() -> tuple[bool, int]:
     return retry_enabled, max(1, retry_limit)
 
 
+def _finish_model_update(dl: dict) -> str | None:
+    """Swap a completed update's staged files over the live model.
+
+    No-op for ordinary downloads. Runs only after the downloader exited 0, so
+    the replaced bytes are a fully downloaded file, and the staging dir sits on
+    the same filesystem so each replace is atomic. Returns an error string to
+    mark the download failed, leaving the staged files in place for a retry.
+    """
+    model_path = dl.get("update_model_path", "")
+    temp_dir = dl.get("update_temp_dir", "")
+    if not model_path or not temp_dir:
+        return None
+
+    from core.model_sources import record_model_sha
+    from core.model_updates import swap_in_update
+
+    moved, err = swap_in_update(temp_dir, os.path.dirname(model_path))
+    if err:
+        logger.error("Model update failed for %s: %s", model_path, err)
+        return err
+
+    sha = dl.get("update_sha256", "")
+    if sha:
+        try:
+            record_model_sha(model_path, sha)
+        except Exception as e:  # a missed stamp only costs us exactness later
+            logger.warning("Could not record hash for updated model %s: %s", model_path, e)
+
+    logger.info("Model updated: %s (%d file(s) replaced)", model_path, len(moved))
+    return None
+
+
 def _handle_download_exit(dl_id: str, exit_code: int) -> None:
     retry_enabled, retry_limit = _get_failed_download_retry_settings()
     should_save = False
@@ -209,7 +245,12 @@ def _handle_download_exit(dl_id: str, exit_code: int) -> None:
         dl["pid"] = 0
 
         if exit_code == 0:
-            dl["status"] = "completed"
+            err = _finish_model_update(dl)
+            if err:
+                dl["status"] = "failed"
+                dl["error"] = err
+            else:
+                dl["status"] = "completed"
             should_save = True
         else:
             retry_attempts = int(dl.get("retry_attempts", 0) or 0)
@@ -239,6 +280,19 @@ def _handle_download_exit(dl_id: str, exit_code: int) -> None:
 
     if should_save:
         save_state()
+
+
+def auto_scan_settings():
+    from core.model_updates import auto_scan_settings as _s
+    return _s()
+
+
+def _run_update_scan():
+    try:
+        from core.model_updates import run_auto_update_scan
+        run_auto_update_scan()
+    except Exception as e:
+        logger.warning("Model update scan error: %s", e)
 
 
 def _prune_request_log():
@@ -301,7 +355,7 @@ def _maybe_auto_restart(inst_id: str) -> None:
 
 def _background_poller():
     global _last_cleanup_at, _last_orphan_scan_at, _last_stale_cleanup_at, _last_image_check_at
-    global _last_request_log_prune_at
+    global _last_request_log_prune_at, _last_update_scan_at
     while True:
         time.sleep(5)
 
@@ -340,6 +394,19 @@ def _background_poller():
                 _prune_request_log()
             except Exception as e:
                 logger.warning("request_log prune error: %s", e)
+
+        # --- Model update scan (opt-in) ---
+        # Runs on its own thread: a pass HEADs every model with a known repo and
+        # may kick off a hash, which must not hold up health checks or the idle
+        # reaper on this tick.
+        try:
+            scan_enabled, scan_interval = auto_scan_settings()
+            if scan_enabled and now - _last_update_scan_at >= scan_interval:
+                _last_update_scan_at = now
+                threading.Thread(target=_run_update_scan, name="update-scan",
+                                 daemon=True).start()
+        except Exception as e:
+            logger.warning("Model update scan scheduling error: %s", e)
 
         # --- Docker image auto-update ---
         if now - _last_image_check_at >= _IMAGE_CHECK_INTERVAL:

@@ -1876,6 +1876,56 @@ body.login-page {
   margin-left: 8px;
 }
 
+/* Those trailing controls describe the selected model, so they belong to the
+   launch form even though they sit in the tab bar. Hide the whole group on any
+   other tab - including controls added here in future. */
+.tabbed-card:not([data-active-tab="launch"]) .settings-tab-repo,
+.tabbed-card:not([data-active-tab="launch"]) .settings-tab-update,
+.tabbed-card:not([data-active-tab="launch"]) .settings-tab-star {
+  display: none;
+}
+
+/* "Check for updates" / "Update available" pill in the settings tab bar. Sits
+   between the repo link and the star, so it only claims the auto margin when
+   the repo link (which normally holds it) is hidden. */
+.settings-tab-update {
+  margin-left: auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.settings-tab-repo:not([hidden]) ~ .settings-tab-update {
+  margin-left: 8px;
+}
+.settings-tab-update:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--muted);
+}
+.settings-tab-update:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* Same trap as .node-select-row above: the display rule beats the `hidden`
+   attribute, so without this the button stays painted with no model selected
+   and for models with no known source repo - where it has nothing to check. */
+.settings-tab-update[hidden] {
+  display: none;
+}
+/* Armed: the next click re-pulls, so make it read as an action, not a status. */
+.settings-tab-update.update-available {
+  color: var(--yellow);
+  border-color: currentColor;
+}
+
 .login-logo {
   height: 22px;
   width: auto;

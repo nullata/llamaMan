@@ -14,7 +14,7 @@ from api.settings import get_hf_token_secret
 from config import DATA_DIR, LOGS_DIR, MODELS_DIR, logger
 from core.downloader import list_repo_files, resolve_filename
 from core.helpers import cleanup_download_dir, kill_instance_process, public_dict, read_log_file, stream_log_file
-from core.model_sources import record_model_source
+from core.model_sources import record_model_sha, record_model_source
 from core.state import downloads, downloads_lock, save_state
 from storage import get_storage
 
@@ -117,6 +117,55 @@ def restart_download_in_place(
     return None
 
 
+def start_update_download(repo_id: str, filename: str, temp_dir: str, model_path: str,
+                          expected_sha: str, token: str, token_id: str,
+                          per_model_mbps: float) -> tuple[dict | None, str | None]:
+    """Start a re-pull of `model_path` into `temp_dir` as a normal download.
+
+    Deliberately produces an ordinary download record, so every existing policy
+    applies unchanged: global/per-model speed limits, saved HF tokens, the
+    progress feed, pause/resume/cancel, and failed-download auto-retry. The only
+    difference is the destination (a staging dir) and the `update_*` fields the
+    poller reads to swap the result into place on success.
+    """
+    os.makedirs(temp_dir, exist_ok=True)
+    dl_id = str(uuid.uuid4())
+
+    try:
+        proc, log_fh, log_file = _spawn_download_process(
+            dl_id, repo_id, temp_dir, filename, token, per_model_mbps, log_mode="w",
+        )
+    except Exception as e:
+        return None, str(e)
+
+    dl = {
+        "id": dl_id,
+        "repo_id": repo_id,
+        "filename": filename,
+        "dest_path": temp_dir,
+        "status": "downloading",
+        "pid": proc.pid,
+        "log_file": log_file,
+        "started_at": time.time(),
+        "_hf_token": token,
+        "_hf_token_id": token_id,
+        "per_model_speed_limit_mbps": per_model_mbps,
+        "retry_attempts": 0,
+        "update_model_path": model_path,
+        "update_temp_dir": temp_dir,
+        "update_sha256": expected_sha,
+        "_process": proc,
+        "_log_fh": log_fh,
+    }
+
+    with downloads_lock:
+        downloads[dl_id] = dl
+
+    logger.info("Model update started: %s -> %s (pid %d)", repo_id, model_path, proc.pid)
+    save_state()
+    return dl, None
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -193,6 +242,10 @@ def api_downloads_create():
         downloads[dl_id] = dl
 
     record_model_source(dest_path, repo_id, model_path=model_path)
+    if filename and targets:
+        # Stamp the published hash now, so a later update check is an exact
+        # comparison instead of falling back to matching file sizes.
+        record_model_sha(model_path, targets[0].get("sha256", ""))
 
     logger.info("Download started: %s -> %s (pid %d)", repo_id, dest_path, proc.pid)
     save_state()

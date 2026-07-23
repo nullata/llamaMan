@@ -59,7 +59,17 @@ function setActiveTab(group, tab) {
     panel.hidden = panel.dataset.tabPanel !== tab;
   });
 
-  // Show/hide the favorite star button only on the launch tab
+  // The trailing controls in the tab bar (repo link, update button, favorite
+  // star) belong to the launch form, not to the tab bar itself, so they must
+  // not follow you onto the other tabs. Scoped in CSS off this attribute rather
+  // than by toggling each one here: they each have their own reason to be
+  // hidden (no model selected, no source repo), and two mechanisms writing the
+  // same `hidden` attribute fight each other. This also covers any control
+  // added to that row later.
+  root.dataset.activeTab = tab;
+
+  // The star has no content-based visibility of its own, so it still needs
+  // un-hiding here; the CSS above is what keeps it off the other tabs.
   const starBtn = root.querySelector('.settings-tab-star');
   if (starBtn) starBtn.hidden = tab !== 'launch';
 

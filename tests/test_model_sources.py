@@ -83,9 +83,11 @@ class ModelSourceTests(unittest.TestCase):
         self.assertEqual(models[0]["repo_id"], "org/model-repo")
 
     @patch("api.downloads.save_state")
+    @patch("api.downloads.record_model_sha")
     @patch("api.downloads.record_model_source")
     @patch("api.downloads._spawn_download_process")
-    def test_download_create_records_model_source(self, spawn_mock, record_source_mock, _save_state_mock):
+    def test_download_create_records_model_source(self, spawn_mock, record_source_mock,
+                                                  _record_sha_mock, _save_state_mock):
         app = Flask(__name__)
         app.register_blueprint(downloads_api.bp)
         client = app.test_client()

@@ -75,6 +75,12 @@ def save_state():
                     "hf_token_id": dl.get("_hf_token_id", ""),
                     "per_model_speed_limit_mbps": dl.get("per_model_speed_limit_mbps", 0),
                     "retry_attempts": dl.get("retry_attempts", 0),
+                    # Set only for model-update re-pulls. Persisted (not
+                    # underscore-prefixed) so a restart mid-update still knows
+                    # to swap the staged files in when the retry finishes.
+                    "update_model_path": dl.get("update_model_path", ""),
+                    "update_temp_dir": dl.get("update_temp_dir", ""),
+                    "update_sha256": dl.get("update_sha256", ""),
                 })
 
         try:
@@ -307,6 +313,9 @@ def load_state():
             "_hf_token_id": entry.get("hf_token_id", ""),
             "per_model_speed_limit_mbps": entry.get("per_model_speed_limit_mbps", 0),
             "retry_attempts": entry.get("retry_attempts", 0),
+            "update_model_path": entry.get("update_model_path", ""),
+            "update_temp_dir": entry.get("update_temp_dir", ""),
+            "update_sha256": entry.get("update_sha256", ""),
             "_process": None,
             "_log_fh": None,
         }

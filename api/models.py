@@ -9,6 +9,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+from api.settings import get_hf_token_secret
 from config import MODELS_DIR
 from core.helpers import format_size
 from core.model_sources import get_model_sources, remove_model_sources_for_path, resolve_model_source_repo_id
@@ -262,6 +263,150 @@ def api_models():
     return jsonify(models)
 
 
+def _resolve_model_arg(model_path: str) -> tuple[str, str | None, int]:
+    """Validate a caller-supplied model path: absolute, inside MODELS_DIR, and
+    present on disk. Same containment rule the delete endpoint enforces."""
+    if not model_path:
+        return "", "path is required", 400
+    try:
+        resolved = os.path.realpath(model_path)
+        models_real = os.path.realpath(MODELS_DIR)
+        if not resolved.startswith(models_real + os.sep) and resolved != models_real:
+            return "", "path is outside models directory", 403
+    except Exception:
+        return "", "invalid path", 400
+    if not os.path.isfile(resolved):
+        return "", "model file does not exist", 404
+    return resolved, None, 200
+
+
+def _repo_id_for(model_path: str) -> str:
+    return resolve_model_source_repo_id(
+        model_path, get_model_sources(get_storage().get_settings()))
+
+
+@bp.route("/api/models/update-check", methods=["POST"])
+def api_models_update_check():
+    """Report whether a model's source repo has republished the file."""
+    body = request.get_json(force=True)
+    resolved, err, code = _resolve_model_arg(body.get("path", "").strip())
+    if err:
+        return jsonify({"error": err}), code
+
+    token = body.get("hf_token", "").strip()
+    token_id = body.get("hf_token_id", "").strip()
+    if token_id:
+        token = get_hf_token_secret(token_id) or ""
+
+    from core.model_updates import check_model_update
+    result = check_model_update(resolved, _repo_id_for(resolved), token or None)
+    result["path"] = resolved
+    return jsonify(result)
+
+
+@bp.route("/api/models/verify-hash", methods=["GET", "POST"])
+def api_models_verify_hash():
+    """Hash the local model file so it can be compared exactly to the published
+    one, for models downloaded before hashes were recorded.
+
+    POST starts the job (or rejoins one already running) and returns immediately
+    - the read takes minutes on a large model, so it never blocks the request.
+    GET only reports state and never starts anything, which is what polling and
+    model-selection use: asking about a model must not kick off work on it.
+
+    Jobs are keyed by model path and outlive the page, so switching models (or
+    reloading) leaves a running hash alone and you can come back to its progress.
+    """
+    if request.method == "GET":
+        raw_path = request.args.get("path", "").strip()
+    else:
+        raw_path = (request.get_json(force=True) or {}).get("path", "").strip()
+
+    resolved, err, code = _resolve_model_arg(raw_path)
+    if err:
+        return jsonify({"error": err}), code
+
+    from core.model_updates import local_hash_state, start_local_hash
+
+    if request.method == "GET":
+        state = local_hash_state(resolved) or {"status": "none"}
+    else:
+        state = start_local_hash(resolved)
+    state["path"] = resolved
+    return jsonify(state)
+
+
+@bp.route("/api/models/update", methods=["POST"])
+def api_models_update():
+    """Re-pull a model whose repo republished it, replacing the local copy.
+
+    Downloads into a staging dir nested in the model's own directory and swaps
+    on success (handled by the poller), so a failed or interrupted pull never
+    leaves the live model damaged.
+    """
+    body = request.get_json(force=True)
+    resolved, err, code = _resolve_model_arg(body.get("path", "").strip())
+    if err:
+        return jsonify({"error": err}), code
+
+    repo_id = _repo_id_for(resolved)
+    if not repo_id:
+        return jsonify({"error": "no source repository recorded for this model"}), 400
+
+    # Replacing bytes under a loaded model would leave llama-server reading a
+    # file that no longer matches what it mapped. Mirrors the delete endpoint.
+    with instances_lock:
+        for inst in instances.values():
+            if inst["status"] in ("stopped",):
+                continue
+            if os.path.realpath(inst["model_path"]) == resolved:
+                return jsonify({
+                    "error": f"model is in use by instance on port {inst['port']} - stop it first"
+                }), 409
+
+    token = body.get("hf_token", "").strip()
+    token_id = body.get("hf_token_id", "").strip()
+    if token_id:
+        token = get_hf_token_secret(token_id)
+        if not token:
+            return jsonify({"error": "Saved Hugging Face token not found"}), 400
+
+    from core.downloader import list_repo_files, resolve_filename
+    from core.model_updates import cleanup_update_temp, update_temp_dir
+
+    try:
+        repo_files = list_repo_files(repo_id, token or None)
+    except Exception as e:
+        return jsonify({"error": f"Could not list files in {repo_id}: {e}"}), 502
+    try:
+        targets = resolve_filename(os.path.basename(resolved), repo_files, rid=repo_id)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 400
+
+    # Clear any leftovers from an abandoned attempt so a stale partial file
+    # can't be swapped in as if it were this update's result.
+    temp_dir = update_temp_dir(resolved)
+    cleanup_update_temp(temp_dir)
+
+    from api.downloads import start_update_download
+    dl, err = start_update_download(
+        repo_id=repo_id,
+        filename=targets[0]["name"],
+        temp_dir=temp_dir,
+        model_path=resolved,
+        expected_sha=targets[0].get("sha256", ""),
+        token=token or "",
+        token_id=token_id,
+        per_model_mbps=float(body.get("speed_limit_mbps", 0) or 0),
+    )
+    if err:
+        cleanup_update_temp(temp_dir)
+        return jsonify({"error": err}), 500
+
+    from core.helpers import public_dict
+    return jsonify(public_dict(dl)), 201
+
+
 @bp.route("/api/models/delete", methods=["POST"])
 def api_models_delete():
     body = request.get_json(force=True)
@@ -287,6 +432,17 @@ def api_models_delete():
             if os.path.realpath(inst["model_path"]) == resolved or \
                resolved.startswith(os.path.realpath(inst["model_path"]) + os.sep):
                 return jsonify({"error": f"model is in use by instance on port {inst['port']}"}), 409
+
+    # Same idea as the in-use check above: deleting the file out from under a
+    # running hash leaves the worker reading a file that's gone. It survives
+    # that (the error is caught and reported), but the user gets a confusing
+    # failure for something they caused, so refuse while it's in flight.
+    from core.model_updates import local_hash_state
+    hash_job = local_hash_state(resolved) or {}
+    if hash_job.get("status") == "hashing":
+        return jsonify({
+            "error": "model is being hashed right now - wait for it to finish"
+        }), 409
 
     try:
         if os.path.isdir(resolved):

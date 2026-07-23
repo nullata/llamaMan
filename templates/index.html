@@ -65,7 +65,8 @@
     <main class="main">
 
       <!-- Settings -->
-      <div class="card tabbed-card" data-tab-group="settings" data-default-tab="launch">
+      <div class="card tabbed-card" data-tab-group="settings" data-default-tab="launch"
+        data-active-tab="launch">
         <div class="section-heading collapsible-heading" data-section="settings">
           <h2>Settings</h2>
           <span class="heading-actions">
@@ -98,6 +99,10 @@
             <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-cluster"
               aria-controls="settings-tab-cluster" aria-selected="false" tabindex="-1" data-tab="cluster">Cluster</button>
             <span class="settings-tab-repo" id="f-repo-info" hidden></span>
+            <button type="button" class="settings-tab-update" id="f-update-check"
+              title="Check whether the source repo has republished this model" hidden>
+              <i class="fa-solid fa-rotate"></i><span id="f-update-label">Check for updates</span>
+            </button>
             <button type="button" class="btn-star settings-tab-star" id="f-favorite" title="Toggle favorite" hidden>
               <i class="fa-star fa-regular"></i>
             </button>
@@ -549,6 +554,20 @@
               <div class="form-group cleanup-input-row">
                 <label for="s-retry-count-per-failed-download">Retry count per failed download</label>
                 <input id="s-retry-count-per-failed-download" class="download-settings-input" type="number" value="3" min="1" step="1" />
+              </div>
+              <div class="cleanup-section-divider" aria-hidden="true"></div>
+              <div class="form-group cleanup-toggle-grid">
+                <label for="s-auto-update-scan-enabled">Check models for updates in the background</label>
+                <label class="toggle-switch" for="s-auto-update-scan-enabled"
+                  aria-label="Check models for updates in the background">
+                  <input id="s-auto-update-scan-enabled" type="checkbox" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="form-group cleanup-input-row">
+                <label for="s-auto-update-scan-interval">Update check interval (hours)</label>
+                <input id="s-auto-update-scan-interval" class="download-settings-input" type="number" value="24" min="1" step="1" />
+                <p class="hint-text">Asks each model's source repo whether the file has been republished, and computes a checksum for any model that doesn't have one yet so later checks are instant. Checksums are a full read of the model file, so it does one at a time and never while a download is running.</p>
               </div>
             </div>
             <div class="form-actions">

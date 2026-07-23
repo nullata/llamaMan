@@ -604,6 +604,202 @@ function updateLaunchFormRepoInfo(model) {
     el.innerHTML = '';
     el.hidden = true;
   }
+  // The update button only means anything for a model we know the origin of.
+  const btn = document.getElementById('f-update-check');
+  if (btn) btn.hidden = !(model && model.repo_id);
+  // Render this model's own state - never carry the previous model's over.
+  syncUpdateButton(_launchNode(), model ? model.path : '');
+}
+
+// -------------------------------------------------------------------------
+// Model updates (repos are sometimes republished under the same filenames)
+// -------------------------------------------------------------------------
+// Button state is never held globally: a hash runs on a server against one
+// model and must keep running when you select another. Selecting a model
+// renders whatever that model's state is - idle, mid-hash, or a finished
+// verdict - so clicking away and back picks the story back up.
+//
+// Keyed by node AND path, because the file lives on - and is hashed by - the
+// node that owns it, and the same path can exist on several nodes. Every
+// request goes through _nf(), which is a direct local call for this node and
+// routes via /api/cluster/nodes/<id>/proxy for a peer; without it a check on a
+// remote model asks THIS node about a path it doesn't have ("model file does
+// not exist"). NUL separates the two key parts - the one byte a path can't hold.
+const _updateState = {};          // key -> {label, action, armed, busy}
+const _hashJobs = {};             // key -> {nodeId, path, ...server job state}
+let _hashPollTimer = null;
+
+function currentModelPath() {
+  const el = document.getElementById('f-model-path');
+  return el ? el.value.trim() : '';
+}
+
+function updateKey(nodeId, modelPath) {
+  return `${nodeId || 'local'}\u0000${modelPath}`;
+}
+
+function currentUpdateKey() {
+  return updateKey(_launchNode(), currentModelPath());
+}
+
+function setUpdateState(key, state) {
+  if (!key) return;
+  _updateState[key] = state;
+  if (key === currentUpdateKey()) renderUpdateButton();
+}
+
+// Paint the button from the selected model's state. The only place that writes
+// to the DOM, so a stale async response for another model can never leak in.
+function renderUpdateButton() {
+  const btn = document.getElementById('f-update-check');
+  const label = document.getElementById('f-update-label');
+  if (!btn || !label) return;
+  const st = (currentModelPath() && _updateState[currentUpdateKey()])
+    || { label: 'Check for updates' };
+  label.textContent = st.label;
+  btn.disabled = !!st.busy;
+  btn.classList.toggle('update-available', !!st.armed);
+}
+
+function hashProgressLabel(job) {
+  const pct = job.total_bytes ? Math.floor((job.hashed_bytes / job.total_bytes) * 100) : 0;
+  return `Hashing… ${pct}%`;
+}
+
+// One timer for every in-flight hash, on any node, independent of what's
+// selected. Each job carries the node that owns it so polling asks that node.
+function ensureHashPolling() {
+  if (_hashPollTimer) return;
+  _hashPollTimer = setInterval(async () => {
+    const active = Object.keys(_hashJobs).filter(k => _hashJobs[k].status === 'hashing');
+    if (!active.length) { clearInterval(_hashPollTimer); _hashPollTimer = null; return; }
+    for (const key of active) {
+      const { nodeId, path } = _hashJobs[key];
+      let job;
+      try {
+        const res = await _nf(nodeId, `/api/models/verify-hash?path=${encodeURIComponent(path)}`);
+        job = await res.json();
+        if (!res.ok) throw new Error(job.error || 'verify failed');
+      } catch (e) {
+        _hashJobs[key] = { nodeId, path, status: 'error', error: e.message };
+        setUpdateState(key, { label: 'Verify hash', action: 'verify', armed: true });
+        continue;
+      }
+      _hashJobs[key] = { ...job, nodeId, path };
+      if (job.status === 'hashing') {
+        setUpdateState(key, { label: hashProgressLabel(job), busy: true });
+      } else if (job.status === 'done') {
+        // Hash is stamped now, so the ordinary check is exact and instant.
+        setUpdateState(key, { label: 'Checking…', busy: true });
+        checkModelUpdate(nodeId, path, { quiet: key !== currentUpdateKey() });
+      } else if (job.status === 'error') {
+        setUpdateState(key, { label: 'Verify hash', action: 'verify', armed: true });
+        if (key === currentUpdateKey()) toast(`Verify failed: ${job.error || ''}`, 'error');
+      }
+    }
+  }, 700);
+}
+
+// Bring the button in line with a newly selected model, including rejoining a
+// hash still running for it (jobs live on their node and outlive the page).
+async function syncUpdateButton(nodeId, modelPath) {
+  renderUpdateButton();
+  if (!modelPath) return;
+  const key = updateKey(nodeId, modelPath);
+  try {
+    const res = await _nf(nodeId, `/api/models/verify-hash?path=${encodeURIComponent(modelPath)}`);
+    if (!res.ok) return;
+    const job = await res.json();
+    if (job.status === 'none') return;
+    _hashJobs[key] = { ...job, nodeId, path: modelPath };
+    if (job.status === 'hashing') {
+      setUpdateState(key, { label: hashProgressLabel(job), busy: true });
+      ensureHashPolling();
+    }
+  } catch (e) { /* leave the button idle */ }
+}
+
+async function checkModelUpdate(nodeId, modelPath, opts) {
+  const quiet = !!(opts && opts.quiet);
+  const key = updateKey(nodeId, modelPath);
+  setUpdateState(key, { label: 'Checking…', busy: true });
+  let data;
+  try {
+    const res = await _nf(nodeId, '/api/models/update-check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: modelPath }),
+    });
+    data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'check failed');
+  } catch (e) {
+    if (!quiet) toast(`Update check failed: ${e.message}`, 'error');
+    setUpdateState(key, { label: 'Check for updates' });
+    return;
+  }
+
+  if (data.status === 'up_to_date') {
+    setUpdateState(key, { label: 'Up to date' });
+    if (!quiet) toast('This model matches the published file', 'success');
+  } else if (data.status === 'update_available') {
+    // Arm the same button for the re-pull rather than adding a second control.
+    setUpdateState(key, { label: 'Update available', action: 'repull', armed: true });
+    if (!quiet) toast(data.detail || 'The repo has republished this model', 'info');
+  } else if (data.status === 'unverified') {
+    // No recorded hash. Hashing the local file answers this exactly, without
+    // downloading anything - far cheaper than re-pulling to find out.
+    setUpdateState(key, { label: 'Verify hash', action: 'verify', armed: true });
+    if (!quiet) toast(data.detail || 'No hash recorded for this model', 'info');
+  } else {
+    setUpdateState(key, { label: 'Check for updates' });
+    if (!quiet) toast(data.detail || 'Could not determine update status', 'error');
+  }
+}
+
+async function verifyModelHash(nodeId, modelPath) {
+  const key = updateKey(nodeId, modelPath);
+  setUpdateState(key, { label: 'Hashing… 0%', busy: true });
+  try {
+    const res = await _nf(nodeId, '/api/models/verify-hash', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: modelPath }),
+    });
+    const job = await res.json();
+    if (!res.ok) throw new Error(job.error || 'verify failed');
+    _hashJobs[key] = { ...job, nodeId, path: modelPath };
+    ensureHashPolling();
+  } catch (e) {
+    toast(`Verify failed: ${e.message}`, 'error');
+    setUpdateState(key, { label: 'Verify hash', action: 'verify', armed: true });
+  }
+}
+
+async function repullModel(nodeId, modelPath) {
+  const ok = await showConfirm(
+    'Update Model',
+    `Re-pull this model from its source repo?\n\n${modelPath}\n\n` +
+    'It downloads to a staging folder first and only replaces the current ' +
+    'file once the download finishes, so a failed pull leaves your model intact.');
+  if (!ok) return;
+
+  try {
+    const res = await _nf(nodeId, '/api/models/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: modelPath }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'update failed');
+    toast('Update started - track it in Downloads', 'success');
+    // Any prior verdict is stale the moment a re-pull starts.
+    const key = updateKey(nodeId, modelPath);
+    delete _hashJobs[key];
+    setUpdateState(key, { label: 'Check for updates' });
+    if (typeof loadDownloads === 'function') loadDownloads();
+  } catch (e) {
+    toast(`Update failed: ${e.message}`, 'error');
+  }
 }
 
 function updateLaunchFormStar() {
@@ -616,6 +812,13 @@ function updateLaunchFormStar() {
 }
 
 async function deleteModel(model) {
+  // The server refuses this too (409); catching it here just avoids making the
+  // user walk through a confirm dialog for something that can't succeed.
+  const job = _hashJobs[updateKey(_launchNode(), model.path)];
+  if (job && job.status === 'hashing') {
+    toast('This model is being hashed right now - wait for it to finish', 'error');
+    return;
+  }
   const ok = await showConfirm('Delete Model', `Delete "${model.name}" (${model.size_display}) from disk?\n\n${model.path}\n\nThis cannot be undone.`);
   if (!ok) return;
   try {
@@ -689,6 +892,21 @@ if (noteField) noteField.addEventListener('blur', () => {
   const modelPath = document.getElementById('f-model-path').value.trim();
   if (modelPath) saveModelNote(modelPath, noteField.value.trim());
 });
+
+// Update button: first click checks, second click (once armed) re-pulls.
+const updateBtn = document.getElementById('f-update-check');
+if (updateBtn) updateBtn.addEventListener('click', () => {
+  const modelPath = document.getElementById('f-model-path').value.trim();
+  if (!modelPath) { toast('Select a model first', 'error'); return; }
+  // The model lives on the launch target node - that's the node that must do
+  // the hashing, the HEAD request and any re-pull.
+  const nodeId = _launchNode();
+  const action = (_updateState[updateKey(nodeId, modelPath)] || {}).action;
+  if (action === 'repull') repullModel(nodeId, modelPath);
+  else if (action === 'verify') verifyModelHash(nodeId, modelPath);
+  else checkModelUpdate(nodeId, modelPath);
+});
+
 // Launch form display-name auto-save on blur
 const prettyNameField = document.getElementById('f-pretty-name');
 if (prettyNameField) prettyNameField.addEventListener('blur', () => {

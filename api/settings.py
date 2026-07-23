@@ -51,6 +51,7 @@ bp = Blueprint("settings", __name__)
 
 DEFAULT_GLOBAL_SPEED_LIMIT_MBPS = 0.0
 DEFAULT_RETRY_COUNT_PER_FAILED_DOWNLOAD = 3
+DEFAULT_AUTO_UPDATE_SCAN_INTERVAL_HOURS = 24
 DEFAULT_RECORDING_MODE = "off"
 VALID_RECORDING_MODES = ("off", "per_request", "per_conversation")
 DEFAULT_RECORDING_RETENTION_DAYS = 30
@@ -131,6 +132,17 @@ def _normalize_settings_patch(settings: dict) -> dict:
         normalized["retry_count_per_failed_download"] = _coerce_min_int(
             normalized.get("retry_count_per_failed_download"),
             default=DEFAULT_RETRY_COUNT_PER_FAILED_DOWNLOAD,
+            minimum=1,
+        )
+    if "auto_update_scan_enabled" in normalized:
+        normalized["auto_update_scan_enabled"] = _coerce_bool(
+            normalized.get("auto_update_scan_enabled"),
+            default=False,
+        )
+    if "auto_update_scan_interval_hours" in normalized:
+        normalized["auto_update_scan_interval_hours"] = _coerce_min_int(
+            normalized.get("auto_update_scan_interval_hours"),
+            default=DEFAULT_AUTO_UPDATE_SCAN_INTERVAL_HOURS,
             minimum=1,
         )
     if "recording_mode" in normalized:

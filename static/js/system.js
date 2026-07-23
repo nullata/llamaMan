@@ -159,6 +159,13 @@ async function loadSettings() {
       retryCountPerFailedDownload.value = s.retry_count_per_failed_download ?? 3;
       updateDownloadRetryCountState();
     }
+    const autoUpdateScan = document.getElementById('s-auto-update-scan-enabled');
+    if (autoUpdateScan) autoUpdateScan.checked = !!s.auto_update_scan_enabled;
+    const autoUpdateInterval = document.getElementById('s-auto-update-scan-interval');
+    if (autoUpdateInterval) {
+      autoUpdateInterval.value = s.auto_update_scan_interval_hours ?? 24;
+      updateAutoUpdateScanState();
+    }
 
     const adminUiEvictionToggle = document.getElementById('s-admin-ui-enforce-max-models');
     if (adminUiEvictionToggle) {
@@ -681,12 +688,24 @@ function updateDownloadRetryCountState() {
   input.disabled = !toggle.checked;
 }
 
+function updateAutoUpdateScanState() {
+  const toggle = document.getElementById('s-auto-update-scan-enabled');
+  const input = document.getElementById('s-auto-update-scan-interval');
+  if (!toggle || !input) return;
+  input.disabled = !toggle.checked;
+}
+
 async function saveDownloadSettings() {
   const limitMbps = parseFloat(document.getElementById('s-global-speed-limit').value) || 0;
   const autoRetryFailedDownloads = !!document.getElementById('s-auto-retry-failed-downloads')?.checked;
   const retryCountPerFailedDownload = Math.max(
     1,
     parseInt(document.getElementById('s-retry-count-per-failed-download').value, 10) || 3,
+  );
+  const autoUpdateScanEnabled = !!document.getElementById('s-auto-update-scan-enabled')?.checked;
+  const autoUpdateScanInterval = Math.max(
+    1,
+    parseInt(document.getElementById('s-auto-update-scan-interval')?.value, 10) || 24,
   );
   try {
     const res = await apiFetch('/api/settings', {
@@ -696,6 +715,8 @@ async function saveDownloadSettings() {
         global_speed_limit_mbps: limitMbps,
         auto_retry_failed_downloads: autoRetryFailedDownloads,
         retry_count_per_failed_download: retryCountPerFailedDownload,
+        auto_update_scan_enabled: autoUpdateScanEnabled,
+        auto_update_scan_interval_hours: autoUpdateScanInterval,
       }),
     });
     if (res && res.ok) {
@@ -714,6 +735,11 @@ const autoRetryFailedDownloadsToggle = document.getElementById('s-auto-retry-fai
 if (autoRetryFailedDownloadsToggle) {
   autoRetryFailedDownloadsToggle.addEventListener('change', updateDownloadRetryCountState);
   updateDownloadRetryCountState();
+}
+const autoUpdateScanToggle = document.getElementById('s-auto-update-scan-enabled');
+if (autoUpdateScanToggle) {
+  autoUpdateScanToggle.addEventListener('change', updateAutoUpdateScanState);
+  updateAutoUpdateScanState();
 }
 
 // -------------------------------------------------------------------------
