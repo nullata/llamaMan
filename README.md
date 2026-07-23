@@ -16,6 +16,7 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Speculative decoding** - optional `--spec-type` toggle with a configurable draft length: `draft-mtp` with either a standalone MTP drafter model or the main model's built-in MTP heads, or `draft-dflash` with a separate DFlash drafter model
 - **Preset configs** - save/load per-model launch settings, with live updates to running instances where possible
 - **Download manager** - pull models from HuggingFace with speed throttling and auto-retry on failure
+- **Model update detection & re-pull** - detects when a repo has republished a model under the same filenames (requant, fixed template) via its published content hash, verifies local files by hashing them on disk, and re-pulls through the normal download pipeline with an atomic swap. Optional background scan keeps the answer ready
 - **Model backup and restore** - export all model metadata and presets to JSON, restore on any instance by re-queuing missing downloads automatically
 - **Instance management** - stop, restart, remove, view live-streamed logs
 - **GPU VRAM indicator** - per-GPU VRAM and utilization, queried natively (no running instance required)
@@ -25,6 +26,7 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Request recording** - optionally record proxied requests/responses per request or per conversation, with configurable retention
 - **Idle timeout** - auto-sleep instances after configurable idle period, wake on next request
 - **Ollama-compatible proxy** - OpenWebUI discovers models and auto-starts servers on demand
+- **Per-model display names** - give a model a friendly name that API clients (OpenWebUI) see and accept instead of the raw quant filename
 - **Authentication** - user accounts with session login, API key management with bearer tokens
 - **Require auth toggle** - enforce bearer token authentication on all endpoints (including model loading) or leave model endpoints open
 - **Persistent state** - instance history and configs survive container restarts
@@ -180,6 +182,20 @@ Place models inside the `models/` volume:
 
 Or use the **Download** button in the UI to pull from HuggingFace.
 
+### Display Name
+
+Each model can be given an optional **Display Name** in the Launch form (the narrow field on the `Model Path | Display Name | Note` row). When set, it's the id API clients see on `/api/tags` and `/v1/models` - so OpenWebUI shows `Qwen 2.5 14B` instead of `Qwen2.5-14B-Instruct-Q4_K_M` - and clients can send it as the model name too. It must be unique and must not clash with another model's filename or a cluster queue-group name. Leave it blank to use the filename. It's stored on the model's preset (alongside favorite/note); no migration needed.
+
+### Model updates
+
+Model authors often republish a repo under the same filenames (a requant, a fixed chat template, a rebuilt imatrix), so a model pulled months ago can be silently stale. The **Check for updates** button in the Launch form's tab bar (shown for models with a known source repo) compares the local file against the repo's published content hash - one HTTP request, no download:
+
+- **Up to date** - the recorded hash matches the published file.
+- **Update available** - the repo has republished this model. The button arms for a **re-pull**, which downloads into a staging folder nested inside the model's own directory and atomically swaps the file in only once the download completes, so a failed pull leaves the current model intact. It's an ordinary download record (global/per-model speed limits, HF tokens, progress, pause/resume/cancel, and failed-download auto-retry all apply) and refuses with **409** while an instance has the model loaded.
+- **Verify hash** - shown when no hash has been recorded yet. Hashes the local file on disk (a background job with progress) instead of re-downloading gigabytes to compare, and records the result so later checks are exact and instant.
+
+See [Download Settings](#download-settings) for the optional background scan that computes these hashes ahead of time.
+
 ## Launching Instances
 
 1. Select a model from the sidebar
@@ -311,6 +327,8 @@ The UI provides download-related options under **Settings >> Download Settings**
 
 - **Auto-retry failed downloads** - automatically retries downloads that fail due to network errors or interruptions. Off by default.
 - **Retry count per failed download** - how many times to retry before marking a download as permanently failed (default: 3, min: 1). Only active when auto-retry is enabled.
+- **Check models for updates in the background** - opt-in worker that periodically asks each model's source repo whether the file has been republished, and computes a checksum for any model that doesn't have one yet, so the per-model **Check for updates** answer is exact and instant when you click it. Off by default.
+- **Update check interval (hours)** - how often the background scan runs (default: 24). A checksum is a full read of the model file, so the scan hashes at most one model per pass and never runs while a download is in progress.
 
 ## Docker Image Management
 
@@ -361,6 +379,8 @@ open-webui:
 Supported Ollama endpoints: `/api/tags`, `/api/chat`, `/api/generate`, `/api/show`, `/api/version`, `/api/ps`
 
 Also supports OpenAI-compatible endpoints with auto-start: `/v1/models`, `/v1/chat/completions`
+
+**Model names in the listing:** by default each model is listed under its GGUF filename stem. Give a model a **Display Name** (see [Display Name](#display-name)) and OpenWebUI shows and accepts that friendly name instead. In a cluster, live shared-queue [group aliases](#clustering) are also advertised as selectable models, so a client can pick the load-balanced alias directly.
 
 ### Model eviction policy
 
@@ -432,6 +452,10 @@ environment:
 
 Tables are auto-created on first connection. Requires `sqlalchemy` and `pymysql` (included in requirements).
 
+Per-node model metadata (a file's source repo and its content hash) lives in a node-scoped `model_files` table keyed by `(node_id, model_path)`, so two nodes holding different files at the same path don't collide. On upgrade, each node copies its own entries out of the legacy shared settings blob - only paths that exist on its own disk - and the blob is kept as a read fallback and rollback path. Schema migrations are versioned **per node**, so every node runs the ones it needs on its own first boot.
+
+> **InnoDB note:** the `model_files` primary key `(node_id, model_path)` is `(64 + 700) x 4 = 3056` bytes under utf8mb4, just under InnoDB's 3072-byte index limit, so the table is created with `ROW_FORMAT=DYNAMIC`. It fits on any modern MariaDB/MySQL; widening either column past that would fail at `CREATE TABLE`.
+
 ## Clustering
 
 *Optional, off by default - single-node installs are completely unaffected.*
@@ -460,6 +484,8 @@ Each node heartbeats every ~5s; a node silent past `CLUSTER_NODE_ONLINE_WINDOW_S
 
 **Per-node vs shared settings:** most settings are shared cluster-wide via the database, but a few are scoped per node because they're host-specific: the tracked **Docker images** (a CUDA host and a ROCm host differ) and the model-cap eviction toggles (**Enforce `LLAMAMAN_MAX_MODELS` for admin UI launches**, **Allow Ollama API to evict admin-launched models**, and **Allow OpenAI API to evict admin-launched models**). Existing single-node values are inherited until a node overrides them.
 
+**Discovering shared-queue aliases:** when instances across nodes share a queue group (the cross-node, load-balanced entry point), that group's alias is advertised as a selectable model in `/api/tags` and `/v1/models`, deduped cluster-wide, so a client can send the alias and have it routed to the least-loaded node serving it. Only live groups are surfaced - clustering on, the alias actually set, and at least one non-stopped member on any node - which is exactly when a request for the alias can be routed rather than 404'd.
+
 > **Security:** the cluster secret lets any peer drive actions on this node. Run node-to-node traffic over a trusted network or behind TLS.
 
 ## Environment Variables
@@ -483,6 +509,7 @@ Each node heartbeats every ~5s; a node silent past `CLUSTER_NODE_ONLINE_WINDOW_S
 | `LLAMAMAN_MAX_MODELS` | `0` | Max concurrent **chat** models via the proxy (LRU eviction, 0 = unlimited) |
 | `LLAMAMAN_IDLE_TIMEOUT` | `0` | Idle timeout in minutes for proxy-managed instances (0 = disabled) |
 | `SECRET_KEY` | _(auto)_ | Flask session secret. Auto-derived from machine-id if unset. Set this for multi-replica deployments. |
+| `SESSION_COOKIE_NAME` | `llamaman_session` | Name of the session cookie. Namespaced so llamaman coexists with other Flask apps on the same host - cookies are scoped by host+path, not port, so two apps both using Flask's default `session` name would log each other's users out. Change only if another `llamaman_session` on the same host clashes. |
 | `DATABASE_URL` | _(unset)_ | MariaDB/MySQL connection string. Unset = use JSON files. |
 | `HEALTH_CHECK_TIMEOUT` | `3` | Timeout in seconds for instance health checks |
 | `MODEL_LOAD_TIMEOUT` | `300` | Seconds to wait for a model to become healthy during launch/relaunch. Increase for very large models. |

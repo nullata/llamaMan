@@ -14,6 +14,7 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Speculative decoding** - optional `--spec-type` toggle with a configurable draft length: `draft-mtp` with either a standalone MTP drafter model or the main model's built-in MTP heads, or `draft-dflash` with a separate DFlash drafter model
 - **Preset configs** - save/load per-model launch settings, with live updates to running instances where possible
 - **Download manager** - pull models from HuggingFace with speed throttling and auto-retry on failure
+- **Model update detection & re-pull** - detects when a repo has republished a model under the same filenames (requant, fixed template) via its published content hash, verifies local files by hashing them on disk, and re-pulls through the normal download pipeline with an atomic swap. Optional background scan
 - **Model backup and restore** - export model metadata and presets to JSON, restore on any instance with downloads queued automatically for missing models
 - **Instance management** - stop, restart, remove, view live-streamed logs
 - **GPU VRAM indicator** - per-GPU VRAM and utilization, queried natively (no running instance required)
@@ -23,6 +24,7 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Request recording** - optionally record proxied requests/responses per request or per conversation, with configurable retention
 - **Idle timeout** - auto-sleep instances after configurable idle period, wake on next request
 - **Ollama-compatible proxy** - OpenWebUI discovers models and auto-starts servers on demand
+- **Per-model display names** - give a model a friendly name that API clients (OpenWebUI) see and accept instead of the raw quant filename
 - **Authentication** - user accounts with session login, API key management with bearer tokens
 - **Require auth toggle** - enforce bearer token authentication on all endpoints (including model loading) or leave model endpoints open
 - **Persistent state** - instance history and configs survive container restarts
@@ -204,6 +206,7 @@ networks:
 | `INTERNAL_PORT_RANGE_START` | `9000` | Start of internal llama-server port pool used for proxied instances. |
 | `INTERNAL_PORT_RANGE_END` | `9020` | End of internal llama-server port pool used for proxied instances. |
 | `SECRET_KEY` | *(auto)* | Flask session secret. Auto-derived from machine-id if unset. |
+| `SESSION_COOKIE_NAME` | `llamaman_session` | Name of the session cookie. Namespaced so llamaman coexists with other Flask apps on the same host - cookies are scoped by host+path, not port, so two apps both using Flask's default `session` name would log each other's users out. |
 | `DATABASE_URL` | *(unset)* | MariaDB/MySQL connection string (e.g. `mysql+pymysql://user:pass@host/db`). Unset = JSON file storage. |
 | `HEALTH_CHECK_TIMEOUT` | `3` | Timeout in seconds for instance health checks. |
 | `MODEL_LOAD_TIMEOUT` | `300` | Seconds to wait for a model to become healthy during launch/relaunch. Increase for very large models. |
@@ -258,6 +261,8 @@ Supported Ollama endpoints: `/api/tags`, `/api/chat`, `/api/generate`, `/api/sho
 
 Also supports OpenAI-compatible auto-start endpoints: `/v1/models`, `/v1/chat/completions`
 
+**Model names:** each model is listed under its GGUF filename stem by default. Set a per-model **Display Name** in the Launch form to have OpenWebUI show and accept a friendly name instead. In a cluster, live shared-queue group aliases are also advertised as selectable models, so a client can pick the load-balanced alias directly.
+
 ### With authentication enabled (default)
 
 Create an API key in the llamaMan UI, then configure OpenWebUI:
@@ -310,6 +315,8 @@ DATABASE_URL=mysql+pymysql://llamaman:yourpassword@host:3306/llamaman
 
 Tables are auto-created on first connection.
 
+Per-node model metadata (a file's source repo and content hash) lives in a node-scoped `model_files` table keyed `(node_id, model_path)`, created on each node's boot, so nodes holding different files at the same path don't collide. Its composite key is 3056 of InnoDB's 3072 index bytes under utf8mb4, so the table is created with `ROW_FORMAT=DYNAMIC`.
+
 ## Clustering
 
 *Optional, off by default - single-node installs are completely unaffected.*
@@ -335,6 +342,8 @@ environment:
 ```
 
 Each node heartbeats every ~5s; a node silent past `CLUSTER_NODE_ONLINE_WINDOW_S` (default 45s) is shown offline. Inspect and manage the cluster under **Settings >> Cluster**. A few settings are scoped per node because they're host-specific (tracked Docker images and the two model-cap eviction toggles); everything else is shared cluster-wide via the database.
+
+Live shared-queue group aliases are advertised as selectable models in `/api/tags` and `/v1/models` (deduped cluster-wide), so a client can send the alias and have it routed to the least-loaded node serving it.
 
 > **Security:** the cluster secret lets any peer drive actions on this node. Run node-to-node traffic over a trusted network or behind TLS.
 
