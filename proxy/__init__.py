@@ -380,7 +380,10 @@ def _extract_model_from_request(environ: dict) -> str | None:
 def _model_matches(inst_model_path: str, requested_model: str) -> bool:
     """Check if a requested model name matches an instance's model path."""
     inst_model = model_name_from_path(inst_model_path)
-    req_model = requested_model.split(":")[0].lower()
+    # A client that read the model id off /api/tags may be sending the pretty
+    # name, so translate it to the file stem before the filename rules below.
+    from core.model_alias import canonical_name
+    req_model = canonical_name(requested_model).split(":")[0].lower()
     return req_model == inst_model or req_model in inst_model
 
 

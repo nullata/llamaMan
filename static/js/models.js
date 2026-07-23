@@ -185,6 +185,40 @@ async function toggleFavorite(modelPath) {
   return newVal;
 }
 
+function getModelPrettyName(modelPath) {
+  return (allPresets[modelPath] && allPresets[modelPath].pretty_name) || '';
+}
+
+// Unlike note/favorite this can be rejected server-side (uniqueness, clashes
+// with a filename or cluster queue group), so it reports failure and reverts
+// the local copy instead of silently swallowing the error.
+async function saveModelPrettyName(modelPath, prettyName) {
+  const previous = getModelPrettyName(modelPath);
+  if (previous === prettyName) return true;
+  try {
+    const res = await apiFetch(`/api/presets${encodePathForUrl(modelPath)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pretty_name: prettyName }),
+    });
+    if (!res.ok) {
+      let msg = 'Could not save display name';
+      try { msg = (await res.json()).error || msg; } catch (e) { /* keep default */ }
+      toast(msg, 'error');
+      const field = document.getElementById('f-pretty-name');
+      if (field) field.value = previous;
+      return false;
+    }
+  } catch (e) {
+    toast('Could not save display name', 'error');
+    return false;
+  }
+  if (!allPresets[modelPath]) allPresets[modelPath] = {};
+  allPresets[modelPath].pretty_name = prettyName;
+  renderModels();
+  return true;
+}
+
 async function saveModelNote(modelPath, note) {
   if (!allPresets[modelPath]) allPresets[modelPath] = {};
   allPresets[modelPath].note = note;
@@ -247,7 +281,8 @@ function renderModels() {
   const query = document.getElementById('model-search').value.toLowerCase().trim();
   const matches = (m) => !query || m.name.toLowerCase().includes(query)
     || (m.path && m.path.toLowerCase().includes(query))
-    || (m.quant && m.quant.toLowerCase().includes(query));
+    || (m.quant && m.quant.toLowerCase().includes(query))
+    || getModelPrettyName(m.path).toLowerCase().includes(query);
 
   const { present, ghost } = _modelSets();
   const filtered = present.filter(matches);
@@ -273,11 +308,15 @@ function renderModels() {
     const fav = isModelFavorited(m.path);
     const starClass = fav ? 'btn-star active' : 'btn-star';
     const starIcon = fav ? 'fa-solid fa-star' : 'fa-regular fa-star';
+    // When a display name is set it's what API clients see, so show it here
+    // too; the filename stays visible on the path line below.
+    const pretty = getModelPrettyName(m.path);
+    const displayName = pretty || m.name;
     el.innerHTML = `
       <div class="model-item-row">
         <button class="${starClass}" title="Toggle favorite"><i class="${starIcon}"></i></button>
         <div class="model-item-content">
-          <span class="name">${escHtml(m.name)}</span>
+          <span class="name" title="${escHtml(m.name)}">${escHtml(displayName)}</span>
           <div class="badges">
             <span class="badge">${m.type.toUpperCase()}</span>
             ${quantBadge}
@@ -377,6 +416,8 @@ async function selectModel(model, el) {
   selectedModelPath = model.path;
   document.getElementById('f-model-path').value = model.path;
   document.getElementById('f-note').value = getModelNote(model.path);
+  const prettyField = document.getElementById('f-pretty-name');
+  if (prettyField) prettyField.value = getModelPrettyName(model.path);
   updateLaunchFormRepoInfo(model);
   updateLaunchFormStar();
   const ctxField = document.getElementById('f-ctx-size');
@@ -647,4 +688,10 @@ const noteField = document.getElementById('f-note');
 if (noteField) noteField.addEventListener('blur', () => {
   const modelPath = document.getElementById('f-model-path').value.trim();
   if (modelPath) saveModelNote(modelPath, noteField.value.trim());
+});
+// Launch form display-name auto-save on blur
+const prettyNameField = document.getElementById('f-pretty-name');
+if (prettyNameField) prettyNameField.addEventListener('blur', () => {
+  const modelPath = document.getElementById('f-model-path').value.trim();
+  if (modelPath) saveModelPrettyName(modelPath, prettyNameField.value.trim());
 });

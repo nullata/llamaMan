@@ -2,6 +2,9 @@
 
 from flask import Blueprint, jsonify, request
 
+from core.model_alias import PRETTY_NAME_KEY, existing_aliases
+from core.model_alias import invalidate as invalidate_alias_cache
+from core.model_alias import _normalize as _normalize_alias
 from core.proxy_sampling import parse_proxy_sampling_config
 from core.spec_decoding import parse_spec_config
 from core.multimodal import parse_mmproj_config
@@ -9,6 +12,8 @@ from core.state import instances, instances_lock, save_state
 from storage import get_storage
 
 bp = Blueprint("presets", __name__)
+
+PRETTY_NAME_MAX_LEN = 100
 
 # Hardware fields that may be overridden per node (everything else in a preset
 # is shared cluster-wide). A node's overrides live in preset["node_overrides"].
@@ -39,6 +44,62 @@ def _normalize_model_path(model_path: str) -> str:
     if not model_path.startswith("/"):
         model_path = "/" + model_path
     return model_path
+
+
+def validate_pretty_name(pretty: str, model_path: str) -> tuple[str, str]:
+    """Validate a user-supplied pretty name. Returns (normalized_value, error).
+
+    An empty value clears the name and is always valid. Otherwise the name has
+    to be unambiguous *as an inbound model name*, because it becomes what
+    clients send back to us: it must not shadow a real model's filename, must
+    not duplicate another model's pretty name, and must not collide with a
+    `share_queue_group` cluster alias. The file path remains the true model
+    identifier either way - this check only protects the lookup.
+    """
+    pretty = (pretty or "").strip()
+    if not pretty:
+        return "", ""
+
+    if len(pretty) > PRETTY_NAME_MAX_LEN:
+        return "", f"name must be {PRETTY_NAME_MAX_LEN} characters or fewer"
+    if ":" in pretty:
+        # Inbound names are tag-stripped at ":" all over the stack, so a colon
+        # would make the name resolve to something other than what was typed.
+        return "", "name cannot contain ':'"
+    if any(ch in pretty for ch in "\r\n\t"):
+        return "", "name cannot contain line breaks or tabs"
+
+    key = _normalize_alias(pretty)
+    if not key:
+        return "", "name is empty after normalization"
+
+    from api.models import discover_models
+    from config import MODELS_DIR
+    from core.helpers import model_name_from_path
+
+    normalized_target = _normalize_model_path(model_path)
+    for m in discover_models(MODELS_DIR):
+        if _normalize_model_path(m["path"]) == normalized_target:
+            continue
+        if model_name_from_path(m["path"]) == key:
+            return "", f"'{pretty}' is already the filename of another model"
+
+    taken = existing_aliases(exclude_path=normalized_target)
+    if key in taken:
+        return "", f"'{pretty}' is already used as the pretty name of another model"
+
+    try:
+        presets = get_storage().get_all_presets() or {}
+    except Exception:
+        presets = {}
+    for path, preset in presets.items():
+        if not isinstance(preset, dict) or _normalize_model_path(path) == normalized_target:
+            continue
+        group = (preset.get("share_queue_group") or "").strip().lower()
+        if group and group == key:
+            return "", f"'{pretty}' is already used as a cluster queue group"
+
+    return pretty, ""
 
 
 @bp.route("/api/presets", methods=["GET"])
@@ -105,6 +166,9 @@ def api_preset_save(model_path):
         "auto_restart_on_crash": body.get("auto_restart_on_crash", False),
         "favorite": body.get("favorite", existing.get("favorite", False)),
         "note": body.get("note", existing.get("note", "")),
+        # Carried over like favorite/note - the launch form doesn't post it, and
+        # rebuilding `data` from scratch would otherwise silently drop it.
+        PRETTY_NAME_KEY: existing.get(PRETTY_NAME_KEY, ""),
         **spec_config,
         **mmproj_config,
         **proxy_sampling_config,
@@ -123,6 +187,7 @@ def api_preset_save(model_path):
         data["node_overrides"] = node_overrides
 
     get_storage().save_preset(model_path, data)
+    invalidate_alias_cache()
     _apply_live_preset_changes(model_path, data)
     return jsonify({"status": "saved"})
 
@@ -193,7 +258,15 @@ def api_preset_patch(model_path):
     for key in allowed:
         if key in body:
             preset[key] = body[key]
+
+    if PRETTY_NAME_KEY in body:
+        pretty, err = validate_pretty_name(body[PRETTY_NAME_KEY], model_path)
+        if err:
+            return jsonify({"error": err}), 400
+        preset[PRETTY_NAME_KEY] = pretty
+
     storage.save_preset(model_path, preset)
+    invalidate_alias_cache()
     return jsonify({"status": "saved"})
 
 
@@ -201,4 +274,5 @@ def api_preset_patch(model_path):
 def api_preset_delete(model_path):
     model_path = _normalize_model_path(model_path)
     get_storage().delete_preset(model_path)
+    invalidate_alias_cache()
     return jsonify({"status": "deleted"})

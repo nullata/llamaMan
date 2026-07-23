@@ -183,6 +183,107 @@ class SnapshotAndOnlineTests(unittest.TestCase):
         self.assertIsInstance(snap["models"], list)
 
 
+class ClusterGroupAdvertiseTests(unittest.TestCase):
+    """Surfacing share_queue_group aliases in the model-listing APIs."""
+
+    def setUp(self):
+        import api.cluster as cluster_api
+        self.cluster_api = cluster_api
+        self._tmp = tempfile.TemporaryDirectory()
+        self.storage = JsonBackend(
+            os.path.join(self._tmp.name, "state.json"),
+            os.path.join(self._tmp.name, "presets.json"),
+            os.path.join(self._tmp.name, "users.json"),
+            os.path.join(self._tmp.name, "settings.json"),
+        )
+        from core.state import instances, instances_lock
+        self._instances, self._instances_lock = instances, instances_lock
+        with instances_lock:
+            self._saved = dict(instances)
+            instances.clear()
+
+    def tearDown(self):
+        with self._instances_lock:
+            self._instances.clear()
+            self._instances.update(self._saved)
+        self._tmp.cleanup()
+
+    def _add_local(self, iid, group, status="healthy", path="/models/a.gguf"):
+        with self._instances_lock:
+            self._instances[iid] = {
+                "id": iid, "model_name": "a", "model_path": path, "port": 8000,
+                "status": status, "config": {"share_queue_group": group},
+            }
+
+    def _add_peer(self, node_id, group, status="healthy"):
+        self.storage.register_node(
+            {"node_id": node_id, "node_name": node_id, "advertise_url": "",
+             "vendor": "", "llama_image": ""},
+            snapshot={"instances": [{
+                "id": f"i-{node_id}", "model_name": "x", "model_path": "/peer/x.gguf",
+                "status": status, "config": {"share_queue_group": group}}]})
+
+    def _groups(self):
+        with patch.object(config, "CLUSTER_ENABLED", True), \
+             patch.object(config, "CLUSTER_SECRET", "s"), \
+             patch.object(self.cluster_api, "get_storage", return_value=self.storage), \
+             patch.object(cluster, "get_node_id", return_value="n1"):
+            return self.cluster_api.cluster_group_models()
+
+    def test_disabled_cluster_advertises_nothing(self):
+        self._add_local("i1", "some-group")
+        with patch.object(config, "CLUSTER_ENABLED", False):
+            self.assertEqual(self.cluster_api.cluster_group_models(), [])
+
+    def test_local_and_peer_members_dedupe_to_one_group(self):
+        self._add_local("i1", "qwen2.5-14b")
+        self._add_peer("n2", "qwen2.5-14b")
+        groups = self._groups()
+        self.assertEqual([g["name"] for g in groups], ["qwen2.5-14b"])
+        # A local member is preferred as the representative for GGUF metadata.
+        self.assertEqual(groups[0]["path"], "/models/a.gguf")
+
+    def test_peer_only_group_has_no_local_path(self):
+        self._add_peer("n2", "lonely")
+        groups = self._groups()
+        self.assertEqual(groups[0]["name"], "lonely")
+        self.assertIsNone(groups[0]["path"])
+
+    def test_stopped_members_are_not_advertised(self):
+        self._add_local("i1", "gone", status="stopped")
+        self._add_peer("n2", "also-gone", status="stopped")
+        self.assertEqual(self._groups(), [])
+
+    def test_instances_without_a_group_are_ignored(self):
+        with self._instances_lock:
+            self._instances["i1"] = {
+                "id": "i1", "model_name": "a", "model_path": "/m/a.gguf",
+                "port": 8000, "status": "healthy", "config": {}}
+        self.assertEqual(self._groups(), [])
+
+    def test_group_entry_skipped_when_name_collides_with_a_file(self):
+        import api.llamaman as llamaman
+        taken = {"qwen-q4"}  # a real model file already advertised under this name
+        with patch.object(llamaman, "_cluster_group_entries",
+                          wraps=llamaman._cluster_group_entries):
+            with patch("api.cluster.cluster_group_models",
+                       return_value=[{"name": "qwen-q4", "path": None}]):
+                added = llamaman._cluster_group_entries(taken, llamaman._llamaman_group_entry)
+        self.assertEqual(added, [])
+
+    def test_group_entry_builders_produce_valid_shapes(self):
+        import api.llamaman as llamaman
+        group = {"name": "qwen2.5-14b", "path": None}  # peer-only
+        tag = llamaman._llamaman_group_entry(group)
+        self.assertEqual(tag["name"], "qwen2.5-14b")
+        self.assertEqual(tag["model"], "qwen2.5-14b")
+        self.assertEqual(tag["size"], 0)
+        self.assertTrue(tag["digest"].startswith("sha256:"))
+        oai = llamaman._openai_group_entry(group)
+        self.assertEqual(oai["id"], "qwen2.5-14b")
+        self.assertEqual(oai["owned_by"], "cluster")
+
+
 class NodeScopedStateTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

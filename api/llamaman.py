@@ -77,6 +77,15 @@ def _stamp_serving_node(resp):
 def _find_model_by_name(name: str) -> dict | None:
     name_lower = name.split(":")[0].lower()
     models = discover_models(MODELS_DIR)
+    # Exact pretty-name match wins over every filename rule below. It's checked
+    # first (and only exactly) so a cosmetic label can never be beaten by the
+    # substring fallback, and so it resolves to precisely the file it was set on.
+    from core.model_alias import resolve_to_path
+    alias_path = resolve_to_path(name)
+    if alias_path:
+        for m in models:
+            if m["path"] == alias_path or os.path.realpath(m["path"]) == os.path.realpath(alias_path):
+                return m
     for m in models:
         if model_name_from_path(m["path"]) == name_lower:
             return m
@@ -264,12 +273,18 @@ def _ensure_model_running(
     # same stem happens to exist, the live aliased instance is what the
     # operator opted into. Cluster dispatch runs BEFORE this and may have
     # forwarded already; reaching here means we're serving locally.
-    aliased = _find_running_instance_by_alias(model_name)
-    if aliased and aliased["status"] == "healthy":
-        with instances_lock:
-            if aliased["id"] in instances:
-                instances[aliased["id"]]["_last_request_at"] = time.time()
-        return aliased, None
+    # ...but an exact pretty-name match is unambiguous and takes precedence.
+    # _find_running_instance_by_alias matches share_queue_group by substring, so
+    # without this a pretty name like "qwen" would be captured by an unrelated
+    # group "qwen2.5-14b" and served by the wrong model.
+    from core.model_alias import resolve_to_path
+    if not resolve_to_path(model_name):
+        aliased = _find_running_instance_by_alias(model_name)
+        if aliased and aliased["status"] == "healthy":
+            with instances_lock:
+                if aliased["id"] in instances:
+                    instances[aliased["id"]]["_last_request_at"] = time.time()
+            return aliased, None
 
     model = _find_model_by_name(model_name)
     if model is None:
@@ -407,7 +422,10 @@ def _details_from_gguf(model_path: str, model_type: str | None,
 
 
 def _llamaman_model_entry(m: dict) -> dict:
-    name = model_name_from_path(m["path"])
+    # Advertise the pretty name when one is set: it's what clients display AND
+    # what they send back, and _find_model_by_name resolves it exactly.
+    from core.model_alias import pretty_name_for_path
+    name = pretty_name_for_path(m["path"]) or model_name_from_path(m["path"])
     mtime = datetime.fromtimestamp(
         Path(m["path"]).stat().st_mtime if Path(m["path"]).exists() else 0,
         tz=timezone.utc,
@@ -420,6 +438,63 @@ def _llamaman_model_entry(m: dict) -> dict:
         "digest": f"sha256:{uuid.uuid5(uuid.NAMESPACE_URL, m['path']).hex}",
         "details": _details_from_gguf(m["path"], m.get("type"), m.get("quant", "")),
     }
+
+
+def _group_min_details(name: str) -> dict:
+    """Ollama `details` for a cluster group with no representative file on this
+    node - the members live only on peers, so there's no local GGUF to read."""
+    family = name.split("-")[0] if "-" in name else name
+    return {
+        "parent_model": "",
+        "format": "gguf",
+        "family": family,
+        "families": [family],
+        "parameter_size": "",
+        "quantization_level": "",
+    }
+
+
+def _llamaman_group_entry(group: dict) -> dict:
+    """Ollama /api/tags entry for a cluster share-queue alias. Borrows a local
+    member's GGUF metadata when the group runs on this node, else stays minimal
+    (the members are peer-only and we can't read their files)."""
+    name = group["name"]
+    path = group.get("path")
+    has_local = bool(path) and Path(path).exists()
+    mtime = datetime.fromtimestamp(
+        Path(path).stat().st_mtime if has_local else 0, tz=timezone.utc).isoformat()
+    return {
+        "name": name,
+        "model": name,
+        "modified_at": mtime,
+        "size": Path(path).stat().st_size if has_local else 0,
+        "digest": f"sha256:{uuid.uuid5(uuid.NAMESPACE_URL, 'group:' + name.lower()).hex}",
+        "details": _details_from_gguf(path, "gguf", "") if has_local
+                   else _group_min_details(name),
+    }
+
+
+def _cluster_group_entries(taken_lower: set[str], builder) -> list[dict]:
+    """Build listing entries for cluster share-queue aliases not already listed.
+
+    A group whose name collides with a file/pretty-name entry is skipped: the
+    client already has that id, and dispatch routes the alias regardless of
+    whether it appears here. `taken_lower` is updated so the two group aliases
+    can't collide with each other either.
+    """
+    from api.cluster import cluster_group_models
+    out = []
+    try:
+        groups = cluster_group_models()
+    except Exception:
+        return out
+    for g in groups:
+        key = g["name"].lower()
+        if key in taken_lower:
+            continue
+        taken_lower.add(key)
+        out.append(builder(g))
+    return out
 
 
 def _instance_container_alive(inst: dict) -> bool:
@@ -983,7 +1058,10 @@ def _handle_request(mode: str = "chat"):
 @bp.route("/api/tags", methods=["GET"])
 def llamaman_tags():
     models = discover_models(MODELS_DIR)
-    return jsonify({"models": [_llamaman_model_entry(m) for m in models]})
+    entries = [_llamaman_model_entry(m) for m in models]
+    taken = {e["name"].lower() for e in entries}
+    entries.extend(_cluster_group_entries(taken, _llamaman_group_entry))
+    return jsonify({"models": entries})
 
 
 @bp.route("/api/version", methods=["GET"])
@@ -1079,9 +1157,10 @@ def _openai_model_entry(m: dict) -> dict:
     *effective* runtime cap a client would get (running instance > preset > GGUF
     trained max), matching what /api/show publishes. Omitted when unknown so we
     never advertise a bogus 0."""
+    from core.model_alias import pretty_name_for_path
     path = m["path"]
     entry = {
-        "id": model_name_from_path(path),
+        "id": pretty_name_for_path(path) or model_name_from_path(path),
         "object": "model",
         "created": int(Path(path).stat().st_mtime) if Path(path).exists() else 0,
         "owned_by": "local",
@@ -1094,13 +1173,34 @@ def _openai_model_entry(m: dict) -> dict:
     return entry
 
 
+def _openai_group_entry(group: dict) -> dict:
+    """/v1/models entry for a cluster share-queue alias. `owned_by` is "cluster"
+    to distinguish it from a node-local file; the effective context is only
+    filled in when a member runs on this node (a peer's GGUF isn't readable)."""
+    name = group["name"]
+    path = group.get("path")
+    has_local = bool(path) and Path(path).exists()
+    entry = {
+        "id": name,
+        "object": "model",
+        "created": int(Path(path).stat().st_mtime) if has_local else 0,
+        "owned_by": "cluster",
+    }
+    if has_local:
+        ctx = _effective_ctx_for_model(path, _gguf_meta_for(path, "gguf"))
+        if ctx > 0:
+            entry["context_length"] = ctx
+            entry["max_model_len"] = ctx
+    return entry
+
+
 @bp.route("/v1/models", methods=["GET"])
 def llamaman_v1_models():
     models = discover_models(MODELS_DIR)
-    return jsonify({
-        "object": "list",
-        "data": [_openai_model_entry(m) for m in models],
-    })
+    data = [_openai_model_entry(m) for m in models]
+    taken = {e["id"].lower() for e in data}
+    data.extend(_cluster_group_entries(taken, _openai_group_entry))
+    return jsonify({"object": "list", "data": data})
 
 
 @bp.route("/v1/chat/completions", methods=["POST"])

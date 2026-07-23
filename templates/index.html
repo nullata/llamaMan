@@ -128,6 +128,13 @@
                     <label for="f-model-path">Model Path</label>
                     <input id="f-model-path" type="text" placeholder="/models/my-model" required />
                   </div>
+                  <div class="form-group form-group-narrow">
+                    <span class="label-row">
+                      <label for="f-pretty-name">Display Name</label>
+                      <span class="info-tip" tabindex="0" role="button" aria-label="Display Name help" data-tip="Optional friendly name shown to API clients (Open WebUI) instead of the raw filename. Clients can use it as the model name too. Must be unique and must not clash with another model's filename or a cluster queue group. Leave blank to use the filename."><i class="fa-solid fa-circle-info"></i></span>
+                    </span>
+                    <input id="f-pretty-name" type="text" maxlength="100" placeholder="e.g. Qwen 2.5 14B" />
+                  </div>
                   <div class="form-group">
                     <label for="f-note">Note</label>
                     <input id="f-note" type="text" placeholder="Add a note about this model…" />

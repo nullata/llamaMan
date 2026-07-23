@@ -312,9 +312,9 @@ header span {
   grid-column: 1 / -1;
 }
 
-/* Two fields side by side on one full-width row (Target node + Docker Image,
-   Model Path + Note). When one side is hidden (e.g. Target node in single-node
-   mode) the other fills the row. */
+/* Fields side by side on one full-width row (Target node + Docker Image,
+   Model Path + Display Name + Note). When one side is hidden (e.g. Target node
+   in single-node mode) the others fill the row. */
 .launch-pair {
   grid-column: 1 / -1;
   display: flex;
@@ -323,6 +323,21 @@ header span {
 .launch-pair > .form-group {
   flex: 1 1 0;
   min-width: 0;
+}
+
+/* A field that shares a row but needs less room than its siblings (Display
+   Name, which holds a short label rather than a path). Basis is 0 on all of
+   them, so the grow ratio alone sets the widths: 1 : 0.6 : 1. */
+.launch-pair > .form-group-narrow {
+  flex-grow: 0.6;
+}
+
+/* Keep the inputs on a row bottom-aligned when only some labels carry an
+   info-tip - the tip is 14px tall and a bare label is ~15px, so without a
+   shared floor the fields would sit a pixel apart. */
+.launch-pair > .form-group > label,
+.launch-pair > .form-group > .label-row {
+  min-height: 16px;
 }
 
 /* The `hidden` attribute alone loses to .form-group's display:flex, so hide
