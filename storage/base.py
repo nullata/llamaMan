@@ -110,6 +110,39 @@ class StorageBackend(ABC):
         """Check if a raw bearer token matches any stored key hash."""
         ...
 
+    # -- Per-node model file metadata --
+    #
+    # Facts about the bytes of a model file on ONE node's disk: which repo it
+    # came from and the content hash it was last known to have. Node-scoped
+    # because two nodes can hold different files at the same path, and a hash
+    # describes a physical file, not a logical model. (The logical, cluster-wide
+    # metadata - presets, display names - stays in the shared presets table.)
+    #
+    # Deliberately a table rather than a key in the settings blob: settings are
+    # one shared row updated by read-modify-write, so concurrent stamps from
+    # several nodes can lose writes. These are per-row upserts.
+
+    @abstractmethod
+    def get_model_files(self, node_id: str) -> dict[str, dict]:
+        """model_path -> {"repo_id", "sha256"} for one node. Empty if none."""
+        ...
+
+    @abstractmethod
+    def upsert_model_file(self, node_id: str, model_path: str,
+                          repo_id: str = "", sha256: str = "") -> None:
+        """Insert or update one node's record for a model file.
+
+        Only non-empty fields are written, so stamping a hash never clears a
+        previously recorded repo_id and vice versa.
+        """
+        ...
+
+    @abstractmethod
+    def delete_model_files(self, node_id: str, path_prefix: str) -> None:
+        """Drop a node's records for `path_prefix` and anything beneath it,
+        mirroring how deleting a model removes a directory and its contents."""
+        ...
+
     # -- Cluster registry --
 
     @abstractmethod
@@ -201,18 +234,59 @@ class StorageBackend(ABC):
 
     # -- Schema migrations --
 
-    SCHEMA_VERSION_KEY = "_schema_version"
+    # Pre-cluster installs recorded ONE version for the whole database. On a
+    # shared database that is wrong: the first node to upgrade runs the
+    # migrations and bumps it, so every node upgrading afterwards sees the new
+    # number and skips them. Anything a migration does per node was therefore
+    # silently never done on nodes 2..N.
+    SCHEMA_VERSION_KEY = "_schema_version"                  # legacy, global
+    SCHEMA_VERSION_BY_NODE_KEY = "_schema_version_by_node"  # {node_id: version}
+
+    # Migrations up to and including this one predate per-node versioning and
+    # only ever did global, shared-database work, so a node joining later can
+    # safely inherit the old global number for them. Everything from the next
+    # version onward must be run by every node individually - which is exactly
+    # why the seed is capped here rather than taking the global value as-is.
+    LEGACY_GLOBAL_MAX_VERSION = 3
+
+    def _node_key(self) -> str:
+        try:
+            from core.cluster import get_node_id
+            return get_node_id() or "local"
+        except Exception:
+            return "local"
 
     def get_schema_version(self) -> int:
-        """Read the current applied schema version from settings (0 if unset)."""
+        """Applied schema version for THIS node (0 if it has never migrated)."""
         try:
-            v = self.get_settings().get(self.SCHEMA_VERSION_KEY, 0)
-            return int(v) if v else 0
-        except (TypeError, ValueError):
+            settings = self.get_settings()
+        except Exception:
             return 0
 
+        by_node = settings.get(self.SCHEMA_VERSION_BY_NODE_KEY, {})
+        if isinstance(by_node, dict) and self._node_key() in by_node:
+            try:
+                return int(by_node[self._node_key()] or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        # First run under per-node versioning. Inherit the old global value so an
+        # existing install doesn't replay migrations it has already applied, but
+        # cap it so per-node migrations still run here.
+        try:
+            legacy = int(settings.get(self.SCHEMA_VERSION_KEY, 0) or 0)
+        except (TypeError, ValueError):
+            legacy = 0
+        return min(legacy, self.LEGACY_GLOBAL_MAX_VERSION)
+
     def set_schema_version(self, version: int) -> None:
-        self.merge_settings({self.SCHEMA_VERSION_KEY: int(version)})
+        version = int(version)
+        patch = {self.SCHEMA_VERSION_BY_NODE_KEY: {self._node_key(): version}}
+        # Keep the legacy global key moving forward too, so a node still on an
+        # older build reads a sane number and doesn't replay old migrations.
+        if version <= self.LEGACY_GLOBAL_MAX_VERSION:
+            patch[self.SCHEMA_VERSION_KEY] = version
+        self.merge_settings(patch)
 
     @abstractmethod
     def migration_lock(self):

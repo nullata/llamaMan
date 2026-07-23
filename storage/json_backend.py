@@ -65,6 +65,13 @@ class JsonBackend(StorageBackend):
         self._cluster_file = os.path.join(
             os.path.dirname(settings_file) or ".", "cluster.json"
         )
+        # Per-node model file metadata. Its own file rather than a settings key
+        # so stamping a hash never rewrites the whole settings blob, matching
+        # the node-scoped table the MariaDB backend uses.
+        self._model_files_file = os.path.join(
+            os.path.dirname(settings_file) or ".", "model_files.json"
+        )
+        self._model_files_lock = threading.Lock()
         self._cluster_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._settings_lock = threading.Lock()
@@ -346,6 +353,62 @@ class JsonBackend(StorageBackend):
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return {}
+
+    # -- Per-node model file metadata --
+
+    def _read_model_files(self) -> dict:
+        try:
+            with open(self._model_files_file, "r") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def get_model_files(self, node_id: str) -> dict[str, dict]:
+        with self._model_files_lock:
+            entry = self._read_model_files().get(node_id, {})
+        if not isinstance(entry, dict):
+            return {}
+        return {
+            path: {
+                "repo_id": str((meta or {}).get("repo_id", "") or ""),
+                "sha256": str((meta or {}).get("sha256", "") or ""),
+            }
+            for path, meta in entry.items() if isinstance(meta, dict)
+        }
+
+    def upsert_model_file(self, node_id: str, model_path: str,
+                          repo_id: str = "", sha256: str = "") -> None:
+        with self._model_files_lock:
+            data = self._read_model_files()
+            node_entry = data.setdefault(node_id, {})
+            if not isinstance(node_entry, dict):
+                node_entry = {}
+                data[node_id] = node_entry
+            record = node_entry.get(model_path)
+            if not isinstance(record, dict):
+                record = {}
+            # Blank means "not supplied", so a hash stamp can't wipe repo_id.
+            if repo_id:
+                record["repo_id"] = repo_id
+            if sha256:
+                record["sha256"] = sha256
+            node_entry[model_path] = record
+            _atomic_write_json(self._model_files_file, data)
+
+    def delete_model_files(self, node_id: str, path_prefix: str) -> None:
+        with self._model_files_lock:
+            data = self._read_model_files()
+            node_entry = data.get(node_id)
+            if not isinstance(node_entry, dict):
+                return
+            prefix = path_prefix.rstrip("/") + "/"
+            kept = {p: m for p, m in node_entry.items()
+                    if p != path_prefix and not p.startswith(prefix)}
+            if len(kept) == len(node_entry):
+                return
+            data[node_id] = kept
+            _atomic_write_json(self._model_files_file, data)
 
     def register_node(self, node: dict, snapshot: dict | None = None) -> None:
         with self._cluster_lock:

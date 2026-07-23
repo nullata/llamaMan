@@ -28,25 +28,30 @@ class ModelSourceTests(unittest.TestCase):
             downloads.update(self._saved_downloads)
 
     def test_record_model_source_persists_root_and_exact_model_path(self):
+        """Both the download root and the exact file are recorded, node-scoped.
+
+        Recorded against this node's rows rather than the shared settings blob:
+        a repo_id describes a file on one node's disk, and a single shared row
+        is what let two nodes disagree about the same path.
+        """
         storage = Mock()
+        root = "/models/Mistral-7B-Instruct-v0.3-Q4_K_M"
+        exact = f"{root}/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf"
+        repo = "bartowski/Mistral-7B-Instruct-v0.3-GGUF"
 
-        with patch("core.model_sources.get_storage", return_value=storage):
-            record_model_source(
-                "/models/Mistral-7B-Instruct-v0.3-Q4_K_M",
-                "bartowski/Mistral-7B-Instruct-v0.3-GGUF",
-                model_path="/models/Mistral-7B-Instruct-v0.3-Q4_K_M/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
-            )
+        with patch("core.model_sources.get_storage", return_value=storage), \
+             patch("core.model_sources._local_node_id", return_value="srv1"):
+            record_model_source(root, repo, model_path=exact)
 
-        storage.merge_settings.assert_called_once_with({
-            "model_sources": {
-                os.path.realpath("/models/Mistral-7B-Instruct-v0.3-Q4_K_M"): {
-                    "repo_id": "bartowski/Mistral-7B-Instruct-v0.3-GGUF",
-                },
-                os.path.realpath("/models/Mistral-7B-Instruct-v0.3-Q4_K_M/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf"): {
-                    "repo_id": "bartowski/Mistral-7B-Instruct-v0.3-GGUF",
-                },
-            }
-        })
+        self.assertEqual(
+            sorted(c.args[1] for c in storage.upsert_model_file.call_args_list),
+            sorted([os.path.realpath(root), os.path.realpath(exact)]),
+        )
+        for call in storage.upsert_model_file.call_args_list:
+            self.assertEqual(call.args[0], "srv1")
+            self.assertEqual(call.kwargs["repo_id"], repo)
+        # The legacy shared blob is no longer written.
+        storage.merge_settings.assert_not_called()
 
     def test_api_models_includes_repo_id_from_persisted_source_mapping(self):
         app = Flask(__name__)

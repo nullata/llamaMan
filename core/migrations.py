@@ -22,7 +22,7 @@ import logging
 logger = logging.getLogger("llamaman")
 
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 def _migrate_001_timestamps(storage) -> None:
@@ -41,10 +41,26 @@ def _migrate_003_node_scoped_state(storage) -> None:
     storage.apply_migration_003_node_scoped_state()
 
 
+def _migrate_004_adopt_model_files(storage) -> None:
+    """Move this node's model provenance/hashes out of the shared settings blob
+    into its own rows in `model_files`.
+
+    Per-node by nature, which is what the per-node schema version (see
+    StorageBackend.SCHEMA_VERSION_BY_NODE_KEY) exists to make possible: every
+    node runs this for itself when it upgrades, whenever that happens.
+    """
+    from core.model_sources import adopt_legacy_model_sources
+    adopted = adopt_legacy_model_sources()
+    if adopted:
+        logger.info("Migration 004: adopted %d model file record(s) for this node",
+                    adopted)
+
+
 MIGRATIONS = {
     1: _migrate_001_timestamps,
     2: _migrate_002_request_metrics,
     3: _migrate_003_node_scoped_state,
+    4: _migrate_004_adopt_model_files,
 }
 
 

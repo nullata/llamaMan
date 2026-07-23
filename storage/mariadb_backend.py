@@ -13,6 +13,7 @@ from sqlalchemy import (
     BigInteger, SmallInteger, DateTime, text, case,
 )
 from sqlalchemy.dialects.mysql import DATETIME as MYSQL_DATETIME, MEDIUMTEXT
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import declarative_base, scoped_session, sessionmaker
 
 from core.timeutil import now_utc, to_iso, parse_iso
@@ -55,6 +56,25 @@ class PresetRow(Base):
     __tablename__ = "presets"
     model_path = Column(String(768), primary_key=True)
     data = Column(Text, default="{}")
+
+
+class ModelFileRow(Base):
+    # New table - create_all() creates it on both fresh and existing installs,
+    # on every node at its own startup, so no schema migration is needed. That
+    # matters for a shared database: schema_version is a single cluster-wide
+    # value, so a migration run by the first node to upgrade is skipped by every
+    # node after it. Anything per-node must therefore NOT live in a migration.
+    #
+    # Column widths are constrained by InnoDB's 3072-byte index key limit
+    # (DYNAMIC row format), and the composite primary key must fit inside it:
+    # (64 + 700) chars * 4 bytes for utf8mb4 = 3056. Widening either column
+    # past that fails at CREATE TABLE. PresetRow's String(768) PK already sits
+    # exactly at the limit, so this deployment is necessarily DYNAMIC.
+    __tablename__ = "model_files"
+    node_id = Column(String(64), primary_key=True)
+    model_path = Column(String(700), primary_key=True)
+    repo_id = Column(String(255), default="")
+    sha256 = Column(String(64), default="")
 
 
 class UserRow(Base):
@@ -416,7 +436,9 @@ class MariaDBBackend(StorageBackend):
     def save_settings(self, settings: dict) -> None:
         session = self._session()
         try:
-            row = session.get(SettingsRow, "global")
+            # Locked for the same reason as merge_settings: a wholesale
+            # overwrite must not interleave with a concurrent merge.
+            row = session.get(SettingsRow, "global", with_for_update=True)
             if row:
                 row.data = json.dumps(settings)
             else:
@@ -429,22 +451,38 @@ class MariaDBBackend(StorageBackend):
             self._session_factory.remove()
 
     def merge_settings(self, patch: dict) -> dict:
-        session = self._session()
-        try:
-            row = session.get(SettingsRow, "global")
-            current = json.loads(row.data) if row else {}
-            merged = _merge_dicts(current, patch)
-            if row:
+        """Read-modify-write of the single shared settings row, serialized by a
+        row lock.
+
+        Without SELECT ... FOR UPDATE two writers both read the pre-merge value
+        and the second commit silently discards the first one's keys. That is
+        reachable from one node (32 gunicorn threads) and much more so from
+        several nodes sharing one database. The lock is held only for the few
+        statements below, so contention is negligible.
+        """
+        for _attempt in range(2):
+            session = self._session()
+            try:
+                row = session.get(SettingsRow, "global", with_for_update=True)
+                if row is None:
+                    # No row to lock yet. A concurrent creator makes this insert
+                    # fail on the primary key; the retry then finds and locks it.
+                    session.add(SettingsRow(key="global", data=json.dumps(patch)))
+                    session.commit()
+                    return dict(patch)
+                current = json.loads(row.data) if row.data else {}
+                merged = _merge_dicts(current, patch)
                 row.data = json.dumps(merged)
-            else:
-                session.add(SettingsRow(key="global", data=json.dumps(merged)))
-            session.commit()
-            return merged
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            self._session_factory.remove()
+                session.commit()
+                return merged
+            except IntegrityError:
+                session.rollback()
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                self._session_factory.remove()
+        raise RuntimeError("merge_settings: lost the settings row insert race twice")
 
     # -- API Keys --
 
@@ -535,6 +573,57 @@ class MariaDBBackend(StorageBackend):
         if age_us is not None:
             d["heartbeat_age_s"] = age_us / 1_000_000.0
         return d
+
+    # -- Per-node model file metadata --
+
+    def get_model_files(self, node_id: str) -> dict[str, dict]:
+        session = self._session()
+        try:
+            rows = session.query(ModelFileRow).filter(
+                ModelFileRow.node_id == node_id).all()
+            return {
+                r.model_path: {"repo_id": r.repo_id or "", "sha256": r.sha256 or ""}
+                for r in rows
+            }
+        finally:
+            self._session_factory.remove()
+
+    def upsert_model_file(self, node_id: str, model_path: str,
+                          repo_id: str = "", sha256: str = "") -> None:
+        session = self._session()
+        try:
+            row = session.get(ModelFileRow, (node_id, model_path))
+            if row is None:
+                row = ModelFileRow(node_id=node_id, model_path=model_path,
+                                   repo_id=repo_id or "", sha256=sha256 or "")
+                session.add(row)
+            else:
+                # Blank means "not supplied", so a hash stamp can't wipe repo_id.
+                if repo_id:
+                    row.repo_id = repo_id
+                if sha256:
+                    row.sha256 = sha256
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            self._session_factory.remove()
+
+    def delete_model_files(self, node_id: str, path_prefix: str) -> None:
+        session = self._session()
+        try:
+            session.query(ModelFileRow).filter(
+                ModelFileRow.node_id == node_id,
+                (ModelFileRow.model_path == path_prefix)
+                | (ModelFileRow.model_path.like(path_prefix.rstrip("/") + "/%")),
+            ).delete(synchronize_session=False)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            self._session_factory.remove()
 
     def register_node(self, node: dict, snapshot: dict | None = None) -> None:
         session = self._session()
