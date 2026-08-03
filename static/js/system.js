@@ -11,7 +11,7 @@ async function loadSystemInfo() {
     const card = document.getElementById('system-info-card');
     const container = document.getElementById('system-info-bars');
     if (!card || !container) return;
-    const res = await apiFetch('/api/system-info');
+    const res = await apiFetch('/api/system-info', pollOpts());
     const d = await res.json();
     if (d.error) return;
 
@@ -57,7 +57,7 @@ async function loadGpuInfo() {
     const card = document.getElementById('gpu-vram-card');
     const container = document.getElementById('gpu-vram-bars');
     if (!card || !container) return;
-    const res = await apiFetch('/api/gpu-info');
+    const res = await apiFetch('/api/gpu-info', pollOpts());
     const data = await res.json();
 
     if (!data.gpus || data.gpus.length === 0) {

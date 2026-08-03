@@ -93,7 +93,7 @@ if (downloadForm) downloadForm.addEventListener('submit', async (e) => {
 // -------------------------------------------------------------------------
 async function pollDownloads() {
   try {
-    const res = await apiFetch('/api/downloads');
+    const res = await apiFetch('/api/downloads', pollOpts());
     const list = await res.json();
     const prevDownloads = downloads;
     const map = {};

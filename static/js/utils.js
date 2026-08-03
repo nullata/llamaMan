@@ -180,6 +180,20 @@ async function apiFetch(url, opts) {
   return res;
 }
 
+// Deadline for polled requests. A fetch with no deadline waits essentially
+// forever, and each in-flight one holds one of the browser's ~6 connections per
+// origin; once a poller re-fires faster than its requests complete they pile up
+// until every other fetch on the page - the stats modal, the log viewer - is
+// queued behind them and never dispatched, with no error to catch. A request
+// that outlives its own poll interval is worthless anyway, so pollers give up.
+// Deliberately NOT applied inside apiFetch: user-initiated control actions
+// (image pulls, launches, restores) are allowed to take as long as they need.
+const POLL_TIMEOUT_MS = 10000;
+
+function pollOpts(ms = POLL_TIMEOUT_MS, opts) {
+  return { ...(opts || {}), signal: AbortSignal.timeout(ms) };
+}
+
 async function readApiResponse(res) {
   if (!res) return {};
   const contentType = res.headers.get('content-type') || '';

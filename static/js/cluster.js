@@ -33,7 +33,10 @@ function nodeStaleSeconds(n) {
 async function loadClusterNodes() {
   let data;
   try {
-    const res = await apiFetch('/api/cluster/nodes');
+    // Longer than the standard poll budget: this endpoint probes each peer's
+    // reachability inline (2s apiece, 15s cached), so a few peers legitimately
+    // take a couple of seconds on a cold cache.
+    const res = await apiFetch('/api/cluster/nodes', pollOpts(15000));
     if (!res) return;
     data = await res.json();
   } catch (e) {

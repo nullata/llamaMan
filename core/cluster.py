@@ -124,7 +124,8 @@ def verify_cluster_secret(token: str) -> bool:
     return secrets.compare_digest(token, config.CLUSTER_SECRET)
 
 
-def cluster_request(node: dict, method: str, path: str, *, timeout: float = 10, **kwargs):
+def cluster_request(node: dict, method: str, path: str, *,
+                    timeout: float | tuple[float, float] = (3, 10), **kwargs):
     """Make an authenticated node-to-node HTTP call to a peer.
 
     `node` is a registry dict carrying `advertise_url`; `path` is an absolute
@@ -132,6 +133,14 @@ def cluster_request(node: dict, method: str, path: str, *, timeout: float = 10, 
     trust); any caller-supplied Authorization (e.g. the client's API key being
     forwarded on inference dispatch) is preserved untouched. Returns the
     requests.Response; raises on transport failure so callers handle peer-down.
+
+    `timeout` defaults to a (connect, read) pair rather than a scalar. A scalar
+    applies the same budget to both, so a generous read allowance silently buys
+    an equally generous wait for a peer that will never answer - and a peer can
+    look alive (recent heartbeat in the shared DB) while being unreachable over
+    HTTP from here. Connect is only a TCP handshake against a listener that is
+    up regardless of what it is doing, so it deserves a much tighter bound.
+    Callers needing a long read (inference forwarding) pass their own pair.
     """
     base = (node.get("advertise_url") or "").rstrip("/")
     if not base:

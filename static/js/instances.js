@@ -6,7 +6,7 @@
 
 async function pollInstances() {
   try {
-    const res = await apiFetch('/api/instances');
+    const res = await apiFetch('/api/instances', pollOpts());
     const list = await res.json();
     const map = {};
     const cs = window.clusterState;
@@ -30,13 +30,78 @@ async function pollInstances() {
     }
 
     instances = map;
+    noteReadyTransitions(map);
     renderInstances();
   } catch (e) { /* ignore */ }
 }
 
+// -------------------------------------------------------------------------
+// "Model ready" tab-title notification
+// -------------------------------------------------------------------------
+// Loading a model is the one long, unpredictable wait in this UI, and you spend
+// it in another tab. A glyph in the title shows up in the tab strip, needs no
+// permission prompt and no setting - it clears itself the moment you look at the
+// page. Browsers truncate tab titles hard once you have a few open, so the glyph
+// and count lead; the model name is deliberately omitted because it would be the
+// first thing cut. Only fires while the tab is hidden: if you're already looking
+// at the page, the card's own status badge said it first.
+const _baseTitle = document.title;
+let _prevInstStatus = {};    // id -> last seen status
+let _readyWhileHidden = 0;
+let _seeded = false;         // first poll after load only records, never announces
+
+function updateReadyTitle() {
+  document.title = _readyWhileHidden > 0
+    ? `●${_readyWhileHidden > 1 ? _readyWhileHidden : ''} ${_baseTitle}`
+    : _baseTitle;
+}
+
+// Two ways to qualify as "just became ready":
+//   1. We watched it flip: a known id goes non-healthy -> healthy.
+//   2. It showed up already healthy, but only just started.
+// Case 2 exists because we frequently never see the `starting` phase at all: a
+// peer's instances reach us through its heartbeat snapshot (5-15s behind) and
+// browsers throttle timers in hidden tabs, which is exactly when this feature
+// matters. Without it, a model launched on another node usually announces
+// nothing. The freshness bound is what keeps case 2 honest - a peer returning
+// from offline re-introduces all its ids as "new", but those instances started
+// long ago, so they stay silent. The very first poll after a page load is
+// covered by the same bound for anything older than the window, and by the
+// _seeded guard for anything inside it.
+const _READY_FRESH_S = 300;
+
+function noteReadyTransitions(map) {
+  const next = {};
+  let becameReady = 0;
+  const nowS = Date.now() / 1000;
+  Object.values(map).forEach(i => {
+    next[i.id] = i.status;
+    const prev = _prevInstStatus[i.id];
+    if (i.status !== 'healthy') return;
+    if (prev) {
+      if (prev !== 'healthy') becameReady++;
+    } else if (_seeded && i.started_at && (nowS - i.started_at) < _READY_FRESH_S) {
+      becameReady++;
+    }
+  });
+  _prevInstStatus = next;
+  _seeded = true;
+  if (becameReady > 0 && document.visibilityState === 'hidden') {
+    _readyWhileHidden += becameReady;
+    updateReadyTitle();
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    _readyWhileHidden = 0;
+    updateReadyTitle();
+  }
+});
+
 async function pollContainerStats() {
   try {
-    const res = await apiFetch('/api/instances/container-stats');
+    const res = await apiFetch('/api/instances/container-stats', pollOpts());
     const local = (res && res.ok) ? await res.json() : {};
 
     // Cluster: a peer's running-instance resource bars need that peer's live
@@ -47,12 +112,25 @@ async function pollContainerStats() {
     // throttled refreshes so remote bars don't blink out in between.
     const cs = window.clusterState;
     if (cs && cs.enabled && typeof nodeFetch === 'function') {
-      if (_peerStatsTick++ % 3 === 0) {  // ~every 9s
-        const peers = (cs.nodes || []).filter(n => n.node_id !== cs.self_id && n.online);
+      // Nothing to look at while the tab is hidden, so don't make peers serve
+      // it. (Browsers already throttle background timers, so this mostly stops
+      // the backlog that would otherwise fire the instant you tab back.) Stats
+      // are left in place rather than cleared so the bars don't blink on return.
+      const hidden = document.visibilityState === 'hidden';
+      if (!hidden && _peerStatsTick++ % 3 === 0) {  // ~every 9s
+        // `online` only means "heartbeated into the shared DB recently" - it is
+        // NOT reachability, and a peer can do that while being unreachable over
+        // HTTP from here (see probe_peer_reachable in api/cluster.py). Polling
+        // those was self-inflicted damage: each call hung, and enough hung calls
+        // exhausted the browser's per-origin connections and froze the page.
+        // `reachable` is the probe the server already ran for us on this payload.
+        const peers = (cs.nodes || []).filter(
+          n => n.node_id !== cs.self_id && n.online && n.reachable);
         const next = {};
         await Promise.all(peers.map(async (n) => {
           try {
-            const r = await nodeFetch(n.node_id, '/api/instances/container-stats');
+            const r = await nodeFetch(n.node_id, '/api/instances/container-stats',
+                                      pollOpts());
             if (r && r.ok) Object.assign(next, await r.json());
           } catch (e) { /* one peer failing must not blank the others */ }
         }));

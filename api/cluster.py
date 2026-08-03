@@ -253,9 +253,18 @@ def api_cluster_proxy(node_id, subpath):
         headers["Content-Type"] = content_type
 
     try:
+        # (connect, read), NOT a scalar. A scalar 60 also means "wait 60s to
+        # connect", so a peer that heartbeats into the shared DB while being
+        # unreachable over HTTP held this thread - and one of the browser's ~6
+        # connections per origin - for a full minute per call. The dashboard
+        # polls peers every ~9s, so those stacked up until every later fetch on
+        # the page queued behind them and the stats/logs modals span forever.
+        # 3s is far more than a LAN/tunnel peer needs to complete a TCP
+        # handshake; the 60s read budget is untouched, so slow-but-alive control
+        # ops (image pulls) still get their minute.
         resp = cl.cluster_request(
             node, request.method, target_path,
-            data=request.get_data(), headers=headers, timeout=60,
+            data=request.get_data(), headers=headers, timeout=(3, 60),
         )
     except Exception as e:
         return jsonify({"error": f"peer node '{node.get('node_name') or node_id}' unreachable: {e}"}), 502
@@ -538,8 +547,18 @@ def _forward_inference(node: dict, path: str, body: bytes, content_type: str | N
     # burst funnels onto it (self load, by contrast, rises instantly in-process).
     _inflight_inc(nid)
     try:
+        # (connect, read). The read half keeps the full REQUEST_TIMEOUT: it has
+        # to cover the peer loading the model on demand plus its time to first
+        # token. Connect is only the TCP handshake with the peer's gunicorn,
+        # which is listening regardless of model state - as a scalar it silently
+        # inherited the same 300s, so an unreachable peer pinned a thread here
+        # for five minutes before we gave up and tried elsewhere. A ConnectTimeout
+        # is not a ReadTimeout, so it falls through to the generic handler below
+        # and correctly reads as "peer never accepted it, try another node".
+        # 5s (not 3) because a dropped SYN over a VPN link retransmits at ~1s
+        # then ~3s, and a false negative here needlessly relocates real work.
         resp = cl.cluster_request(node, "POST", path, data=body, headers=headers,
-                                  stream=True, timeout=REQUEST_TIMEOUT)
+                                  stream=True, timeout=(5, REQUEST_TIMEOUT))
     except _requests.ReadTimeout as e:
         # Peer accepted the request and is still working on it; we just gave up
         # waiting. Falling back to local would re-process the same prompt while

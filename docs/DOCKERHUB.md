@@ -210,7 +210,7 @@ networks:
 | `DATABASE_URL` | *(unset)* | MariaDB/MySQL connection string (e.g. `mysql+pymysql://user:pass@host/db`). Unset = JSON file storage. |
 | `HEALTH_CHECK_TIMEOUT` | `3` | Timeout in seconds for instance health checks. |
 | `MODEL_LOAD_TIMEOUT` | `300` | Seconds to wait for a model to become healthy during launch/relaunch. Increase for very large models. |
-| `REQUEST_TIMEOUT` | `300` | Timeout in seconds for upstream requests to llama-server and gate acquire waits. |
+| `REQUEST_TIMEOUT` | `300` | **Read** timeout in seconds for upstream requests to llama-server, for cross-node inference forwarding, and for gate acquire waits. On the forwarding path it covers the peer loading the model on demand plus its time to first token. It does **not** govern how long a node waits for a peer to accept the connection - that is a separate 5s connect bound - so raising this will not help against an unreachable peer. |
 | `CLUSTER_ENABLED` | `false` | Set `true`/`1`/`yes`/`on` to join this node to a cluster. Requires `CLUSTER_SECRET` and a shared `DATABASE_URL`. See [Clustering](#clustering). |
 | `CLUSTER_SECRET` | *(unset)* | Shared bearer secret sent on every node-to-node call (`X-Cluster-Secret`). Must be identical on every node. Use a long random value over a trusted network or behind TLS. |
 | `CLUSTER_ADVERTISE_URL` | *(unset)* | How peers reach **this** node's UI/API - a hostname/IP routable from the other hosts (e.g. `http://srv1:5000`), not `localhost`. Needed for cross-node actions and shared-queue inference forwarding; a node without it is view-only and skipped as an inference target. |
