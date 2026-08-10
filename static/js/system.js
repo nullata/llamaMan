@@ -497,6 +497,15 @@ if (recordingRetentionInput) {
   recordingRetentionInput.addEventListener('change', saveAppSettings);
 }
 
+// Without this the checkbox is write-only: saveAppSettings() reads it into the
+// payload, but nothing ever triggered the save, so ticking it sent no request
+// at all - and loadStorageStatus() then reset it from the effective state a few
+// seconds later, which looks exactly like the save failing.
+const dbMirrorEnabledToggle = document.getElementById('s-db-mirror-enabled');
+if (dbMirrorEnabledToggle) {
+  dbMirrorEnabledToggle.addEventListener('change', saveAppSettings);
+}
+
 const downloadModelsJsonBtn = document.getElementById('btn-download-models-json');
 if (downloadModelsJsonBtn) {
   downloadModelsJsonBtn.addEventListener('click', downloadStoredModelsJson);
