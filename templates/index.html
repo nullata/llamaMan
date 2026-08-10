@@ -27,9 +27,14 @@
     </nav>
   </header>
 
+  <!-- Shown whenever /api/gpu-info returns no GPUs, which covers both "there is
+       no GPU" and "there is one but this container can't read it" - so the copy
+       must not assume the first and send someone to CPU-only for no reason. -->
   <div id="gpu-warning" hidden>
-    <i class="fa-solid fa-triangle-exclamation"></i> No GPU detected. Set GPU Layers to 0 to run fully on CPU, or a
-    partial number to offload what fits in VRAM.
+    <i class="fa-solid fa-triangle-exclamation"></i> No GPU data. Either this host has no GPU, or llamaman can't read
+    it &mdash; mount <code>/sys/class/drm:ro</code> (AMD/Intel) or grant the NVIDIA Container Toolkit
+    <code>utility</code> capability. A GPU llamaman can't read still works for inference; if there genuinely isn't
+    one, set GPU Layers to 0 to run fully on CPU.
   </div>
 
   <div class="layout">
