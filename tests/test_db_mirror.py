@@ -585,6 +585,53 @@ class ToggleTests(ResilientTestCase):
         self.assertIsNotNone(backend._probe_thread,
                              "nothing else would ever start recovery")
 
+    def test_merge_that_enables_the_mirror_takes_effect_immediately(self):
+        """The write that switches mirroring ON arrives while the wrapper is
+        still in pass-through, so pass-through has to re-resolve the toggle. It
+        used to return early instead: the setting reached the database but the
+        wrapper stayed off until a restart, and the UI - which drives its
+        checkbox from the effective state - just unchecked the box again."""
+        backend = self.make(enabled=False)
+
+        merged = backend.merge_settings(self._patch(True))
+
+        self.assertTrue(merged["nodes"][NODE]["db_mirror_enabled"],
+                        "the setting must still reach the database")
+        self.assertTrue(backend.mirror_enabled(),
+                        "and must take effect without a restart")
+        self.assertTrue(backend.status()["mirror_enabled"],
+                        "status() is what the UI reads back")
+
+    def test_enabling_via_merge_seeds_the_mirror(self):
+        """Enabling through a merge must seed like any other enable - otherwise
+        the directory holds nothing but the owner marker until the daily sync."""
+        import threading as _t
+        backend = self.make(enabled=False)
+        self.primary.save_preset("/models/peer.gguf", {"ctx_size": 512})
+
+        done = _t.Event()
+        real = backend.refresh_mirror
+        backend.refresh_mirror = lambda: (real(), done.set())[0]
+
+        backend.merge_settings(self._patch(True))
+
+        self.assertTrue(done.wait(5), "an initial sync should have been kicked off")
+        self.assertEqual(self.mirror.get_preset("/models/peer.gguf")["ctx_size"], 512)
+
+    def test_unrelated_merge_in_pass_through_does_not_enable_anything(self):
+        """The re-resolve must not make pass-through mirror-curious: a settings
+        write that says nothing about the toggle leaves it exactly as it was."""
+        backend = self.make(enabled=False)
+        before = list(self.primary.calls)
+
+        backend.merge_settings({"require_auth": False})
+
+        self.assertFalse(backend.mirror_enabled())
+        self.assertEqual(self.mirror.get_settings(), {},
+                         "pass-through must still do zero mirror I/O")
+        self.assertEqual(self.primary.calls[len(before):], ["merge_settings"],
+                         "and exactly one primary call, as before")
+
 
 class JournalDurabilityTests(ResilientTestCase):
     def test_a_write_is_refused_when_it_cannot_be_journalled(self):

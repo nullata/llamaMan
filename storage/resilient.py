@@ -724,7 +724,15 @@ class ResilientBackend(StorageBackend):
 
     def merge_settings(self, patch: dict) -> dict:
         if not self._enabled:
-            return self._primary.merge_settings(patch)
+            merged = self._primary.merge_settings(patch)
+            # The patch that switches mirroring ON necessarily arrives while we
+            # are still in pass-through, so this is the one write that has to
+            # re-resolve the toggle itself - otherwise enabling it persists to
+            # the database but cannot take effect until the next restart, and
+            # the UI (which drives the checkbox from the effective state) just
+            # unchecks the box again on its next poll.
+            self.resolve_enabled(merged)
+            return merged
         try:
             merged = self._primary_call("merge_settings", patch)
         except _PrimaryDown:
