@@ -64,6 +64,20 @@ def create_app() -> Flask:
 
     auth.init_auth(application)
 
+    # One handler covers every blueprint, so no route needs to know the storage
+    # backend can be degraded. Raised only by the writes that cannot be replayed
+    # safely against a shared database (see storage/resilient.py).
+    from storage.resilient import StorageDegradedError
+
+    @application.errorhandler(StorageDegradedError)
+    def _storage_degraded(err):
+        logger.warning("Rejected write while database offline: %s", err)
+        return jsonify({
+            "error": "Database offline - this change cannot be saved right now.",
+            "detail": str(err),
+            "degraded": True,
+        }), 503
+
     @application.route("/")
     def index():
         resp = make_response(render_template("index.html"))
@@ -90,7 +104,16 @@ def create_app() -> Flask:
 # Run any pending schema migrations before anything reads timestamp-affected
 # tables. Aborts startup on failure - serving traffic on a half-migrated
 # schema is worse than a hard crash that surfaces in logs.
-run_pending_migrations(get_storage())
+#
+# Skipped when storage booted degraded (database unreachable, serving from the
+# local mirror): there is no schema to migrate from here, and the mirror's copy
+# of the recorded version can be ahead of what this node has actually applied.
+# The reconnect path re-runs them against the real backend before it resumes.
+_storage = get_storage()
+if _storage.is_degraded():
+    logger.warning("Storage is degraded at startup - deferring schema migrations")
+else:
+    run_pending_migrations(_storage)
 
 # Load persisted state (instances, downloads) and collect proxies to restore
 _deferred_proxies = load_state()

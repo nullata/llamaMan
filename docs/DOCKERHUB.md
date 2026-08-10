@@ -29,6 +29,7 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Require auth toggle** - enforce bearer token authentication on all endpoints (including model loading) or leave model endpoints open
 - **Persistent state** - instance history and configs survive container restarts
 - **Storage backends** - JSON files (default) or MariaDB/MySQL via SQLAlchemy
+- **Database outage survival** *(optional)* - with a database backend, keep a write-through mirror on local disk so the node keeps serving inference, launching models, and saving presets/API keys/settings if the database goes away - including across a container restart, which otherwise can't boot at all. Offline changes are journalled and synced back automatically when the database returns. Off by default
 - **Multi-node clustering** *(optional)* - run several instances as one cluster sharing a database and a secret: aggregated dashboard, cross-node launches/pulls/downloads, and multi-node shared-queue load balancing. Off by default; single-node installs are unaffected.
 - **Proxy sampling overrides** - force temperature, top-k, top-p, presence penalty, and repeat penalty on all proxied requests, configurable per model preset
 - **CPU quota + memory limit** - CPU Threads also applies a Docker CPU quota; a Memory Limit field caps container RAM
@@ -208,6 +209,7 @@ networks:
 | `SECRET_KEY` | *(auto)* | Flask session secret. Auto-derived from machine-id if unset. |
 | `SESSION_COOKIE_NAME` | `llamaman_session` | Name of the session cookie. Namespaced so llamaman coexists with other Flask apps on the same host - cookies are scoped by host+path, not port, so two apps both using Flask's default `session` name would log each other's users out. |
 | `DATABASE_URL` | *(unset)* | MariaDB/MySQL connection string (e.g. `mysql+pymysql://user:pass@host/db`). Unset = JSON file storage. |
+| `LLAMAMAN_DB_MIRROR` | *(unset)* | Force the local database mirror on (`1`) or off (`0`), overriding the per-node setting. Only meaningful with `DATABASE_URL`. |
 | `HEALTH_CHECK_TIMEOUT` | `3` | Timeout in seconds for instance health checks. |
 | `MODEL_LOAD_TIMEOUT` | `300` | Seconds to wait for a model to become healthy during launch/relaunch. Increase for very large models. |
 | `REQUEST_TIMEOUT` | `300` | **Read** timeout in seconds for upstream requests to llama-server, for cross-node inference forwarding, and for gate acquire waits. On the forwarding path it covers the peer loading the model on demand plus its time to first token. It does **not** govern how long a node waits for a peer to accept the connection - that is a separate 5s connect bound - so raising this will not help against an unreachable peer. |
@@ -316,6 +318,21 @@ DATABASE_URL=mysql+pymysql://llamaman:yourpassword@host:3306/llamaman
 Tables are auto-created on first connection.
 
 Per-node model metadata (a file's source repo and content hash) lives in a node-scoped `model_files` table keyed `(node_id, model_path)`, created on each node's boot, so nodes holding different files at the same path don't collide. Its composite key is 3056 of InnoDB's 3072 index bytes under utf8mb4, so the table is created with `ROW_FORMAT=DYNAMIC`.
+
+### Surviving a database outage (local mirror)
+
+*Optional, off by default.*
+
+With `DATABASE_URL` set, the database sits on the critical path of every request, so an outage stops the node serving - and a container restart mid-outage cannot boot at all.
+
+Enable **Settings → App settings → "Keep a local mirror of the database"** (or set `LLAMAMAN_DB_MIRROR=1`) to keep a write-through copy in `DATA_DIR/db_mirror/`. If the database goes away, the node keeps serving inference and still lets you launch models, create and edit presets, create or revoke API keys, change settings, and manage Hugging Face tokens; those changes are journalled and replayed in order when the database returns (probed every 10s). Only first-user setup (`/setup`) is blocked, which only matters on a brand-new install.
+
+Caveats worth knowing before enabling:
+
+- `DATA_DIR` must be a persistent volume, and **each node needs its own** - the mirror directory is stamped with its owning node id.
+- Settings are mirrored verbatim, so **Hugging Face tokens land on local disk in plaintext**.
+- Cross-node balancing stops during an outage (peer liveness lives in the database), and an API key revoked offline stays valid on other nodes until reconnect.
+- Request-log records are dropped rather than buffered while offline.
 
 ## Clustering
 

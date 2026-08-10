@@ -58,17 +58,13 @@ DEFAULT_RECORDING_RETENTION_DAYS = 30
 DEFAULT_CLUSTER_HIDE_OFFLINE_MONITORING = False
 
 
+HF_TOKENS_KEY = "huggingface_tokens"
+
+
 def _get_hf_tokens() -> list[dict]:
     settings = get_storage().get_settings()
-    tokens = settings.get("huggingface_tokens", [])
+    tokens = settings.get(HF_TOKENS_KEY, [])
     return [t for t in tokens if isinstance(t, dict) and t.get("id")]
-
-
-def _save_hf_tokens(tokens: list[dict]) -> None:
-    storage = get_storage()
-    settings = storage.get_settings()
-    settings["huggingface_tokens"] = tokens
-    storage.save_settings(settings)
 
 
 def _mask_hf_token(token: str) -> str:
@@ -220,7 +216,7 @@ def _sanitize_settings(settings: dict) -> dict:
     # Surface the local node's value for per-node keys the UI reads from here
     # (the eviction toggles); never leak the raw per-node namespace.
     for key in ("admin_ui_enforce_max_models", "allow_ollama_api_override_admin",
-                "allow_openai_api_override_admin"):
+                "allow_openai_api_override_admin", "db_mirror_enabled"):
         safe[key] = bool(effective_from_settings(settings, key, safe.get(key, False)))
     safe.pop("nodes", None)
     return safe
@@ -266,23 +262,22 @@ def create_huggingface_token():
     if not token:
         return jsonify({"error": "token is required"}), 400
 
-    tokens = _get_hf_tokens()
     entry = {
         "id": uuid.uuid4().hex,
         "name": name,
         "token": token,
         "created_at": int(time.time()),
     }
-    tokens.append(entry)
-    _save_hf_tokens(tokens)
+    # Atomic add rather than read-modify-write of the whole settings blob: the
+    # old version could drop any key another writer changed in between, which on
+    # a shared database means any other node's settings edit.
+    get_storage().edit_settings_list(HF_TOKENS_KEY, add=[entry])
     return jsonify(serialize_hf_token(entry)), 201
 
 
 @bp.route("/api/settings/huggingface-tokens/<token_id>", methods=["DELETE"])
 def delete_huggingface_token(token_id):
-    tokens = _get_hf_tokens()
-    kept = [token for token in tokens if token.get("id") != token_id]
-    if len(kept) == len(tokens):
+    if not any(token.get("id") == token_id for token in _get_hf_tokens()):
         return jsonify({"error": "Not found"}), 404
-    _save_hf_tokens(kept)
+    get_storage().edit_settings_list(HF_TOKENS_KEY, remove_ids=[token_id])
     return jsonify({"ok": True})

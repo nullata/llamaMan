@@ -129,6 +129,30 @@ def api_system_info():
         return jsonify({"error": str(e)}), 500
 
 
+@bp.route("/api/storage-status")
+def api_storage_status():
+    """Whether storage is healthy or serving from the local mirror.
+
+    Its own endpoint rather than a field on /api/system-info: that payload feeds
+    the cluster heartbeat snapshot, and this is strictly local UI state. Polled
+    independently so the degraded banner shows up in cluster mode too, where
+    loadSystemInfo() bails out early.
+    """
+    from storage import get_storage
+    storage = get_storage()
+    status = getattr(storage, "status", None)
+    if status is None:
+        return jsonify({
+            "backend": "json",
+            "mirror_enabled": False,
+            "degraded": False,
+        })
+    try:
+        return jsonify(status())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 def _get_running_llama_container():
     """Return the first running llama-server container, or None."""
     from core.helpers import list_llama_containers

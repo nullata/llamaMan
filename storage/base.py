@@ -1,6 +1,7 @@
 # Copyright (c) llamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
 from abc import ABC, abstractmethod
+from copy import deepcopy
 
 
 class StorageBackend(ABC):
@@ -10,6 +11,12 @@ class StorageBackend(ABC):
       - JsonBackend (default): stores data in JSON files, zero dependencies
       - MariaDBBackend (optional): stores data in MariaDB, enabled via DATABASE_URL
     """
+
+    def is_degraded(self) -> bool:
+        """True when the backend is serving from a local fallback because its
+        real store is unreachable. Only ResilientBackend ever returns True; the
+        default lets any caller ask any backend without a type check."""
+        return False
 
     # -- Instances & Downloads (state) --
 
@@ -87,6 +94,55 @@ class StorageBackend(ABC):
     def merge_settings(self, patch: dict) -> dict:
         """Recursively merge a partial settings patch and return the updated settings."""
         ...
+
+    @abstractmethod
+    def edit_settings_list(self, key: str, *, add: list[dict] | None = None,
+                           remove_ids: list[str] | None = None) -> list[dict]:
+        """Add and/or remove entries of a list-valued settings key, atomically.
+
+        Entries are dicts carrying a unique "id"; an addition replaces any
+        existing entry with the same id. Removals happen before additions.
+        Returns the resulting list.
+
+        Exists for the same reason as upsert_model_file: settings are ONE shared
+        row updated by read-modify-write, so doing the read, the edit and the
+        write in the caller loses concurrent changes - both from other threads
+        and, on a shared database, from other nodes. Here the whole cycle runs
+        under the backend's own lock.
+
+        Expressing the *edit* rather than the resulting list also matters when a
+        node is running offline against a local mirror: replaying "add this
+        entry" merges with whatever peers did during the outage, where replaying
+        a whole list would silently drop their additions.
+        """
+        ...
+
+    @abstractmethod
+    def replace_settings_key(self, key: str, value) -> None:
+        """Atomically set ONE settings key, leaving every other key untouched.
+
+        merge_settings cannot express this for dict-valued keys: it deep-merges,
+        so keys the caller intends to REMOVE survive. The alternative callers
+        used to reach for - get_settings(), mutate, save_settings() - rewrites
+        the whole blob and drops anything another writer changed in between,
+        which on a shared database means any other node's settings edit.
+        """
+        ...
+
+    @staticmethod
+    def _apply_list_edit(current, add=None, remove_ids=None) -> list[dict]:
+        """Shared semantics for edit_settings_list. Both backends use this so
+        the two implementations cannot drift."""
+        entries = [e for e in (current or []) if isinstance(e, dict) and e.get("id")]
+        if remove_ids:
+            drop = set(remove_ids)
+            entries = [e for e in entries if e.get("id") not in drop]
+        for entry in (add or []):
+            if not isinstance(entry, dict) or not entry.get("id"):
+                continue
+            entries = [e for e in entries if e.get("id") != entry["id"]]
+            entries.append(deepcopy(entry))
+        return entries
 
     # -- API Keys --
 

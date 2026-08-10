@@ -39,6 +39,9 @@ setInterval(loadSystemInfo, 10000);
 // GPU VRAM refresh (every 10s)
 setInterval(loadGpuInfo, 10000);
 
+// Storage health / degraded banner (every 10s). Runs in cluster mode too.
+setInterval(loadStorageStatus, 10000);
+
 // Cleanup metadata refresh (every 60s)
 setInterval(refreshCleanupLastRan, 60000);
 
@@ -53,6 +56,7 @@ loadModels();
 if (typeof loadClusterNodes === 'function') loadClusterNodes();
 loadSystemInfo();
 loadGpuInfo();
+loadStorageStatus();
 pollInstances().then(() => { updatePortSuggestion(); pollContainerStats(); });
 
 const params = new URLSearchParams(window.location.search);

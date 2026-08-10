@@ -2401,3 +2401,34 @@ body.login-page {
     order: -1;
   }
 }
+
+/* Storage degraded banner - shown while the database is unreachable and this
+   node is serving from its local mirror. */
+.storage-degraded-banner {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--yellow);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: rgba(245, 158, 11, 0.08);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.storage-degraded-banner[hidden] {
+  display: none;
+}
+
+.storage-degraded-banner i {
+  color: var(--yellow);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.storage-degraded-banner strong {
+  color: var(--yellow);
+}

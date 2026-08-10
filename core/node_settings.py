@@ -21,6 +21,9 @@ NODE_SCOPED_KEYS = (
     "admin_ui_enforce_max_models",
     "allow_ollama_api_override_admin",
     "allow_openai_api_override_admin",
+    # Whether this host keeps a local mirror of the database. Per-node because
+    # having usable local disk is a property of the host, not of the cluster.
+    "db_mirror_enabled",
 )
 
 

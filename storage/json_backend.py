@@ -299,6 +299,31 @@ class JsonBackend(StorageBackend):
             _atomic_write_json(self._settings_file, merged)
             return merged
 
+    def edit_settings_list(self, key: str, *, add: list[dict] | None = None,
+                           remove_ids: list[str] | None = None) -> list[dict]:
+        # Whole read-modify-write inside the settings lock, so a concurrent
+        # merge_settings can't read the pre-edit blob and write it back.
+        with self._settings_lock:
+            try:
+                with open(self._settings_file, "r") as f:
+                    current = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                current = {}
+            updated = self._apply_list_edit(current.get(key), add, remove_ids)
+            current[key] = updated
+            _atomic_write_json(self._settings_file, current)
+            return updated
+
+    def replace_settings_key(self, key: str, value) -> None:
+        with self._settings_lock:
+            try:
+                with open(self._settings_file, "r") as f:
+                    current = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                current = {}
+            current[key] = deepcopy(value)
+            _atomic_write_json(self._settings_file, current)
+
     # -- API Keys --
 
     @staticmethod

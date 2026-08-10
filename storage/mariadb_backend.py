@@ -484,6 +484,60 @@ class MariaDBBackend(StorageBackend):
                 self._session_factory.remove()
         raise RuntimeError("merge_settings: lost the settings row insert race twice")
 
+    def edit_settings_list(self, key: str, *, add: list[dict] | None = None,
+                           remove_ids: list[str] | None = None) -> list[dict]:
+        """Same row lock as merge_settings, for the same reason - the read, the
+        list edit and the write all happen inside it, so two nodes adding
+        entries concurrently can't drop each other's."""
+        for _attempt in range(2):
+            session = self._session()
+            try:
+                row = session.get(SettingsRow, "global", with_for_update=True)
+                if row is None:
+                    updated = self._apply_list_edit(None, add, remove_ids)
+                    session.add(SettingsRow(key="global",
+                                            data=json.dumps({key: updated})))
+                    session.commit()
+                    return updated
+                current = json.loads(row.data) if row.data else {}
+                updated = self._apply_list_edit(current.get(key), add, remove_ids)
+                current[key] = updated
+                row.data = json.dumps(current)
+                session.commit()
+                return updated
+            except IntegrityError:
+                session.rollback()
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                self._session_factory.remove()
+        raise RuntimeError("edit_settings_list: lost the settings row insert race twice")
+
+    def replace_settings_key(self, key: str, value) -> None:
+        for _attempt in range(2):
+            session = self._session()
+            try:
+                row = session.get(SettingsRow, "global", with_for_update=True)
+                if row is None:
+                    session.add(SettingsRow(key="global",
+                                            data=json.dumps({key: value})))
+                    session.commit()
+                    return
+                current = json.loads(row.data) if row.data else {}
+                current[key] = value
+                row.data = json.dumps(current)
+                session.commit()
+                return
+            except IntegrityError:
+                session.rollback()
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                self._session_factory.remove()
+        raise RuntimeError("replace_settings_key: lost the settings row insert race twice")
+
     # -- API Keys --
 
     @staticmethod

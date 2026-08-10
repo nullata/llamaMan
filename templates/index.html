@@ -64,6 +64,10 @@
     <!-- Main -->
     <main class="main">
 
+      <!-- Storage degraded banner (shown only while the database is unreachable
+           and this node is serving from its local mirror) -->
+      <div id="storage-degraded-banner" class="storage-degraded-banner" hidden role="status"></div>
+
       <!-- Settings -->
       <div class="card tabbed-card" data-tab-group="settings" data-default-tab="launch"
         data-active-tab="launch">
@@ -501,6 +505,17 @@
                 <label class="toggle-switch" for="s-allow-openai-override-admin"
                   aria-label="Allow OpenAI API to evict admin-launched models">
                   <input id="s-allow-openai-override-admin" type="checkbox" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="form-group cleanup-toggle-grid" id="db-mirror-row" hidden>
+                <span class="label-row">
+                  <label for="s-db-mirror-enabled">Keep a local mirror of the database</label>
+                  <span class="info-tip" tabindex="0" role="button" aria-label="Local database mirror help" data-tip="Mirrors the database into this node's DATA_DIR so it keeps working if the database becomes unreachable - inference, launches, presets and API keys all keep working, and offline changes sync back on reconnect. Requires a persistent DATA_DIR volume. Note: settings are mirrored verbatim, and Hugging Face tokens are stored there in plaintext."><i class="fa-solid fa-circle-info"></i></span>
+                </span>
+                <label class="toggle-switch" for="s-db-mirror-enabled"
+                  aria-label="Keep a local mirror of the database">
+                  <input id="s-db-mirror-enabled" type="checkbox" />
                   <span class="toggle-slider"></span>
                 </label>
               </div>

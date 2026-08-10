@@ -31,6 +31,13 @@ _IMAGE_CHECK_INTERVAL = 3600  # check hourly whether auto-update is due
 _last_request_log_prune_at: float = 0.0
 _REQUEST_LOG_PRUNE_INTERVAL = 3600  # prune request_log once per hour
 
+# Full pull of the shared tables into the local DB mirror. Write-through keeps
+# the mirror seconds-fresh for rows THIS node writes, but it cannot see rows
+# written by other cluster nodes - that is the only thing this pass is for, so
+# once a day is plenty.
+_last_db_mirror_sync_at: float = 0.0
+_DB_MIRROR_SYNC_INTERVAL = 86400
+
 # Opt-in model update scan; its interval comes from settings, not a constant.
 _last_update_scan_at: float = 0.0
 
@@ -106,7 +113,9 @@ def _run_cleanup() -> None:
 
     if changed:
         save_state()
-    if cleanup_patch:
+    # Bookkeeping only. Skipped while the database is offline so an outage
+    # doesn't append a worthless journal entry every cleanup pass.
+    if cleanup_patch and not storage.is_degraded():
         storage.merge_settings({"cleanup": cleanup_patch})
 
 
@@ -185,7 +194,8 @@ def _run_stale_record_cleanup() -> None:
 
     if changed:
         save_state()
-    storage.merge_settings({"cleanup": {"stale_records_last_run_at": now}})
+    if not storage.is_degraded():
+        storage.merge_settings({"cleanup": {"stale_records_last_run_at": now}})
 
 
 def _get_failed_download_retry_settings() -> tuple[bool, int]:
@@ -295,6 +305,20 @@ def _run_update_scan():
         logger.warning("Model update scan error: %s", e)
 
 
+def _run_db_mirror_sync():
+    """Refresh the local mirror from the database. No-op unless the storage
+    backend is the resilient wrapper with mirroring switched on."""
+    from storage import get_storage
+    storage = get_storage()
+    refresh = getattr(storage, "refresh_mirror", None)
+    if refresh is None:
+        return
+    try:
+        refresh()
+    except Exception as e:
+        logger.warning("db mirror sync error: %s", e)
+
+
 def _prune_request_log():
     from storage import get_storage
     storage = get_storage()
@@ -355,7 +379,7 @@ def _maybe_auto_restart(inst_id: str) -> None:
 
 def _background_poller():
     global _last_cleanup_at, _last_orphan_scan_at, _last_stale_cleanup_at, _last_image_check_at
-    global _last_request_log_prune_at, _last_update_scan_at
+    global _last_request_log_prune_at, _last_update_scan_at, _last_db_mirror_sync_at
     while True:
         time.sleep(5)
 
@@ -394,6 +418,15 @@ def _background_poller():
                 _prune_request_log()
             except Exception as e:
                 logger.warning("request_log prune error: %s", e)
+
+        # --- DB mirror full sync ---
+        # Own thread for the same reason as the update scan: a full pull walks
+        # every preset and key and must not hold up health checks or the idle
+        # reaper on this tick.
+        if now - _last_db_mirror_sync_at >= _DB_MIRROR_SYNC_INTERVAL:
+            _last_db_mirror_sync_at = now
+            threading.Thread(target=_run_db_mirror_sync, name="db-mirror-sync",
+                             daemon=True).start()
 
         # --- Model update scan (opt-in) ---
         # Runs on its own thread: a pass HEADs every model with a known repo and

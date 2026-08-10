@@ -274,6 +274,7 @@ def remove_model_sources_for_path(model_path: str) -> None:
     if not changed:
         return
 
-    settings = dict(settings)
-    settings[MODEL_SOURCES_SETTINGS_KEY] = kept_sources
-    storage.save_settings(settings)
+    # Replace just this key. Rewriting the whole blob (get_settings + mutate +
+    # save_settings) would drop anything another writer changed in between - on
+    # a shared database, any other node's settings edit.
+    storage.replace_settings_key(MODEL_SOURCES_SETTINGS_KEY, kept_sources)

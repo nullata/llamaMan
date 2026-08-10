@@ -48,6 +48,64 @@ async function loadSystemInfo() {
 }
 
 // -------------------------------------------------------------------------
+// Storage status / degraded banner
+//
+// Polled separately from loadSystemInfo(), which bails out early in cluster
+// mode - the banner has to show up there too, and it is the only signal that
+// this node is running off its local mirror.
+// -------------------------------------------------------------------------
+
+async function loadStorageStatus() {
+  const banner = document.getElementById('storage-degraded-banner');
+  const mirrorRow = document.getElementById('db-mirror-row');
+  try {
+    const res = await apiFetch('/api/storage-status', pollOpts());
+    const d = await res.json();
+
+    // The toggle is meaningless on the JSON backend - that IS local storage.
+    if (mirrorRow) mirrorRow.hidden = d.backend !== 'mariadb';
+
+    // Drive the checkbox from the EFFECTIVE state rather than the stored
+    // setting, so an operator pinning it via LLAMAMAN_DB_MIRROR doesn't see an
+    // unchecked box next to a banner saying the mirror is active.
+    const mirrorToggle = document.getElementById('s-db-mirror-enabled');
+    if (mirrorToggle && d.backend === 'mariadb') {
+      mirrorToggle.checked = !!d.mirror_enabled;
+      mirrorToggle.disabled = !!d.env_forced;
+      mirrorToggle.title = d.env_forced
+        ? 'Pinned by the LLAMAMAN_DB_MIRROR environment variable'
+        : '';
+    }
+
+    if (!banner) return;
+    if (!d.degraded) {
+      banner.hidden = true;
+      banner.innerHTML = '';
+      return;
+    }
+
+    const since = d.degraded_since
+      ? new Date(d.degraded_since * 1000).toLocaleTimeString()
+      : null;
+    const pending = Number(d.pending_ops) || 0;
+    banner.innerHTML = `
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      <div>
+        <strong>Database offline${since ? ` since ${escHtml(since)}` : ''} - serving from the local mirror.</strong>
+        Inference, launches, presets and API keys keep working and
+        ${pending ? `<strong>${pending}</strong> pending change${pending === 1 ? '' : 's'} will sync` : 'changes will sync'}
+        when the database returns.
+        Cluster peers are not reachable, and an API key created or revoked here
+        does not apply on other nodes until then.
+      </div>
+    `;
+    banner.hidden = false;
+  } catch (e) {
+    // Endpoint unreachable means the whole app is down; nothing useful to show.
+  }
+}
+
+// -------------------------------------------------------------------------
 // GPU VRAM indicator
 // -------------------------------------------------------------------------
 async function loadGpuInfo() {
@@ -180,6 +238,10 @@ async function loadSettings() {
     const clusterHideOfflineToggle = document.getElementById('s-cluster-hide-offline-monitoring');
     if (clusterHideOfflineToggle) clusterHideOfflineToggle.checked = !!s.cluster_hide_offline_monitoring;
 
+    // The db mirror checkbox is deliberately NOT set here - loadStorageStatus()
+    // owns it, because only the backend knows the effective value once the
+    // LLAMAMAN_DB_MIRROR override is in play.
+
     const recordingModeSelect = document.getElementById('s-recording-mode');
     if (recordingModeSelect) {
       const mode = s.recording_mode === 'per_request' || s.recording_mode === 'per_conversation'
@@ -308,13 +370,15 @@ async function saveAppSettings() {
   const clusterHideOfflineToggle = document.getElementById('s-cluster-hide-offline-monitoring');
   const recordingModeSelect = document.getElementById('s-recording-mode');
   const recordingRetentionInput = document.getElementById('s-recording-retention-days');
-  if (!adminToggle && !ollamaToggle && !openaiToggle && !clusterHideOfflineToggle && !recordingModeSelect && !recordingRetentionInput) return;
+  const dbMirrorToggle = document.getElementById('s-db-mirror-enabled');
+  if (!adminToggle && !ollamaToggle && !openaiToggle && !clusterHideOfflineToggle && !recordingModeSelect && !recordingRetentionInput && !dbMirrorToggle) return;
   try {
     const payload = {};
     if (adminToggle) payload.admin_ui_enforce_max_models = adminToggle.checked;
     if (ollamaToggle) payload.allow_ollama_api_override_admin = ollamaToggle.checked;
     if (openaiToggle) payload.allow_openai_api_override_admin = openaiToggle.checked;
     if (clusterHideOfflineToggle) payload.cluster_hide_offline_monitoring = clusterHideOfflineToggle.checked;
+    if (dbMirrorToggle) payload.db_mirror_enabled = dbMirrorToggle.checked;
     if (recordingModeSelect) payload.recording_mode = recordingModeSelect.value;
     if (recordingRetentionInput) {
       const n = parseInt(recordingRetentionInput.value, 10);

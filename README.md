@@ -31,6 +31,7 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Require auth toggle** - enforce bearer token authentication on all endpoints (including model loading) or leave model endpoints open
 - **Persistent state** - instance history and configs survive container restarts
 - **Storage backends** - JSON files (default) or MariaDB/MySQL via SQLAlchemy
+- **Database outage survival** *(optional)* - with a database backend, keep a write-through mirror on local disk so the node keeps serving inference, launching models, and saving presets/API keys/settings if the database goes away - including across a container restart, which otherwise can't boot at all. Offline changes are journalled and synced back automatically when the database returns. Off by default
 - **Proxy sampling overrides** - force temperature, top-k, top-p, presence penalty, and repeat penalty on all proxied requests, configurable per model preset
 - **CPU quota + memory limit** - CPU Threads also applies a Docker CPU quota; a Memory Limit field caps container RAM
 - **Docker image management** - pull any llama.cpp image by name, delete old local images from the Settings UI
@@ -456,6 +457,39 @@ Per-node model metadata (a file's source repo and its content hash) lives in a n
 
 > **InnoDB note:** the `model_files` primary key `(node_id, model_path)` is `(64 + 700) x 4 = 3056` bytes under utf8mb4, just under InnoDB's 3072-byte index limit, so the table is created with `ROW_FORMAT=DYNAMIC`. It fits on any modern MariaDB/MySQL; widening either column past that would fail at `CREATE TABLE`.
 
+### Surviving a database outage (local mirror)
+
+*Optional, off by default.*
+
+With `DATABASE_URL` set, the database is on the critical path of **every** request - auth checks read settings and verify API keys on each call - so if it becomes unreachable the node stops serving, and a container restart during the outage cannot boot at all.
+
+Turn on **Settings → App settings → "Keep a local mirror of the database"** (or set `LLAMAMAN_DB_MIRROR=1`) and the node keeps a write-through copy of the database in `DATA_DIR/db_mirror/`. Every successful write goes to both, and a full pull once a day picks up rows written by other cluster nodes.
+
+If the database becomes unreachable, the node **keeps working from the mirror**:
+
+| Still works | Blocked while offline |
+|---|---|
+| All inference (both ports) | Creating the first user (`/setup`) - a brand-new install has no mirror to fall back to anyway |
+| Launching, stopping, sleeping, waking models | |
+| Downloads, model hashing and update checks | |
+| Creating and editing **presets** (including for models you just downloaded) | |
+| Creating and revoking **API keys** | |
+| Changing download and app **settings** | |
+| Adding and removing **Hugging Face tokens** | |
+
+Changes made offline are recorded in an append-only journal and replayed in order when the database returns - a probe checks every 10s. Replay records the *edit*, not the resulting row, so a change another node made during the outage survives: a different preset, a different field of the same preset, a different settings key, or a different Hugging Face token are all left intact.
+
+**Requirements and caveats:**
+
+- **`DATA_DIR` must be a persistent volume** (it already is in the sample compose file). The mirror is useless on a container's ephemeral layer.
+- **Each node needs its own `DATA_DIR`.** The mirror directory is stamped with the owning node id; if two nodes share one, mirroring switches itself off rather than corrupting either view.
+- **Secrets are mirrored to local disk.** Settings are copied verbatim, and Hugging Face tokens are stored in the settings blob in **plaintext**. Password hashes and API key hashes are mirrored too (already hashed). If you chose MariaDB partly to keep secrets off individual hosts, this trade-off is the reason the feature is opt-in.
+- **Cross-node balancing stops during an outage.** Peer liveness lives in the database, so a degraded node sees only itself and serves locally. Peers likewise stop routing to it.
+- **API key changes are local until reconnect.** A key created offline works only on this node; a key **revoked** offline stays valid on other nodes until the database is back. Plan revocations accordingly.
+- **Request logs are dropped, not buffered,** while offline - the records carry full request and response bodies, and spooling them through a long outage could fill the volume and take down the inference this is meant to protect.
+- **Turning the mirror off while the database is offline is deferred** until it comes back. Switching to direct mode mid-outage would mean every request hits the unreachable database instead of falling back - the setting is saved and applied on recovery.
+- Schema migrations never run while degraded; they are applied against the real database on reconnect, before anything is replayed.
+
 ## Clustering
 
 *Optional, off by default - single-node installs are completely unaffected.*
@@ -511,6 +545,7 @@ Each node heartbeats every ~5s; a node silent past `CLUSTER_NODE_ONLINE_WINDOW_S
 | `SECRET_KEY` | _(auto)_ | Flask session secret. Auto-derived from machine-id if unset. Set this for multi-replica deployments. |
 | `SESSION_COOKIE_NAME` | `llamaman_session` | Name of the session cookie. Namespaced so llamaman coexists with other Flask apps on the same host - cookies are scoped by host+path, not port, so two apps both using Flask's default `session` name would log each other's users out. Change only if another `llamaman_session` on the same host clashes. |
 | `DATABASE_URL` | _(unset)_ | MariaDB/MySQL connection string. Unset = use JSON files. |
+| `LLAMAMAN_DB_MIRROR` | _(unset)_ | Force the local database mirror on (`1`) or off (`0`), overriding the per-node setting. Only meaningful with `DATABASE_URL`. See [Surviving a database outage](#surviving-a-database-outage-local-mirror). |
 | `HEALTH_CHECK_TIMEOUT` | `3` | Timeout in seconds for instance health checks |
 | `MODEL_LOAD_TIMEOUT` | `300` | Seconds to wait for a model to become healthy during launch/relaunch. Increase for very large models. |
 | `REQUEST_TIMEOUT` | `300` | **Read** timeout in seconds for upstream requests to llama-server, for cross-node inference forwarding, and for gate acquire waits. On the forwarding path it covers the peer loading the model on demand plus its time to first token. It does **not** govern how long a node waits for a peer to accept the connection - that is a separate 5s connect bound - so raising this will not help against an unreachable peer. |
