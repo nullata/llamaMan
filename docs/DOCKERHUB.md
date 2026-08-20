@@ -11,11 +11,11 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Universal GPU support** - single image for NVIDIA, AMD (ROCm), Intel Arc, and CPU. The GPU vendor and matching `LLAMA_IMAGE` are auto-detected at startup; `GPU_TYPE` / `LLAMA_IMAGE` override if needed.
 - **Model library** - scans `/models` for GGUF files, shows quant type and file size
 - **One-click launch** - configure GPU layers, context size, threads, multi-GPU, speculative decoding, extra args
-- **Speculative decoding** - optional `--spec-type` toggle exposing all five draft-model-family values llama.cpp accepts (`draft-simple` / `draft-mtp` / `draft-dflash` / `draft-dspark` / `draft-eagle3`), configurable draft length, and an Advanced subsection for `--spec-draft-n-min` / `--spec-draft-p-split` / `--spec-draft-p-min`. Only `draft-mtp` runs without a separate drafter (falls back to built-in MTP heads)
-- **Flash Attention + KV cache quantization** - independent Flash Attention toggle (`--flash-attn`) and per-side cache-type dropdowns (`--cache-type-k` / `--cache-type-v`), with the "quantized V cache requires Flash Attention" constraint enforced in the UI
+- **Speculative decoding** - `--spec-type` toggle for all five draft-model-family values (`draft-simple` / `draft-mtp` / `draft-dflash` / `draft-dspark` / `draft-eagle3`) with configurable draft length and an Advanced subsection for `--spec-draft-n-min` / `-p-split` / `-p-min`. Only `draft-mtp` runs without a separate drafter (built-in MTP heads)
+- **Flash Attention + KV cache quantization** - `--flash-attn` toggle and per-side `--cache-type-k` / `--cache-type-v` dropdowns; the UI enforces llama-server's "quantized V cache requires Flash Attention" constraint
 - **Preset configs** - save/load per-model launch settings, with live updates to running instances where possible
 - **Download manager** - pull models from HuggingFace with speed throttling and auto-retry on failure
-- **Model update detection & re-pull** - detects when a repo has republished a model under the same filenames (requant, fixed template) via its published content hash, verifies local files by hashing them on disk, and re-pulls through the normal download pipeline with an atomic swap. Optional background scan
+- **Model update detection & re-pull** - detects when a repo has republished a model under the same filenames (requant, fixed template) via its content hash, verifies local files by hashing on disk, re-pulls through the normal download pipeline with an atomic swap. Optional background scan
 - **Model backup and restore** - export model metadata and presets to JSON, restore on any instance with downloads queued automatically for missing models
 - **Instance management** - stop, restart, remove, view live-streamed logs
 - **GPU VRAM indicator** - per-GPU VRAM and utilization, queried natively (no running instance required)
@@ -30,7 +30,7 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Require auth toggle** - enforce bearer token authentication on all endpoints (including model loading) or leave model endpoints open
 - **Persistent state** - instance history and configs survive container restarts
 - **Storage backends** - JSON files (default) or MariaDB/MySQL via SQLAlchemy
-- **Database outage survival** *(optional)* - with a database backend, keep a write-through mirror on local disk so the node keeps serving inference, launching models, and saving presets/API keys/settings if the database goes away - including across a container restart, which otherwise can't boot at all. Offline changes are journalled and synced back automatically when the database returns. Off by default
+- **Database outage survival** *(optional)* - with a database backend, keep a write-through mirror on local disk so the node keeps serving inference and saving presets/API keys/settings if the database goes away, including across a container restart. Offline changes are journalled and replayed on reconnect. Off by default
 - **Multi-node clustering** *(optional)* - run several instances as one cluster sharing a database and a secret: aggregated dashboard, cross-node launches/pulls/downloads, and multi-node shared-queue load balancing. Off by default; single-node installs are unaffected.
 - **Proxy sampling overrides** - force temperature, top-k, top-p, presence penalty, and repeat penalty on all proxied requests, configurable per model preset
 - **CPU quota + memory limit** - CPU Threads also applies a Docker CPU quota; a Memory Limit field caps container RAM
@@ -208,12 +208,12 @@ networks:
 | `INTERNAL_PORT_RANGE_START` | `9000` | Start of internal llama-server port pool used for proxied instances. |
 | `INTERNAL_PORT_RANGE_END` | `9020` | End of internal llama-server port pool used for proxied instances. |
 | `SECRET_KEY` | *(auto)* | Flask session secret. Auto-derived from machine-id if unset. |
-| `SESSION_COOKIE_NAME` | `llamaman_session` | Name of the session cookie. Namespaced so llamaman coexists with other Flask apps on the same host - cookies are scoped by host+path, not port, so two apps both using Flask's default `session` name would log each other's users out. |
+| `SESSION_COOKIE_NAME` | `llamaman_session` | Name of the session cookie. Namespaced so llamaman coexists with other Flask apps on the same host (cookies are scoped by host+path, not port). |
 | `DATABASE_URL` | *(unset)* | MariaDB/MySQL connection string (e.g. `mysql+pymysql://user:pass@host/db`). Unset = JSON file storage. |
 | `LLAMAMAN_DB_MIRROR` | *(unset)* | Force the local database mirror on (`1`) or off (`0`), overriding the per-node setting. Only meaningful with `DATABASE_URL`. |
 | `HEALTH_CHECK_TIMEOUT` | `3` | Timeout in seconds for instance health checks. |
 | `MODEL_LOAD_TIMEOUT` | `300` | Seconds to wait for a model to become healthy during launch/relaunch. Increase for very large models. |
-| `REQUEST_TIMEOUT` | `300` | **Read** timeout in seconds for upstream requests to llama-server, for cross-node inference forwarding, and for gate acquire waits. On the forwarding path it covers the peer loading the model on demand plus its time to first token. It does **not** govern how long a node waits for a peer to accept the connection - that is a separate 5s connect bound - so raising this will not help against an unreachable peer. |
+| `REQUEST_TIMEOUT` | `300` | **Read** timeout in seconds for upstream requests to llama-server, cross-node inference forwarding, and gate acquire waits. On the forwarding path it covers the peer's on-demand model load plus time to first token. It does **not** govern how long a node waits for a peer to accept the connection (that is a separate 5s connect bound). |
 | `CLUSTER_ENABLED` | `false` | Set `true`/`1`/`yes`/`on` to join this node to a cluster. Requires `CLUSTER_SECRET` and a shared `DATABASE_URL`. See [Clustering](#clustering). |
 | `CLUSTER_SECRET` | *(unset)* | Shared bearer secret sent on every node-to-node call (`X-Cluster-Secret`). Must be identical on every node. Use a long random value over a trusted network or behind TLS. |
 | `CLUSTER_ADVERTISE_URL` | *(unset)* | How peers reach **this** node's UI/API - a hostname/IP routable from the other hosts (e.g. `http://srv1:5000`), not `localhost`. Needed for cross-node actions and shared-queue inference forwarding; a node without it is view-only and skipped as an inference target. |
@@ -230,9 +230,9 @@ networks:
 
 The UI provides automatic cleanup under **Settings >> Cleanup Settings**:
 
-- **Auto-clean completed/failed downloads** - removes download records older than a configurable number of hours (default: 24). Only affects completed, failed, or cancelled downloads - active downloads are never touched.
-- **Auto-clean stopped instances** - removes stopped instance records older than a configurable number of hours (default: 24). Only affects stopped instances - running instances are never removed.
-- **Auto-remove stale instance records** - periodically checks all `starting`/`healthy`/`sleeping` instance records against their backing Docker container. Records whose container is no longer running are marked stopped. Configurable check interval (default: 5 minutes).
+- **Auto-clean completed/failed downloads** - removes download records older than a configurable number of hours (default: 24). Active downloads are never touched.
+- **Auto-clean stopped instances** - removes stopped instance records older than a configurable number of hours (default: 24). Running instances are never removed.
+- **Auto-remove stale instance records** - periodically checks `starting`/`healthy`/`sleeping` records against their Docker container; records whose container is gone are marked stopped. Configurable interval (default: 5 minutes).
 
 Cleanup runs periodically in the background. These settings only remove or update records in the UI/state - they do not delete model files.
 
@@ -369,7 +369,7 @@ Live shared-queue group aliases are advertised as selectable models in `/api/tag
 
 When **Idle Timeout**, **Max Concurrent**, or **Proxy Sampling Overrides** are enabled for an instance, llamaMan places a proxy in front of that instance's port. The proxy handles auth, concurrency gating, wake-on-request, and model name validation.
 
-Saving a preset propagates idle-timeout, queue, and proxy-sampling fields to running instances live without a relaunch. If the instance was launched with all three of the above off, no proxy was spawned, so toggling **Proxy Sampling Overrides** on live applies only to requests routed through the main app's Ollama/OpenAI compat endpoints; direct hits to the public port require a relaunch to take effect.
+Saving a preset propagates idle-timeout, queue, and proxy-sampling fields to running instances live. If the instance was launched with all three of the above off, no proxy was spawned, so toggling **Proxy Sampling Overrides** on live applies only to requests via the app's Ollama/OpenAI compat endpoints; direct hits to the public port require a relaunch.
 
 On inference endpoints, if the request body includes a `"model"` field, the proxy validates it against the loaded model's filename stem. A prefix match is accepted (e.g. `"qwen2.5-0.5b-instruct-q2"` matches `"qwen2.5-0.5b-instruct-q2_k"`). A mismatch returns HTTP 404. Requests without a `"model"` field are forwarded unconditionally.
 
