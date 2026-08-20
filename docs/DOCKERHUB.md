@@ -11,7 +11,8 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Universal GPU support** - single image for NVIDIA, AMD (ROCm), Intel Arc, and CPU. The GPU vendor and matching `LLAMA_IMAGE` are auto-detected at startup; `GPU_TYPE` / `LLAMA_IMAGE` override if needed.
 - **Model library** - scans `/models` for GGUF files, shows quant type and file size
 - **One-click launch** - configure GPU layers, context size, threads, multi-GPU, speculative decoding, extra args
-- **Speculative decoding** - optional `--spec-type` toggle with a configurable draft length: `draft-mtp` with either a standalone MTP drafter model or the main model's built-in MTP heads, or `draft-dflash` with a separate DFlash drafter model
+- **Speculative decoding** - optional `--spec-type` toggle exposing all five draft-model-family values llama.cpp accepts (`draft-simple` / `draft-mtp` / `draft-dflash` / `draft-dspark` / `draft-eagle3`), configurable draft length, and an Advanced subsection for `--spec-draft-n-min` / `--spec-draft-p-split` / `--spec-draft-p-min`. Only `draft-mtp` runs without a separate drafter (falls back to built-in MTP heads)
+- **Flash Attention + KV cache quantization** - independent Flash Attention toggle (`--flash-attn`) and per-side cache-type dropdowns (`--cache-type-k` / `--cache-type-v`), with the "quantized V cache requires Flash Attention" constraint enforced in the UI
 - **Preset configs** - save/load per-model launch settings, with live updates to running instances where possible
 - **Download manager** - pull models from HuggingFace with speed throttling and auto-retry on failure
 - **Model update detection & re-pull** - detects when a repo has republished a model under the same filenames (requant, fixed template) via its published content hash, verifies local files by hashing them on disk, and re-pulls through the normal download pipeline with an atomic swap. Optional background scan

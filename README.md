@@ -13,7 +13,8 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Multi-node clustering** *(optional)* - run several llamaman deployments as one cluster sharing a database and a secret: aggregated dashboard, cross-node launches/pulls/downloads, and multi-node shared-queue load balancing. Off by default; single-node installs are unaffected.
 - **Model library** - scans `/models` for GGUF files, shows quant type and file size
 - **One-click launch** - configure GPU layers, context size, threads, multi-GPU, speculative decoding, extra args. With the Settings card collapsed, a Quick Launch button starts the selected model straight from its preset
-- **Speculative decoding** - optional `--spec-type` toggle with a configurable draft length: `draft-mtp` with either a standalone MTP drafter model or the main model's built-in MTP heads, or `draft-dflash` with a separate DFlash drafter model
+- **Speculative decoding** - optional `--spec-type` toggle exposing all five draft-model-family values llama.cpp accepts: `draft-simple` (any smaller model with the same tokenizer), `draft-mtp` (standalone MTP drafter or the main model's built-in MTP heads), `draft-dflash`, `draft-dspark`, `draft-eagle3`. Configurable draft length (`--spec-draft-n-max`) plus an **Advanced** subsection for `--spec-draft-n-min` / `--spec-draft-p-split` / `--spec-draft-p-min`. The n-gram / lookup speculative family (no drafter model) stays reachable via Extra Args
+- **Flash Attention + KV cache quantization** - independent Flash Attention toggle (`--flash-attn`) and per-side cache-type dropdowns (`--cache-type-k` / `--cache-type-v`, choose from `f16` default / `f32` / `bf16` / `q8_0` / `q5_1` / `q5_0` / `iq4_nl` / `q4_1` / `q4_0`). The UI enforces llama-server's own guard - a quantized V cache requires Flash Attention on, and the form auto-snaps V back to `f16` the moment flash-attn goes off so it can't submit a combination llama-server would reject
 - **Preset configs** - save/load per-model launch settings, with live updates to running instances where possible
 - **Download manager** - pull models from HuggingFace with speed throttling and auto-retry on failure
 - **Model update detection & re-pull** - detects when a repo has republished a model under the same filenames (requant, fixed template) via its published content hash, verifies local files by hashing them on disk, and re-pulls through the normal download pipeline with an atomic swap. Optional background scan keeps the answer ready
@@ -225,11 +226,19 @@ When you select a GGUF model, llamaMan reads the file's metadata to detect the t
 | **CPU Threads** | _(auto)_ | Sets both `--threads N` for llama-server and the container's CPU quota (`--cpus N`). Leave blank to let the container and llama-server use all available cores. |
 | **Memory Limit** | _(none)_ | Hard memory cap for the llama-server container (e.g. `32g`, `8192m`). Equivalent to `deploy.resources.limits.memory` in Docker Compose. Leave blank for no limit. |
 | **GPU Devices** | _(global default)_ | Comma-separated GPU indices to make visible to this container (e.g. `0,1`). Overrides `LLAMA_GPU_DEVICES` for this instance. Leave blank (or the literal `all`) to expose all GPUs. The instance card labels exactly the GPUs selected here. Not supported on Intel Arc. |
-| **Extra Args** | _(empty)_ | Additional flags passed directly to llama-server (e.g. `--flash-attn`). |
-| **Speculative Decoding** | off | Runs the model with speculative decoding. For types other than the ones below, pass the flags via **Extra Args** instead. |
-| **Draft Type** | `draft-mtp` | Which drafter to use (`--spec-type`). `draft-mtp` drafts from a separate MTP-head model set under **Draft Model**, or from the main model's own MTP heads if that's left blank (which needs a model built with them). `draft-dflash` drafts from a separate DFlash model, set under **Draft Model**. |
-| **Draft Model** | _(none)_ | Path to the drafter model (`-md`). Required for `draft-dflash`; optional for `draft-mtp`, where it points at a standalone MTP-head GGUF (e.g. a Gemma 4 assistant-MTP drafter) and blank falls back to the main model's built-in heads. Pick one of the models on the target node or type a path under the models directory. |
+| **Split Mode** | `layer` | How llama.cpp distributes weights across the GPUs visible inside the container (`--split-mode`). `layer` splits whole transformer layers per GPU (llama.cpp's own default; low interconnect traffic, works well on plain PCIe). `row` splits tensor rows per GPU (activations cross the interconnect on every matmul, so it's typically slower than `layer` on plain PCIe and only beats it with fast interconnect like NVLink). `none` uses a single GPU only (the first visible) and ignores **Tensor Split**. Only distinguishes anything when 2+ GPUs are visible. |
+| **Tensor Split** | _(auto)_ | Comma-separated relative weights (`--tensor-split`), one per container-visible GPU (e.g. `24,16` for a 24 GB + 16 GB pair). llama.cpp normalizes internally, so `24,16` == `3,2` == `0.6,0.4`. The number of values must match the container-visible GPU count. Leave blank and llamaMan auto-fills at launch time from each visible GPU's total VRAM (uses total, not free, so the value is stable across relaunches). Ignored when **Split Mode** is `none` or only one GPU is visible. |
+| **Flash Attention** | off | Enables the fused Flash Attention kernel (`--flash-attn`): faster prompt processing and lower activation memory during inference. Independent of KV cache type in general, but a quantized **V Cache Type** requires this to be on — llama-server refuses to start with a quantized V cache and no flash-attn. Not always available on every backend/GPU; disable if the model errors at launch. |
+| **K Cache Type** | `f16` | Precision for the K (keys) side of the KV cache (`--cache-type-k`). Accepts `f16` (default) / `f32` / `bf16` / `q8_0` / `q5_1` / `q5_0` / `iq4_nl` / `q4_1` / `q4_0`. Quantized types reduce the K portion of KV memory at a small quality cost — `q8_0` is near-lossless on most models, `q4_0` more aggressive. Works with or without Flash Attention. Only the flag is emitted when the value differs from `f16`, so leaving the default matches pre-feature behavior byte-for-byte. |
+| **V Cache Type** | `f16` | Precision for the V (values) side of the KV cache (`--cache-type-v`). Same accepted values as **K Cache Type**. Any quantized value requires Flash Attention on — the form greys the dropdown when flash-attn is off and auto-snaps a stale quantized V back to `f16` the moment flash-attn goes off, so the launch never submits a combination llama-server would reject. V is typically less sensitive to quantization than K. |
+| **Extra Args** | _(empty)_ | Additional flags passed directly to llama-server (e.g. `--mlock`, or one of the n-gram speculative types not surfaced elsewhere). |
+| **Speculative Decoding** | off | Runs the model with speculative decoding. Only the draft-model family is surfaced here; the n-gram / lookup family (`ngram-simple`, `ngram-map-k`, `ngram-map-k4v`, `ngram-mod`, `ngram-cache`) doesn't take a drafter model and stays reachable via **Extra Args**. |
+| **Draft Type** | `draft-mtp` | Which drafter format to use (`--spec-type`). `draft-simple`: classic speculative decoding with a plain smaller model (same tokenizer as the target). `draft-mtp`: Multi-Token Prediction — drafts from a separate MTP drafter, or from the main model's built-in MTP heads if **Draft Model** is blank. `draft-dflash`: Block-Diffusion Flash drafter (needs a DFlash checkpoint). `draft-dspark`: DSpark drafter (newer, same family as DFlash). `draft-eagle3`: EAGLE-3 drafter (needs an EAGLE-3-format checkpoint). |
+| **Draft Model** | _(none)_ | Path to the drafter model (`-md`). **Required** for `draft-simple`, `draft-dflash`, `draft-dspark`, `draft-eagle3` — the drafter's format has to match the Draft Type. **Optional** for `draft-mtp`, where it points at a standalone MTP-head GGUF (e.g. a Gemma 4 assistant-MTP drafter) and blank falls back to the main model's built-in MTP heads. Pick one of the models on the target node or type a path under the models directory. |
 | **Draft N Max** | `2` | Max tokens drafted per step (`--spec-draft-n-max`), used when speculative decoding is on. Leave blank to use llama.cpp's default. |
+| **Draft N Min** *(Advanced)* | _(auto)_ | Minimum tokens drafted per step (`--spec-draft-n-min`). Blank omits the flag so llama-server uses its own default (which drifts across versions — deliberately not hard-coded). |
+| **Draft P Split** *(Advanced)* | _(auto)_ | Probability threshold at which drafting splits a batch (`--spec-draft-p-split`). Range `0.0`–`1.0`. Blank omits the flag. |
+| **Draft P Min** *(Advanced)* | _(auto)_ | Minimum probability for greedy acceptance of a drafted token (`--spec-draft-p-min`). Range `0.0`–`1.0`. Blank omits the flag. `0` is a real value distinct from blank and is passed through. |
 | **Proxy Sampling Overrides** | off | When enabled, the proxy forces the configured sampling parameters on every request forwarded to this instance, regardless of what the client sends. |
 | **Temperature** | `0.8` | Sampling temperature to enforce (range: `0.0`–`2.0`). Only active when proxy sampling overrides are enabled. |
 | **Top K** | `40` | Top-k sampling value to enforce (min: `0`). Only active when proxy sampling overrides are enabled. |
@@ -242,7 +251,7 @@ When you select a GGUF model, llamaMan reads the file's metadata to detect the t
 Saving a preset (**Save Preset** in the Launch tab) updates already-running instances of that model in place where possible, so most parameter tweaks don't require a relaunch:
 
 - **Apply live (no relaunch needed):** `idle_timeout_min`, `max_concurrent`, `max_queue_depth`, `share_queue`, and all six proxy-sampling fields (`proxy_sampling_override_enabled`, `temperature`, `top_k`, `top_p`, `presence_penalty`, `repeat_penalty`). The reaper re-reads idle timeout each tick, the request gate is refreshed in place, and the proxy + compat routes read sampling fields from the instance config per request.
-- **Require relaunch:** everything baked into the llama-server container at launch - GPU layers, context size, threads, memory limit, parallel slots, GPU devices, embedding flag, extra args.
+- **Require relaunch:** everything baked into the llama-server container at launch - GPU layers, context size, threads, memory limit, parallel slots, GPU devices, split mode, tensor split, flash attention, K cache type, V cache type, speculative-decoding fields (spec type, draft model, spec-draft n-max / n-min / p-split / p-min), embedding flag, extra args.
 
 **Caveat for proxy-sampling toggles:** if the instance was launched with `idle_timeout = 0`, `max_concurrent = 0`, **and** `override_enabled = false`, no sidecar proxy was spawned (see [Per-Instance Proxy](#per-instance-proxy)). Toggling `override_enabled = true` live still applies overrides on requests routed through the main app's Ollama/OpenAI compat endpoints, but direct hits to the public port go straight to llama-server and bypass the override. Relaunch the instance to spawn the proxy in that case.
 
@@ -621,8 +630,20 @@ All endpoints return and accept JSON.
   "threads": null,
   "memory_limit": null,
   "parallel": null,
-  "extra_args": "--flash-attn",
+  "extra_args": "--mlock",
   "gpu_devices": "",
+  "split_mode": "layer",
+  "tensor_split": "",
+  "flash_attn": false,
+  "cache_type_k": "f16",
+  "cache_type_v": "f16",
+  "spec_enabled": false,
+  "spec_type": "draft-mtp",
+  "spec_draft_model": "",
+  "spec_draft_n_max": null,
+  "spec_draft_n_min": null,
+  "spec_draft_p_split": null,
+  "spec_draft_p_min": null,
   "idle_timeout_min": 0,
   "max_concurrent": 0,
   "max_queue_depth": 200,
@@ -637,6 +658,22 @@ All endpoints return and accept JSON.
 ```
 
 `gpu_devices`: comma-separated GPU indices for this instance (e.g. `"0"`, `"0,1"`). Leave empty to use `LLAMA_GPU_DEVICES` (or all GPUs if that is also unset). Not supported on Intel Arc.
+
+`split_mode`: one of `"none"` / `"layer"` / `"row"`, mapped 1:1 to llama-server `--split-mode`. Empty (or omitted) is treated as `"layer"` at emit time, matching llama.cpp's own default. See the launch settings table above for the semantics.
+
+`tensor_split`: comma-separated relative weights (`--tensor-split`), one per container-visible GPU (e.g. `"24,16"`). Values are normalized by llama.cpp. Number of values must match the container-visible GPU count. Empty means llamaMan will auto-fill it at launch from total VRAM when `split_mode` is `"layer"` or `"row"` and 2+ GPUs are visible; otherwise the flag is omitted and llama.cpp uses an even split (or ignores it entirely when `split_mode` is `"none"`).
+
+`flash_attn`: boolean. When `true`, emits `--flash-attn`. Required to be `true` if `cache_type_v` is a quantized value (`q8_0`, `q4_0`, `q4_1`, `iq4_nl`, `q5_0`, `q5_1`) — otherwise llama-server refuses to start with *"quantized V cache was requested, but this requires Flash Attention"*. We deliberately don't second-guess this on the server side, so an API caller sees the real llama-server error rather than a silently dropped flag.
+
+`cache_type_k` / `cache_type_v`: precision for the K / V side of the KV cache (`--cache-type-k` / `--cache-type-v`). Accepts `"f16"` (default, emits no flag) / `"f32"` / `"bf16"` / `"q8_0"` / `"q5_1"` / `"q5_0"` / `"iq4_nl"` / `"q4_1"` / `"q4_0"`. Values outside the whitelist are dropped rather than shipped. See `cache_type_v` note above about the Flash Attention constraint.
+
+`spec_enabled`: boolean gate for all `spec_*` fields; when `false`, none of them reach llama-server.
+
+`spec_type`: one of `"draft-simple"` / `"draft-mtp"` (default) / `"draft-dflash"` / `"draft-dspark"` / `"draft-eagle3"`. Any other value is rejected with `400`. The n-gram / lookup speculative family (`ngram-simple`, `ngram-map-k`, `ngram-map-k4v`, `ngram-mod`, `ngram-cache`) is not accepted here — those don't take a drafter model; pass them via `extra_args`.
+
+`spec_draft_model`: path to the drafter (`-md`). Required when `spec_enabled` is `true` and `spec_type` is anything other than `draft-mtp` — a save/launch with a missing drafter for `draft-simple` / `draft-dflash` / `draft-dspark` / `draft-eagle3` is rejected with `400`. Optional for `draft-mtp`, where blank falls back to the main model's built-in MTP heads.
+
+`spec_draft_n_max` / `spec_draft_n_min` / `spec_draft_p_split` / `spec_draft_p_min`: optional numeric knobs mapped to `--spec-draft-n-max` / `--spec-draft-n-min` / `--spec-draft-p-split` / `--spec-draft-p-min`. `null` (or omitted) means llamaMan skips the flag entirely so llama-server uses its own default. Integers ≥ 0 for the `n-*` pair; floats in `[0.0, 1.0]` for the `p-*` pair; out-of-range or non-numeric values are rejected with `400`. `0` is a real value distinct from `null` and is passed through.
 
 `memory_limit`: Docker memory cap string, e.g. `"32g"` or `"8192m"`. Omit or `null` for no limit.
 
