@@ -421,6 +421,13 @@ header span {
   visibility: visible;
 }
 
+/* Wider tooltip variant for fields whose explanation genuinely needs the
+   room (llama-server flag semantics, vendor differences). Add `info-tip-wide`
+   alongside `info-tip` on the trigger span. */
+.info-tip.info-tip-wide::after {
+  max-width: 360px;
+}
+
 .info-tip.clip-right::after {
   left: auto;
   right: 0;
@@ -497,6 +504,45 @@ header span {
   grid-template-columns: repeat(auto-fit, minmax(120px, max-content));
   gap: 12px 14px;
   align-items: end;
+}
+
+/* Inner grid for launch-form sections that group top-level fields (GPU
+   Settings, Container & Proxy Settings). Mirrors the outer .form-grid
+   exactly - same columns, gap, and bare inputs - so the fields inside
+   look and space identically to Context Size / Parallel Slots up top.
+   Not to be confused with .launch-inline-settings-grid, which is the
+   tight 120px-min bottom-aligned layout the toggleable sub-sections use
+   (Proxy-Side Sampling, Speculative Decoding, Image Input).
+   Top-alignment (not end-alignment like the shared grid) keeps all
+   labels on the same baseline even when one cell grows a live hint
+   below its input; end-alignment would drag every other field's label
+   down to match the tallest cell. */
+.launch-section-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
+  gap: 14px;
+  padding-top: 10px;
+  align-items: start;
+}
+
+/* Whole field (or an individual field) can be greyed out contextually:
+   Intel vendor => the device/split knobs are no-ops in-container; GPU
+   Layers = 0 => no GPU at all; < 2 visible GPUs => Split Mode + Tensor
+   Split are moot; split_mode = none => tensor split is ignored.
+   Two things to avoid here:
+   1. pointer-events:none on the container would kill hover on the field's
+      info-tip and users would lose the explanation of *why* it's greyed;
+      instead we rely on `disabled=true` set in JS on the input/select.
+   2. Setting `opacity` on the container fades every descendant via CSS
+      opacity cascade - including the info-tip's tooltip pseudo-element,
+      which is then capped at the container's opacity and appears washed
+      out. Fade the visible controls individually instead so the tooltip
+      stays fully opaque.
+   The disabled input/select/button are already visually greyed by the
+   browser via their disabled attribute, so this label rule is what
+   actually makes the state distinct. */
+.gpu-field-disabled .label-row > label {
+  color: var(--muted);
 }
 
 /* Collapsible body for the Speculative Decoding / Proxy Sampling sections:

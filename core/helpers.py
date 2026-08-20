@@ -104,6 +104,20 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
         cmd += ["--parallel", str(int(config["parallel"]))]
     if config.get("embedding_model"):
         cmd += ["--embeddings"]
+    # Multi-GPU placement. All three llama.cpp modes are exposed and emitted
+    # literally: none (single GPU only, ignores --tensor-split), layer (splits
+    # whole layers - llama.cpp's own default when no flag is passed), row
+    # (splits tensor rows, needs fast interconnect like NVLink). tensor_split
+    # is passed through as-is because llama.cpp normalizes it internally, so
+    # "24,16" == "3,2" == "0.6,0.4". An empty split_mode (from a preset saved
+    # before this feature existed) is treated as "layer" so behavior matches
+    # llama.cpp's pre-flag default.
+    split_mode = (config.get("split_mode") or "").strip().lower() or "layer"
+    if split_mode in ("none", "layer", "row"):
+        cmd += ["--split-mode", split_mode]
+    tensor_split = (config.get("tensor_split") or "").strip()
+    if tensor_split:
+        cmd += ["--tensor-split", tensor_split]
     # When this instance opts into a queue-group alias, also tell llama-server
     # to advertise itself under that name (--alias). Two effects: clients
     # hitting THIS instance's port directly see the group name in /v1/models

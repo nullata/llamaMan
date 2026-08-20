@@ -144,7 +144,7 @@
                   </div>
                   <div class="form-group form-group-narrow">
                     <span class="label-row">
-                      <label for="f-pretty-name">Display Name</label>
+                      <label for="f-pretty-name">Display Name (optional)</label>
                       <span class="info-tip" tabindex="0" role="button" aria-label="Display Name help" data-tip="Optional friendly name shown to API clients (Open WebUI) instead of the raw filename. Clients can use it as the model name too. Must be unique and must not clash with another model's filename or a cluster queue group. Leave blank to use the filename."><i class="fa-solid fa-circle-info"></i></span>
                     </span>
                     <input id="f-pretty-name" type="text" maxlength="100" placeholder="e.g. Qwen 2.5 14B" />
@@ -154,79 +154,120 @@
                     <input id="f-note" type="text" placeholder="Add a note about this model…" />
                   </div>
                 </div>
-                <div class="form-group">
-                  <span class="label-row">
-                    <label for="f-port">Port</label>
-                    <span class="info-tip" tabindex="0" role="button" aria-label="Port help" data-tip="Host port the llama-server listens on. Must fall within the configured port range (PORT_RANGE_START–PORT_RANGE_END)."><i class="fa-solid fa-circle-info"></i></span>
-                  </span>
-                  <input id="f-port" type="number" value="8000" min="1024" max="65535" required />
-                </div>
-                <div class="form-group">
-                  <span class="label-row">
-                    <label for="f-gpu-layers">GPU Layers (-1 = all, 0 = CPU only)</label>
-                    <span class="info-tip" tabindex="0" role="button" aria-label="GPU Layers help" data-tip="Number of model layers offloaded to GPU. -1 offloads all layers, 0 runs entirely on CPU. Maps to llama-server --n-gpu-layers."><i class="fa-solid fa-circle-info"></i></span>
-                  </span>
-                  <div class="inline-field">
-                    <input id="f-gpu-layers" type="number" value="-1" min="-1" />
-                    <span id="gpu-layers-total" class="text-meta"></span>
+                <div class="form-group full launch-settings-section" id="model-settings-section">
+                  <div class="launch-settings-section-header">
+                    <h3>Model Settings</h3>
                   </div>
-                  <div id="gpu-layers-suggestion" class="text-meta gpu-layers-suggestion"></div>
+                  <div class="launch-section-grid">
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-ctx-size">Context Size</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="Context Size help" data-tip="Maximum prompt + response tokens the model holds in context for one request. Larger = more VRAM/RAM."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-ctx-size" type="number" min="1" required />
+                    </div>
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-parallel">Parallel Slots (optional)</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="Parallel Slots help" data-tip="Number of concurrent decoding slots llama-server allocates (-np). Each slot can serve one request at a time."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-parallel" type="number" placeholder="(default 1)" min="1" />
+                    </div>
+                  </div>
                 </div>
-                <div class="form-group">
-                  <span class="label-row">
-                    <label for="f-ctx-size">Context Size</label>
-                    <span class="info-tip" tabindex="0" role="button" aria-label="Context Size help" data-tip="Maximum prompt + response tokens the model holds in context for one request. Larger = more VRAM/RAM."><i class="fa-solid fa-circle-info"></i></span>
-                  </span>
-                  <input id="f-ctx-size" type="number" min="1" required />
+                <div class="form-group full launch-settings-section" id="container-proxy-settings-section">
+                  <div class="launch-settings-section-header">
+                    <h3>Container &amp; Proxy Settings</h3>
+                  </div>
+                  <div class="launch-section-grid">
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-port">Port</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="Port help" data-tip="Host port the llama-server listens on. Must fall within the configured port range (PORT_RANGE_START–PORT_RANGE_END)."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-port" type="number" value="8000" min="1024" max="65535" required />
+                    </div>
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-threads">CPU Threads (optional)</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="CPU Threads help" data-tip="Number of CPU threads llama-server uses. Leave blank to let llama-server auto-detect based on the host."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-threads" type="number" placeholder="(auto)" min="1" />
+                    </div>
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-memory-limit">System Memory Limit (optional)</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="System Memory Limit help" data-tip="Hard cap on container RAM (e.g. 32g, 8192m). Blank = no limit. Exceeding this triggers an OOM kill of the instance."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-memory-limit" type="text" placeholder="(auto)  e.g. 32g  8192m" />
+                    </div>
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-idle-timeout">Idle Timeout min (0 = off)</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="Idle Timeout help" data-tip="Stop the instance after this many minutes with no requests. 0 keeps it running indefinitely. Live-updated from preset on save - no relaunch needed."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-idle-timeout" type="number" value="0" min="0" placeholder="0" />
+                    </div>
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-max-concurrent">Max Concurrent (0 = unlimited)</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="Max Concurrent help" data-tip="Maximum in-flight inference requests. Excess requests queue up to Max Queue Depth. 0 = no gating."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-max-concurrent" type="number" value="0" min="0" placeholder="0" />
+                    </div>
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-max-queue-depth">Max Queue Depth</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="Max Queue Depth help" data-tip="Maximum queued requests before the gate returns HTTP 429. Only relevant when Max Concurrent > 0."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-max-queue-depth" type="number" value="200" min="1" placeholder="200" />
+                    </div>
+                  </div>
                 </div>
-                <div class="form-group">
-                  <span class="label-row">
-                    <label for="f-threads">CPU Threads (optional)</label>
-                    <span class="info-tip" tabindex="0" role="button" aria-label="CPU Threads help" data-tip="Number of CPU threads llama-server uses. Leave blank to let llama-server auto-detect based on the host."><i class="fa-solid fa-circle-info"></i></span>
-                  </span>
-                  <input id="f-threads" type="number" placeholder="(auto)" min="1" />
-                </div>
-                <div class="form-group">
-                  <span class="label-row">
-                    <label for="f-memory-limit">System Memory Limit (optional)</label>
-                    <span class="info-tip" tabindex="0" role="button" aria-label="System Memory Limit help" data-tip="Hard cap on container RAM (e.g. 32g, 8192m). Blank = no limit. Exceeding this triggers an OOM kill of the instance."><i class="fa-solid fa-circle-info"></i></span>
-                  </span>
-                  <input id="f-memory-limit" type="text" placeholder="(auto)  e.g. 32g  8192m" />
-                </div>
-                <div class="form-group">
-                  <span class="label-row">
-                    <label for="f-parallel">Parallel Slots (optional)</label>
-                    <span class="info-tip" tabindex="0" role="button" aria-label="Parallel Slots help" data-tip="Number of concurrent decoding slots llama-server allocates (-np). Each slot can serve one request at a time."><i class="fa-solid fa-circle-info"></i></span>
-                  </span>
-                  <input id="f-parallel" type="number" placeholder="(default 1)" min="1" />
-                </div>
-                <div class="form-group">
-                  <span class="label-row">
-                    <label for="f-gpu-devices">GPU Devices (optional)</label>
-                    <span class="info-tip" tabindex="0" role="button" aria-label="GPU Devices help" data-tip="Comma-separated GPU indices to expose (e.g. 0 or 0,1). Blank = all GPUs visible to the daemon."><i class="fa-solid fa-circle-info"></i></span>
-                  </span>
-                  <input id="f-gpu-devices" type="text" placeholder="(all)  e.g. 0  or 0,1" />
-                </div>
-                <div class="form-group">
-                  <span class="label-row">
-                    <label for="f-idle-timeout">Idle Timeout min (0 = off)</label>
-                    <span class="info-tip" tabindex="0" role="button" aria-label="Idle Timeout help" data-tip="Stop the instance after this many minutes with no requests. 0 keeps it running indefinitely. Live-updated from preset on save - no relaunch needed."><i class="fa-solid fa-circle-info"></i></span>
-                  </span>
-                  <input id="f-idle-timeout" type="number" value="0" min="0" placeholder="0" />
-                </div>
-                <div class="form-group">
-                  <span class="label-row">
-                    <label for="f-max-concurrent">Max Concurrent (0 = unlimited)</label>
-                    <span class="info-tip" tabindex="0" role="button" aria-label="Max Concurrent help" data-tip="Maximum in-flight inference requests. Excess requests queue up to Max Queue Depth. 0 = no gating."><i class="fa-solid fa-circle-info"></i></span>
-                  </span>
-                  <input id="f-max-concurrent" type="number" value="0" min="0" placeholder="0" />
-                </div>
-                <div class="form-group">
-                  <span class="label-row">
-                    <label for="f-max-queue-depth">Max Queue Depth</label>
-                    <span class="info-tip" tabindex="0" role="button" aria-label="Max Queue Depth help" data-tip="Maximum queued requests before the gate returns HTTP 429. Only relevant when Max Concurrent > 0."><i class="fa-solid fa-circle-info"></i></span>
-                  </span>
-                  <input id="f-max-queue-depth" type="number" value="200" min="1" placeholder="200" />
+                <div class="form-group full launch-settings-section" id="gpu-settings-section">
+                  <div class="launch-settings-section-header">
+                    <h3>GPU Settings</h3>
+                    <span id="gpu-settings-hint" class="text-meta"></span>
+                  </div>
+                  <div class="launch-section-grid">
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-gpu-layers">GPU Layers (-1 = all, 0 = CPU only)</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="GPU Layers help" data-tip="Maps to llama-server --n-gpu-layers. Sets how many transformer layers to offload onto GPU(s). -1 offloads every layer (the common choice when everything fits in VRAM). 0 disables GPU entirely and runs the whole model on CPU. Any positive value offloads that many layers from the bottom of the stack and leaves the rest on CPU RAM - useful when the model is larger than your VRAM. This is orthogonal to Split Mode: -ngl decides GPU-vs-CPU, split mode decides how the GPU-resident portion is distributed across the visible GPUs."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <div class="inline-field">
+                        <input id="f-gpu-layers" type="number" value="-1" min="-1" />
+                        <span id="gpu-layers-total" class="text-meta"></span>
+                      </div>
+                      <div id="gpu-layers-suggestion" class="text-meta gpu-layers-suggestion"></div>
+                    </div>
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-gpu-devices">GPU Devices (optional)</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="GPU Devices help" data-tip="Comma-separated host-GPU indices to attach to this instance's container (e.g. '0' or '0,1' or '2,4'). Blank exposes every GPU visible to the Docker daemon. NVIDIA uses Docker device_requests; AMD (ROCm) sets ROCR_VISIBLE_DEVICES on top of a full /dev/kfd + /dev/dri mount. Inside the container the exposed GPUs are renumbered starting at 0, which is what llama.cpp actually sees, so Tensor Split values are indexed against the exposed set, not the host indices. Silently ignored on Intel today - per-instance SYCL device filtering isn't wired up."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-gpu-devices" type="text" placeholder="(all)  e.g. 0  or 0,1" />
+                    </div>
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-split-mode">Split Mode</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Split Mode help" data-tip="Maps 1:1 to llama-server --split-mode and controls how weights are placed across the GPUs visible inside the container. None (--split-mode none) uses a single GPU only (the first visible one); Tensor Split is ignored; other visible GPUs sit idle from llama.cpp's perspective. Layer (--split-mode layer) splits whole transformer layers across the visible GPUs; low interconnect traffic; this is llama.cpp's default when no flag is passed. Row (--split-mode row) splits tensor rows across the visible GPUs; more even VRAM usage but activations cross the interconnect on every matmul, so it is usually slower than Layer on plain PCIe and only beats it with fast interconnect like NVLink. Only distinguishes anything when 2+ GPUs are visible."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <select id="f-split-mode">
+                        <option value="none">None</option>
+                        <option value="layer" selected>Layer</option>
+                        <option value="row">Row</option>
+                      </select>
+                    </div>
+                    <div class="form-group" id="f-tensor-split-group">
+                      <span class="label-row">
+                        <label for="f-tensor-split">Tensor Split</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Tensor Split help" data-tip="Maps to llama-server --tensor-split. Comma-separated relative weights, one per container-visible GPU (e.g. '24,16' for a 24 GB + 16 GB pair). llama.cpp normalizes the vector, so '24,16', '3,2' and '0.6,0.4' are equivalent. The number of values MUST match the container-visible GPU count (see GPU Devices - inside the container GPUs are renumbered from 0). Leave blank to auto-fill at launch from each visible GPU's total VRAM (uses total, not free, so the value is stable across relaunches); the resolved value is previewed below the field. Ignored entirely when Split Mode is None (single GPU) or when only one GPU is visible."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-tensor-split" type="text" placeholder="(auto)  e.g. 24,16" />
+                      <div id="f-tensor-split-hint" class="text-meta"></div>
+                    </div>
+                  </div>
                 </div>
                 <div class="form-group full launch-settings-section">
                   <div class="launch-settings-section-header">

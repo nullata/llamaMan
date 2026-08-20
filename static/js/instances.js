@@ -494,6 +494,141 @@ function updateMmprojState() {
   if (input) input.disabled = !enabled;
 }
 
+// -------------------------------------------------------------------------
+// GPU Settings section
+// -------------------------------------------------------------------------
+// Which host GPU indices this launch will make visible to llama.cpp inside
+// the container. Empty gpu_devices means "all", so we default to every
+// index the target node reports. Filters non-numeric junk so a stray typo
+// (e.g. "0, a, 1") doesn't blow up the Auto calc.
+function _visibleGpuIndicesForLaunch(allGpus) {
+  const raw = (document.getElementById('f-gpu-devices')?.value || '').trim();
+  if (!raw) return allGpus.map(g => g.index);
+  return raw.split(',')
+    .map(s => parseInt(s.trim(), 10))
+    .filter(n => Number.isInteger(n) && allGpus.some(g => g.index === n));
+}
+
+// Grey out (fade + block clicks on) exactly the fields that are no-ops for
+// the current launch target: Intel silently ignores per-instance GPU
+// selection, GPU Layers = 0 turns off GPU entirely, and Tensor Split
+// needs 2+ visible GPUs to mean anything. GPU Layers stays enabled on
+// Intel because -ngl IS honored there - only the device/split knobs
+// aren't. Fires on: preset load, form reset, target-node change, and
+// direct edits to GPU Layers / GPU Devices.
+async function updateGpuSettingsState() {
+  const section = document.getElementById('gpu-settings-section');
+  if (!section) return;
+
+  const nodeId = (typeof _launchNode === 'function') ? _launchNode() : null;
+  // Populate the vendor + gpu cache without blocking the first paint.
+  const gpus = await fetchGpuInfoCached(nodeId);
+  const vendor = (typeof cachedGpuVendor === 'function') ? cachedGpuVendor(nodeId) : null;
+
+  const layersRaw = document.getElementById('f-gpu-layers')?.value;
+  const layers = parseInt(layersRaw, 10);
+  const cpuOnly = layers === 0;
+  const isIntel = vendor === 'intel';
+
+  const devicesField  = document.getElementById('f-gpu-devices')?.closest('.form-group');
+  const devicesInput  = document.getElementById('f-gpu-devices');
+  const splitModeField = document.getElementById('f-split-mode')?.closest('.form-group');
+  const tensorGroup   = document.getElementById('f-tensor-split-group');
+  const hint          = document.getElementById('gpu-settings-hint');
+  const smInput       = document.getElementById('f-split-mode');
+  const tsInput       = document.getElementById('f-tensor-split');
+
+  // Device-visibility fields: greyed on Intel (silently ignored in-container)
+  // or CPU-only (no GPU at all). GPU Devices is only affected here - Split
+  // Mode / Tensor Split get an additional gate below.
+  const devicesDisabled = isIntel || cpuOnly;
+  if (devicesField) devicesField.classList.toggle('gpu-field-disabled', devicesDisabled);
+  // The .gpu-field-disabled class is visual only (opacity) - we don't kill
+  // pointer-events on it because that would also block tooltip hover on the
+  // field's info-tip. So we have to disable the input explicitly to actually
+  // block interaction.
+  if (devicesInput) devicesInput.disabled = devicesDisabled;
+
+  // Split Mode + Tensor Split need 2+ visible GPUs to matter. With one
+  // visible GPU llama.cpp runs on that single device regardless of the
+  // flag, so leaving the controls enabled would contradict the header
+  // hint that already says "split mode has no effect".
+  const visibleCount = _visibleGpuIndicesForLaunch(gpus).length;
+  const splitMeaningful = !devicesDisabled && visibleCount >= 2;
+  if (smInput) smInput.disabled = !splitMeaningful;
+  if (splitModeField) splitModeField.classList.toggle('gpu-field-disabled', !splitMeaningful);
+
+  // Tensor Split has one more gate: llama.cpp ignores --tensor-split when
+  // --split-mode is `none`, so leaving the field editable there would let
+  // users type a value that has no effect on the launch.
+  const currentSplitMode = smInput?.value || 'layer';
+  const tensorMeaningful = splitMeaningful && currentSplitMode !== 'none';
+  if (tsInput) tsInput.disabled = !tensorMeaningful;
+  if (tensorGroup) tensorGroup.classList.toggle('gpu-field-disabled', !tensorMeaningful);
+
+  // Header hint: honest one-liner about why the section is greyed. Empty when
+  // everything is in play so we don't add visual noise for the common case.
+  if (hint) {
+    if (isIntel) hint.textContent = 'Per-instance GPU selection is not supported on Intel.';
+    else if (cpuOnly) hint.textContent = 'CPU-only (GPU Layers = 0) — no GPU placement to configure.';
+    else if (visibleCount < 2) hint.textContent = visibleCount === 1
+      ? 'Single visible GPU - split mode has no effect.'
+      : 'No GPUs detected on the target node.';
+    else if (currentSplitMode === 'none') hint.textContent = 'Split Mode = None uses a single GPU; Tensor Split is ignored.';
+    else hint.textContent = '';
+  }
+
+  // Refresh the "empty = auto" preview last, once every disabled flag above
+  // is in its final state (refreshTensorSplitAutoPreview keys off tsInput.disabled).
+  refreshTensorSplitAutoPreview();
+}
+
+// Compute an auto tensor-split vector from the visible GPUs' total VRAM
+// (24 GB + 16 GB pair -> "24,16"). Uses total (not free) so the value is
+// stable across relaunches - free fluctuates with other workloads on the
+// host. Rounds to whole GiB; llama.cpp normalizes the vector so no decimals
+// needed. Returns null when the split is not meaningful yet (fewer than 2
+// visible GPUs, or missing VRAM data) so callers can decide what to do.
+async function computeAutoTensorSplit() {
+  const nodeId = (typeof _launchNode === 'function') ? _launchNode() : null;
+  const gpus = await fetchGpuInfoCached(nodeId);
+  const visibleIdxs = _visibleGpuIndicesForLaunch(gpus);
+  const visible = gpus
+    .filter(g => visibleIdxs.includes(g.index))
+    .sort((a, b) => a.index - b.index);
+  if (visible.length < 2) return null;
+  if (visible.some(g => !g.memory_total_mb)) return null;
+  const weights = visible.map(g => Math.max(1, Math.round(g.memory_total_mb / 1024)));
+  return {
+    value: weights.join(','),
+    weights,
+    gpus: visible,
+  };
+}
+
+// Live preview of what an empty Tensor Split will resolve to at launch. The
+// hint updates whenever GPU Devices / Split Mode / GPU Layers change so the
+// user always sees what "empty = auto" is going to send.
+async function refreshTensorSplitAutoPreview() {
+  const hint  = document.getElementById('f-tensor-split-hint');
+  const input = document.getElementById('f-tensor-split');
+  if (!hint || !input) return;
+  // A typed value speaks for itself - don't clutter the field with a hint
+  // that describes something the user has already overridden.
+  if (input.value.trim() !== '') { hint.textContent = ''; return; }
+  // The updater already greyed the field for these cases (Intel / CPU-only /
+  // single-GPU / split-mode-none), so a preview there would be misleading.
+  if (input.disabled) { hint.textContent = ''; return; }
+
+  const auto = await computeAutoTensorSplit();
+  if (!auto) {
+    hint.textContent = 'Need at least 2 visible GPUs with readable VRAM to auto-split.';
+    return;
+  }
+  const parts = auto.gpus.map((g, i) => `${auto.weights[i]} GB (GPU ${g.index})`);
+  hint.textContent = `→ auto at launch: ${auto.value}   (${parts.join(' : ')} from total VRAM)`;
+}
+
 // The Quick Launch button lives in the Settings heading and only makes sense
 // when the card is collapsed (an expanded card has its own Launch button) and a
 // model is selected (its preset is already loaded into the hidden form).
@@ -535,6 +670,8 @@ function readLaunchForm() {
     ctx_size: ctxSize,
     extra_args: document.getElementById('f-extra').value.trim(),
     gpu_devices: document.getElementById('f-gpu-devices').value.trim(),
+    split_mode: document.getElementById('f-split-mode').value.trim(),
+    tensor_split: document.getElementById('f-tensor-split').value.trim(),
     idle_timeout_min: parseInt(document.getElementById('f-idle-timeout').value) || 0,
     max_concurrent: parseInt(document.getElementById('f-max-concurrent').value) || 0,
     max_queue_depth: parseInt(document.getElementById('f-max-queue-depth').value) || 200,
@@ -606,6 +743,17 @@ async function submitLaunchForm(btn, status) {
     }
     body.model_path = document.getElementById('f-model-path').value.trim();
     body.port = parseInt(document.getElementById('f-port').value);
+
+    // Empty Tensor Split means "auto from VRAM at launch". Only resolve here
+    // (never at preset save) so a preset stays portable across nodes with
+    // different GPU topologies - the auto-compute runs fresh on whichever
+    // node ends up launching. Only substitute when the flag would actually
+    // matter (layer/row + 2+ visible GPUs); None or single-GPU pass through
+    // as empty because llama.cpp ignores --tensor-split there anyway.
+    if (!body.tensor_split && (body.split_mode === 'layer' || body.split_mode === 'row')) {
+      const auto = await computeAutoTensorSplit();
+      if (auto) body.tensor_split = auto.value;
+    }
 
     const attemptLaunch = async (confirmOvercommit = false) => {
       const launchBody = {
@@ -722,6 +870,24 @@ if (mmprojToggle) {
 
 const specTypeSelect = document.getElementById('f-spec-type');
 if (specTypeSelect) specTypeSelect.addEventListener('change', updateSpecState);
+
+// GPU Settings section: react to the two inputs that gate the visible-GPU
+// count (GPU Layers = 0 disables the whole placement group; GPU Devices
+// narrows/widens the visible set that Tensor Split acts on) and hook the
+// Auto button. cachedGpuVendor is only populated after fetchGpuInfoCached
+// resolves the first time, so we call the updater once at module init to
+// prime the fetch.
+const gpuLayersField = document.getElementById('f-gpu-layers');
+if (gpuLayersField) gpuLayersField.addEventListener('input', updateGpuSettingsState);
+const gpuDevicesFieldForGating = document.getElementById('f-gpu-devices');
+if (gpuDevicesFieldForGating) gpuDevicesFieldForGating.addEventListener('input', updateGpuSettingsState);
+const splitModeField = document.getElementById('f-split-mode');
+if (splitModeField) splitModeField.addEventListener('change', updateGpuSettingsState);
+const tensorSplitField = document.getElementById('f-tensor-split');
+// Typing in the field or clearing it must refresh the "empty = auto" preview
+// below it - it shows only while the field is empty.
+if (tensorSplitField) tensorSplitField.addEventListener('input', refreshTensorSplitAutoPreview);
+if (typeof updateGpuSettingsState === 'function') updateGpuSettingsState();
 
 // A model can also be set by typing a path, not just by clicking the library.
 const quickLaunchModelField = document.getElementById('f-model-path');

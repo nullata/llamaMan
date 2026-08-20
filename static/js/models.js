@@ -5,6 +5,7 @@
 // -------------------------------------------------------------------------
 let currentModelMeta = null;  // last fetched GGUF architecture metadata
 let _gpuCache = {};           // nodeId -> cached GPU info array
+let _gpuVendorCache = {};     // nodeId -> vendor string ("cuda"|"rocm"|"intel"|null)
 let _gpuCacheTs = {};         // nodeId -> timestamp of last cache fill
 let _suggestionTimer = null;  // debounce handle
 let _loadedPreset = null;     // last preset loaded into the form (for per-node hardware)
@@ -44,10 +45,20 @@ async function fetchGpuInfoCached(nodeId) {
     if (res && res.ok) {
       const data = await res.json();
       _gpuCache[key] = data.gpus || [];
+      _gpuVendorCache[key] = data.vendor || null;
       _gpuCacheTs[key] = now;
     }
   } catch (e) { /* ignore */ }
   return _gpuCache[key] || [];
+}
+
+// Vendor is populated by fetchGpuInfoCached above; this helper just reads the
+// side-cache so callers don't need to await. Returns null if we haven't polled
+// yet - callers should decide how to behave in that transient state (we err on
+// the side of "enable everything" so the section isn't locked open on load).
+function cachedGpuVendor(nodeId) {
+  const key = nodeId || 'local';
+  return _gpuVendorCache[key] || null;
 }
 
 /**
@@ -467,6 +478,7 @@ async function selectModel(model, el) {
       if (typeof updateProxySamplingOverrideState === 'function') updateProxySamplingOverrideState();
       if (typeof updateSpecState === 'function') updateSpecState();
       if (typeof updateMmprojState === 'function') updateMmprojState();
+      if (typeof updateGpuSettingsState === 'function') updateGpuSettingsState();
       toast('Preset loaded', 'info');
     }
   } catch (e) { /* no preset, use defaults */ }
@@ -542,6 +554,15 @@ function applyPresetHardwareForNode(p, nodeId) {
   document.getElementById('f-memory-limit').value = val('memory_limit') || '';
   document.getElementById('f-parallel').value = val('parallel') || '';
   document.getElementById('f-gpu-devices').value = val('gpu_devices') || '';
+  // Backfill an empty split_mode (pre-feature presets, or a preset saved
+  // before the dropdown had a real 'none' option) to 'layer' - that's
+  // llama.cpp's default when no --split-mode flag is passed, so the
+  // effective behavior is unchanged.
+  const splitModeEl = document.getElementById('f-split-mode');
+  if (splitModeEl) splitModeEl.value = val('split_mode') || 'layer';
+  const tensorSplitEl = document.getElementById('f-tensor-split');
+  if (tensorSplitEl) tensorSplitEl.value = val('tensor_split') || '';
+  if (typeof updateGpuSettingsState === 'function') updateGpuSettingsState();
 }
 
 // Reset the launch form to a "no model selected" state. Used when switching
@@ -578,6 +599,9 @@ function resetLaunchForm() {
   if (typeof updateProxySamplingOverrideState === 'function') updateProxySamplingOverrideState();
   if (typeof updateSpecState === 'function') updateSpecState();
   if (typeof updateMmprojState === 'function') updateMmprojState();
+  const tsHint = document.getElementById('f-tensor-split-hint');
+  if (tsHint) tsHint.textContent = '';
+  if (typeof updateGpuSettingsState === 'function') updateGpuSettingsState();
   if (typeof updateQuickLaunchVisibility === 'function') updateQuickLaunchVisibility();
 }
 

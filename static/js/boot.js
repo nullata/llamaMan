@@ -112,12 +112,13 @@ const downloadNodeSel = document.getElementById('d-node');
 if (downloadNodeSel) downloadNodeSel.addEventListener('change', refreshDownloadDiskSpace);
 
 // Info-tip clipping fallback: when a centered tooltip would extend past the
-// viewport, switch to anchoring it on the icon's right (or left) edge.
-// Tooltip max-width is 240px; centered means up to 120px on either side.
+// viewport, switch to anchoring it on the icon's right (or left) edge. The
+// half-width has to match the CSS max-width in style.css - .info-tip::after
+// is 240px (halfMax 120), .info-tip-wide bumps that to 360px (halfMax 180).
 function updateInfoTipClipping(tip) {
   const rect = tip.getBoundingClientRect();
   const center = rect.left + rect.width / 2;
-  const halfMax = 120;
+  const halfMax = tip.classList.contains('info-tip-wide') ? 180 : 120;
   const overflowsRight = center + halfMax > window.innerWidth;
   const overflowsLeft = center - halfMax < 0;
   tip.classList.toggle('clip-right', overflowsRight);

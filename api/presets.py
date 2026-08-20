@@ -17,7 +17,14 @@ PRETTY_NAME_MAX_LEN = 100
 
 # Hardware fields that may be overridden per node (everything else in a preset
 # is shared cluster-wide). A node's overrides live in preset["node_overrides"].
-PRESET_HARDWARE_KEYS = ("n_gpu_layers", "threads", "memory_limit", "gpu_devices", "parallel")
+# split_mode and tensor_split belong here (not in the shared base) because
+# they're topology-specific: two nodes in a cluster can each have a different
+# number of GPUs with different VRAM sizes, so hard-coding one tensor_split
+# vector cluster-wide would be wrong on any node whose layout differs.
+PRESET_HARDWARE_KEYS = (
+    "n_gpu_layers", "threads", "memory_limit", "gpu_devices", "parallel",
+    "split_mode", "tensor_split",
+)
 
 
 def resolve_preset_for_node(preset: dict | None, node_id: str) -> dict | None:
@@ -153,6 +160,8 @@ def api_preset_save(model_path):
         "parallel": body.get("parallel"),
         "extra_args": body.get("extra_args", ""),
         "gpu_devices": body.get("gpu_devices", ""),
+        "split_mode": (body.get("split_mode") or "").strip().lower(),
+        "tensor_split": (body.get("tensor_split") or "").strip(),
         "idle_timeout_min": body.get("idle_timeout_min", 0),
         "max_concurrent": body.get("max_concurrent", 0),
         "max_queue_depth": body.get("max_queue_depth", 200),

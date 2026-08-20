@@ -270,19 +270,27 @@ def _query_via_container_exec() -> list[dict] | None:
 
 
 def collect_gpu_info() -> dict:
-    """Return {"gpus": [...]} (with an optional "error" when none found).
-    Shared by the /api/gpu-info route and the cluster snapshot builder."""
-    from core.gpu import query_gpus
+    """Return {"gpus": [...], "vendor": "cuda"|"rocm"|"intel"|None}
+    (with an optional "error" when no gpus found). Shared by the /api/gpu-info
+    route and the cluster snapshot builder. The vendor field lets the UI grey
+    out per-instance GPU-selection controls on Intel, where they're silently
+    ignored inside the container (see api/instances.py::_run_container)."""
+    from core.gpu import get_vendor, query_gpus
+    vendor = get_vendor()
     gpus = query_gpus()
     if gpus is not None:
-        return {"gpus": gpus}
+        return {"gpus": gpus, "vendor": vendor}
 
     # Fallback: exec into a running llama-server container
     gpus = _query_via_container_exec()
     if gpus is not None:
-        return {"gpus": gpus}
+        return {"gpus": gpus, "vendor": vendor}
 
-    return {"gpus": [], "error": "No GPU data available - mount /sys/class/drm:ro (AMD/Intel) or enable NVIDIA toolkit utility capability"}
+    return {
+        "gpus": [],
+        "vendor": vendor,
+        "error": "No GPU data available - mount /sys/class/drm:ro (AMD/Intel) or enable NVIDIA toolkit utility capability",
+    }
 
 
 @bp.route("/api/gpu-info")
