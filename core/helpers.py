@@ -150,9 +150,10 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
         from core.spec_decoding import DEFAULT_SPEC_TYPE
         spec_type = (config.get("spec_type") or DEFAULT_SPEC_TYPE).strip() or DEFAULT_SPEC_TYPE
         draft_model = (config.get("spec_draft_model") or "").strip()
-        # Both spec types draft from -md when one is set. For draft-mtp it's
-        # optional: with no drafter llama-server uses the MTP heads built into
-        # the main model, with one it uses that model's heads instead.
+        # All spec types draft from -md when one is set. draft-mtp is the only
+        # one where it's optional (falls back to the main model's MTP heads
+        # when absent); draft-simple / draft-dflash / draft-dspark / draft-eagle3
+        # all need a drafter checkpoint of the appropriate format.
         if draft_model:
             cmd += ["--model-draft", draft_model]
         cmd += ["--spec-type", spec_type]
@@ -162,6 +163,29 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
             n_max = 0
         if n_max > 0:
             cmd += ["--spec-draft-n-max", str(n_max)]
+        # Advanced spec-decoding knobs. Emit only when a value is set so an
+        # empty field falls through to llama-server's own defaults (which
+        # drift across versions - hard-coding them here would silently
+        # override future improvements). parse_spec_config validates ranges
+        # at the boundary, so we trust the config values here.
+        n_min = config.get("spec_draft_n_min")
+        if n_min not in (None, ""):
+            try:
+                cmd += ["--spec-draft-n-min", str(int(n_min))]
+            except (TypeError, ValueError):
+                pass
+        p_split = config.get("spec_draft_p_split")
+        if p_split not in (None, ""):
+            try:
+                cmd += ["--spec-draft-p-split", str(float(p_split))]
+            except (TypeError, ValueError):
+                pass
+        p_min = config.get("spec_draft_p_min")
+        if p_min not in (None, ""):
+            try:
+                cmd += ["--spec-draft-p-min", str(float(p_min))]
+            except (TypeError, ValueError):
+                pass
     if config.get("mmproj_enabled"):
         mmproj_path = (config.get("mmproj_path") or "").strip()
         if mmproj_path:

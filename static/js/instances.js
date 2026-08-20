@@ -464,10 +464,14 @@ function updateProxySamplingOverrideState() {
   });
 }
 
-// --spec-type values that *require* a drafter model passed as -md. Both types
-// accept one; draft-mtp falls back to the main model's built-in MTP heads when
-// the field is left blank, so only DFlash makes it mandatory.
-const SPEC_TYPES_NEEDING_DRAFT_MODEL = ['draft-dflash'];
+// --spec-type values that *require* a drafter model passed as -md. All five
+// listed types accept one; only draft-mtp falls back to the main model's
+// built-in MTP heads when the field is left blank, so every other draft type
+// makes the drafter mandatory. Keep this in sync with the SPEC_TYPES_NEEDING_
+// DRAFT_MODEL set in core/spec_decoding.py.
+const SPEC_TYPES_NEEDING_DRAFT_MODEL = [
+  'draft-simple', 'draft-dflash', 'draft-dspark', 'draft-eagle3',
+];
 const DEFAULT_SPEC_TYPE = 'draft-mtp';
 
 function currentSpecType() {
@@ -764,6 +768,16 @@ function readLaunchForm() {
   if (parallel) body.parallel = parseInt(parallel);
   const specNMax = document.getElementById('f-spec-draft-n-max').value.trim();
   if (specNMax) body.spec_draft_n_max = parseInt(specNMax, 10);
+  // Advanced spec-decoding knobs. Empty = don't set the key at all, so the
+  // server's parse_spec_config leaves it as None and build_llama_cmd omits
+  // the flag - llama-server falls back to its own default. Same "empty means
+  // auto" contract that Tensor Split uses.
+  const specNMin = document.getElementById('f-spec-draft-n-min')?.value.trim();
+  if (specNMin) body.spec_draft_n_min = parseInt(specNMin, 10);
+  const specPSplit = document.getElementById('f-spec-draft-p-split')?.value.trim();
+  if (specPSplit) body.spec_draft_p_split = parseFloat(specPSplit);
+  const specPMin = document.getElementById('f-spec-draft-p-min')?.value.trim();
+  if (specPMin) body.spec_draft_p_min = parseFloat(specPMin);
   const image = document.getElementById('f-image')?.value;
   if (image) body.image = image;
   return body;

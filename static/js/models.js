@@ -453,6 +453,15 @@ async function selectModel(model, el) {
       if (!specTypeSel.value) specTypeSel.value = 'draft-mtp';  // preset names a type we don't offer
       document.getElementById('f-spec-draft-model').value = p.spec_draft_model || '';
       document.getElementById('f-spec-draft-n-max').value = p.spec_draft_n_max ?? '';
+      // Advanced spec-decoding fields: null / undefined -> blank input, which
+      // readLaunchForm will translate back to "don't send the key" so the
+      // server preserves llama-server's own defaults.
+      const nMinEl = document.getElementById('f-spec-draft-n-min');
+      if (nMinEl) nMinEl.value = p.spec_draft_n_min ?? '';
+      const pSplitEl = document.getElementById('f-spec-draft-p-split');
+      if (pSplitEl) pSplitEl.value = p.spec_draft_p_split ?? '';
+      const pMinEl = document.getElementById('f-spec-draft-p-min');
+      if (pMinEl) pMinEl.value = p.spec_draft_p_min ?? '';
       document.getElementById('f-mmproj-enabled').checked = !!p.mmproj_enabled;
       document.getElementById('f-mmproj-path').value = p.mmproj_path || '';
       document.getElementById('f-idle-timeout').value = p.idle_timeout_min || 0;

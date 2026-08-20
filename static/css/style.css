@@ -506,6 +506,39 @@ header span {
   align-items: end;
 }
 
+/* Form-groups whose "input" is a toggle-switch rather than a wide input/
+   select. The shared .label-row uses width:100% + justify-content:space-
+   between so the info-tip icon sits at the far right of the field cell -
+   great when the cell is filled by a wide input below, terrible when the
+   input is a 40px toggle that leaves a huge gap between the label and
+   the icon. Shrink-wrap the label-row so the icon hugs the label text. */
+.form-group-toggle > .label-row {
+  width: auto;
+  justify-content: flex-start;
+}
+
+/* Native <details> "Advanced" subsection inside the Speculative Decoding
+   panel. Keep the summary looking like the section-header style (small,
+   muted, clickable) and add breathing room above so it doesn't crowd the
+   Draft Model field. Content padding matches the reveal-inner's rhythm. */
+.spec-advanced {
+  margin-top: 14px;
+}
+.spec-advanced > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 2px 0;
+  user-select: none;
+}
+.spec-advanced > summary:hover {
+  color: var(--text);
+}
+.spec-advanced[open] > summary {
+  margin-bottom: 8px;
+}
+
 /* Inner grid for launch-form sections that group top-level fields (GPU
    Settings, Container & Proxy Settings). Mirrors the outer .form-grid
    exactly - same columns, gap, and bare inputs - so the fields inside

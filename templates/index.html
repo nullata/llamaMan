@@ -208,7 +208,7 @@
                         <option value="q4_0">q4_0</option>
                       </select>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group form-group-toggle">
                       <span class="label-row">
                         <label for="f-flash-attn">Flash Attention</label>
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Flash Attention help" data-tip="Maps to llama-server --flash-attn. Enables the fused Flash Attention kernel: faster prompt processing and lower activation memory during inference. Independent of KV cache type, but a quantized V Cache Type REQUIRES this to be on - llama-server throws 'quantized V cache was requested, but this requires Flash Attention' otherwise. Not always available on every backend/GPU; if the model errors at launch, disable this."><i class="fa-solid fa-circle-info"></i></span>
@@ -379,16 +379,19 @@
                   <!-- Collapsed until Speculative Decoding is toggled on; expands with a height transition. -->
                   <div class="launch-settings-reveal" id="spec-decoding-reveal">
                     <div class="launch-settings-reveal-inner">
-                      <p class="hint-text">When enabled, runs the model with speculative decoding (<code>--spec-type</code>). MTP drafts from a separate MTP drafter model, or from the main model's own MTP heads when no drafter is set; DFlash requires a separate DFlash drafter model. For other speculative-decoding types, set them via Extra Args instead.</p>
+                      <p class="hint-text">When enabled, runs the model with speculative decoding (<code>--spec-type</code>). Every listed draft type takes a small drafter model that predicts tokens for the target to verify; MTP is the only one where the drafter is optional (it falls back to MTP heads built into the main model). The n-gram / lookup speculative types don't take a drafter model and aren't exposed here; use Extra Args for those.</p>
                       <div class="launch-inline-settings-grid">
                         <div class="form-group">
                           <span class="label-row">
                             <label for="f-spec-type">Draft Type</label>
-                            <span class="info-tip" tabindex="0" role="button" aria-label="Draft Type help" data-tip="Value passed to --spec-type. draft-mtp drafts from an MTP drafter model, falling back to the main model's built-in MTP heads when no Draft Model is set. draft-dflash runs a separate DFlash drafter model alongside it."><i class="fa-solid fa-circle-info"></i></span>
+                            <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Draft Type help" data-tip="Maps to llama-server --spec-type. draft-simple: classic speculative decoding with a plain smaller model (same tokenizer as the target). draft-mtp: Multi-Token Prediction; drafts from a separate MTP drafter or from the main model's built-in MTP heads when Draft Model is blank. draft-dflash: Block-Diffusion Flash drafter (needs a DFlash checkpoint). draft-dspark: DSpark drafter (newer, same family as DFlash). draft-eagle3: EAGLE-3 drafter (needs an EAGLE-3-format checkpoint). All except MTP require a Draft Model."><i class="fa-solid fa-circle-info"></i></span>
                           </span>
                           <select id="f-spec-type" class="launch-settings-select">
+                            <option value="draft-simple">Draft (draft-simple)</option>
                             <option value="draft-mtp" selected>MTP (draft-mtp)</option>
                             <option value="draft-dflash">DFlash (draft-dflash)</option>
+                            <option value="draft-dspark">DSpark (draft-dspark)</option>
+                            <option value="draft-eagle3">EAGLE-3 (draft-eagle3)</option>
                           </select>
                         </div>
                         <div class="form-group">
@@ -402,11 +405,38 @@
                       <div class="form-group spec-draft-model-row" id="spec-draft-model-row">
                         <span class="label-row">
                           <label for="f-spec-draft-model">Draft Model <span class="muted" id="spec-draft-model-req">(optional)</span></label>
-                          <span class="info-tip" tabindex="0" role="button" aria-label="Draft Model help" data-tip="Path to the drafter model passed as -md. Pick a downloaded model from the list or type a path under the models directory. Required for DFlash; optional for MTP, where leaving it blank uses the main model's built-in MTP heads."><i class="fa-solid fa-circle-info"></i></span>
+                          <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Draft Model help" data-tip="Path to the drafter model passed as -md. Pick a downloaded model from the list or type a path under the models directory. Required for draft-simple, draft-dflash, draft-dspark, draft-eagle3; optional for draft-mtp, where leaving it blank uses the main model's built-in MTP heads. The drafter format has to match the Draft Type: a plain smaller model for draft-simple, a DFlash / DSpark / EAGLE-3 checkpoint for those types respectively."><i class="fa-solid fa-circle-info"></i></span>
                         </span>
                         <input id="f-spec-draft-model" type="text" list="spec-draft-model-options" placeholder="/models/gemma-4-12B-it-qat-assistant-MTP/gemma-4-12B-it-qat-assistant-MTP-Q8_0.gguf" />
                         <datalist id="spec-draft-model-options"></datalist>
                       </div>
+                      <details class="spec-advanced">
+                        <summary>Advanced</summary>
+                        <p class="hint-text">All three fields are optional. Leave a field blank and llamaMan omits the flag entirely so llama-server uses its own default (defaults drift across llama.cpp versions, which is why we don't hard-code them here).</p>
+                        <div class="launch-inline-settings-grid">
+                          <div class="form-group">
+                            <span class="label-row">
+                              <label for="f-spec-draft-n-min">Draft N Min</label>
+                              <span class="info-tip" tabindex="0" role="button" aria-label="Draft N Min help" data-tip="Value passed to --spec-draft-n-min: minimum tokens to draft per step. Blank omits the flag."><i class="fa-solid fa-circle-info"></i></span>
+                            </span>
+                            <input id="f-spec-draft-n-min" class="launch-settings-input" type="number" min="0" step="1" placeholder="(auto)" />
+                          </div>
+                          <div class="form-group">
+                            <span class="label-row">
+                              <label for="f-spec-draft-p-split">Draft P Split</label>
+                              <span class="info-tip" tabindex="0" role="button" aria-label="Draft P Split help" data-tip="Value passed to --spec-draft-p-split: probability threshold at which drafting splits a batch. Range 0-1. Blank omits the flag."><i class="fa-solid fa-circle-info"></i></span>
+                            </span>
+                            <input id="f-spec-draft-p-split" class="launch-settings-input" type="number" min="0" max="1" step="0.01" placeholder="(auto)" />
+                          </div>
+                          <div class="form-group">
+                            <span class="label-row">
+                              <label for="f-spec-draft-p-min">Draft P Min</label>
+                              <span class="info-tip" tabindex="0" role="button" aria-label="Draft P Min help" data-tip="Value passed to --spec-draft-p-min: minimum probability for greedy acceptance of a drafted token. Range 0-1. Blank omits the flag."><i class="fa-solid fa-circle-info"></i></span>
+                            </span>
+                            <input id="f-spec-draft-p-min" class="launch-settings-input" type="number" min="0" max="1" step="0.01" placeholder="(auto)" />
+                          </div>
+                        </div>
+                      </details>
                     </div>
                   </div>
                 </div>
