@@ -162,6 +162,12 @@ def api_preset_save(model_path):
         "gpu_devices": body.get("gpu_devices", ""),
         "split_mode": (body.get("split_mode") or "").strip().lower(),
         "tensor_split": (body.get("tensor_split") or "").strip(),
+        # Flash Attention + KV cache quantization. Shared cluster-wide (not
+        # per-node hardware) because these are semantic knobs describing the
+        # model's runtime behavior, not the node's topology - same as ctx_size.
+        "flash_attn": bool(body.get("flash_attn", False)),
+        "cache_type_k": (body.get("cache_type_k") or "").strip().lower(),
+        "cache_type_v": (body.get("cache_type_v") or "").strip().lower(),
         "idle_timeout_min": body.get("idle_timeout_min", 0),
         "max_concurrent": body.get("max_concurrent", 0),
         "max_queue_depth": body.get("max_queue_depth", 200),

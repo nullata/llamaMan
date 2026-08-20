@@ -118,6 +118,26 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
     tensor_split = (config.get("tensor_split") or "").strip()
     if tensor_split:
         cmd += ["--tensor-split", tensor_split]
+    # Flash Attention + KV cache quantization. Flash-attn is a plain toggle;
+    # cache types map to --cache-type-k / --cache-type-v. Only emit cache-type
+    # flags when the user picked a non-default value (llama.cpp's own default
+    # is f16 for both), and only from a whitelist of the types llama-server
+    # actually accepts - a corrupt/hand-crafted value would otherwise make the
+    # server refuse to start with an opaque error. NB: llama-server itself
+    # enforces "quantized V cache requires --flash-attn" and will throw on
+    # startup if that combination is passed; the UI grey-out prevents it, but
+    # we deliberately don't second-guess here so API callers see the real
+    # error message rather than a silently-dropped flag.
+    if config.get("flash_attn"):
+        cmd += ["--flash-attn"]
+    _ALLOWED_CACHE_TYPES = {"f32", "f16", "bf16", "q8_0", "q4_0", "q4_1",
+                            "iq4_nl", "q5_0", "q5_1"}
+    cache_type_k = (config.get("cache_type_k") or "").strip().lower()
+    if cache_type_k and cache_type_k != "f16" and cache_type_k in _ALLOWED_CACHE_TYPES:
+        cmd += ["--cache-type-k", cache_type_k]
+    cache_type_v = (config.get("cache_type_v") or "").strip().lower()
+    if cache_type_v and cache_type_v != "f16" and cache_type_v in _ALLOWED_CACHE_TYPES:
+        cmd += ["--cache-type-v", cache_type_v]
     # When this instance opts into a queue-group alias, also tell llama-server
     # to advertise itself under that name (--alias). Two effects: clients
     # hitting THIS instance's port directly see the group name in /v1/models

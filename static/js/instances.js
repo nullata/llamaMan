@@ -629,6 +629,46 @@ async function refreshTensorSplitAutoPreview() {
   hint.textContent = `→ auto at launch: ${auto.value}   (${parts.join(' : ')} from total VRAM)`;
 }
 
+// -------------------------------------------------------------------------
+// Model Settings section
+// -------------------------------------------------------------------------
+// V Cache Type must grey out when Flash Attention is off: llama-server's
+// llama-context.cpp guard throws "quantized V cache was requested, but this
+// requires Flash Attention" if it sees a quantized type_v without flash-attn.
+// K cache has no such guard, so K Cache Type stays enabled regardless.
+// If the V dropdown already sat on a quantized value when the user turns
+// flash-attn off, we snap it back to f16 so the form can never submit a
+// combination llama-server would refuse - matches the way the other section
+// updaters clear stale state rather than trust the user to notice.
+const _CACHE_TYPE_QUANTIZED = new Set(['q8_0', 'q5_1', 'q5_0', 'iq4_nl', 'q4_1', 'q4_0']);
+
+function updateModelSettingsState() {
+  const flashAttnEl = document.getElementById('f-flash-attn');
+  const ctvEl = document.getElementById('f-cache-type-v');
+  const ctvGroup = document.getElementById('f-cache-type-v-group');
+  const hint = document.getElementById('model-settings-hint');
+  if (!flashAttnEl || !ctvEl) return;
+
+  const flashOn = flashAttnEl.checked;
+  ctvEl.disabled = !flashOn;
+  if (ctvGroup) ctvGroup.classList.toggle('gpu-field-disabled', !flashOn);
+
+  // Downgrade a stale quantized V to f16 the moment flash-attn goes off, so
+  // toggling flash-attn off never leaves the form pointing at a launch that
+  // llama-server would reject. The user's original pick is not "remembered"
+  // and re-applied when flash-attn goes back on - that would be more magic
+  // than the section is worth, and defaulting to f16 matches the safe path.
+  if (!flashOn && _CACHE_TYPE_QUANTIZED.has(ctvEl.value)) {
+    ctvEl.value = 'f16';
+  }
+
+  if (hint) {
+    hint.textContent = flashOn
+      ? ''
+      : 'V Cache Type quantization requires Flash Attention.';
+  }
+}
+
 // The Quick Launch button lives in the Settings heading and only makes sense
 // when the card is collapsed (an expanded card has its own Launch button) and a
 // model is selected (its preset is already loaded into the hidden form).
@@ -672,6 +712,9 @@ function readLaunchForm() {
     gpu_devices: document.getElementById('f-gpu-devices').value.trim(),
     split_mode: document.getElementById('f-split-mode').value.trim(),
     tensor_split: document.getElementById('f-tensor-split').value.trim(),
+    flash_attn: document.getElementById('f-flash-attn').checked,
+    cache_type_k: document.getElementById('f-cache-type-k').value.trim(),
+    cache_type_v: document.getElementById('f-cache-type-v').value.trim(),
     idle_timeout_min: parseInt(document.getElementById('f-idle-timeout').value) || 0,
     max_concurrent: parseInt(document.getElementById('f-max-concurrent').value) || 0,
     max_queue_depth: parseInt(document.getElementById('f-max-queue-depth').value) || 200,
@@ -888,6 +931,11 @@ const tensorSplitField = document.getElementById('f-tensor-split');
 // below it - it shows only while the field is empty.
 if (tensorSplitField) tensorSplitField.addEventListener('input', refreshTensorSplitAutoPreview);
 if (typeof updateGpuSettingsState === 'function') updateGpuSettingsState();
+
+// Model Settings: flash-attn toggle gates the V Cache Type dropdown.
+const flashAttnToggle = document.getElementById('f-flash-attn');
+if (flashAttnToggle) flashAttnToggle.addEventListener('change', updateModelSettingsState);
+if (typeof updateModelSettingsState === 'function') updateModelSettingsState();
 
 // A model can also be set by typing a path, not just by clicking the library.
 const quickLaunchModelField = document.getElementById('f-model-path');

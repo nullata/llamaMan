@@ -330,6 +330,68 @@ class InstancesCreateRouteSplitFieldsTests(unittest.TestCase):
         self.assertEqual(kwargs["tensor_split"], "")
 
 
+class InstancesRestartRouteSplitFieldsTests(unittest.TestCase):
+    """POST /api/instances/<id>/restart reads the stopped instance's config
+    and calls launch_instance again with those values. If either split field
+    isn't forwarded, a restart silently reverts them to defaults - which
+    would look like the feature "forgot" itself the first time an operator
+    stops+starts an instance to apply an unrelated change."""
+
+    def setUp(self):
+        self.app = Flask(__name__)
+        self.app.register_blueprint(instances_api.bp)
+        self.client = self.app.test_client()
+        with instances_lock:
+            self._saved_instances = {inst_id: dict(inst) for inst_id, inst in instances.items()}
+            instances.clear()
+
+    def tearDown(self):
+        with instances_lock:
+            instances.clear()
+            instances.update(self._saved_instances)
+
+    @patch("api.instances.save_state")
+    @patch("api.instances.release_instance_reservations")
+    @patch("api.instances.is_port_available", return_value=True)
+    @patch("api.instances._admin_ui_enforces_eviction", return_value=False)
+    @patch("api.instances._would_ui_launch_exceed_limit", return_value=False)
+    @patch("api.instances._merge_preset_into_config", side_effect=lambda _p, cfg: cfg)
+    @patch("api.instances.launch_instance")
+    def test_restart_route_preserves_split_fields(
+        self, launch_mock, _merge_mock, _would_exceed_mock, _admin_mock,
+        _is_port_mock, _release_mock, _save_state_mock,
+    ):
+        # _merge_preset_into_config is patched to identity so this test isolates
+        # the restart wiring from the merge behavior (which has its own tests
+        # above) - here we care that config -> launch_instance is complete.
+        launch_mock.return_value = ({"id": "inst-1"}, None)
+
+        with instances_lock:
+            instances["inst-1"] = {
+                "id": "inst-1",
+                "model_path": "/models/chat.gguf",
+                "port": 8000,
+                "status": "stopped",
+                "stats": {},
+                "config": {
+                    "n_gpu_layers": -1,
+                    "ctx_size": 4096,
+                    "split_mode": "row",
+                    "tensor_split": "24,16",
+                },
+            }
+
+        with patch("api.instances._public_instance", side_effect=lambda inst: inst):
+            resp = self.client.post("/api/instances/inst-1/restart", json={})
+
+        # A launched inst is returned as 200; the exact envelope isn't the
+        # point - what matters is that launch_instance saw both fields.
+        self.assertIn(resp.status_code, (200, 201))
+        kwargs = launch_mock.call_args.kwargs
+        self.assertEqual(kwargs["split_mode"], "row")
+        self.assertEqual(kwargs["tensor_split"], "24,16")
+
+
 class MergePresetIntoConfigSplitFieldsTests(unittest.TestCase):
     """_merge_preset_into_config is the "live preset apply" path - the reaper
     and the periodic re-read use it to fold a saved preset onto a running

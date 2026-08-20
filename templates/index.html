@@ -157,6 +157,7 @@
                 <div class="form-group full launch-settings-section" id="model-settings-section">
                   <div class="launch-settings-section-header">
                     <h3>Model Settings</h3>
+                    <span id="model-settings-hint" class="text-meta"></span>
                   </div>
                   <div class="launch-section-grid">
                     <div class="form-group">
@@ -172,6 +173,50 @@
                         <span class="info-tip" tabindex="0" role="button" aria-label="Parallel Slots help" data-tip="Number of concurrent decoding slots llama-server allocates (-np). Each slot can serve one request at a time."><i class="fa-solid fa-circle-info"></i></span>
                       </span>
                       <input id="f-parallel" type="number" placeholder="(default 1)" min="1" />
+                    </div>
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-cache-type-k">K Cache Type</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="K Cache Type help" data-tip="Maps to llama-server --cache-type-k. Precision for the K (keys) side of the KV cache. Default f16. Quantized types (q8_0, q4_0, ...) reduce the K portion of KV memory at a small quality cost - q8_0 is near-lossless on most models, q4_0 more aggressive. Works with or without Flash Attention. Total KV cache memory scales with ctx_size and parallel slots, so cutting it here matters more at long contexts."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <select id="f-cache-type-k">
+                        <option value="f16" selected>f16 (default)</option>
+                        <option value="f32">f32</option>
+                        <option value="bf16">bf16</option>
+                        <option value="q8_0">q8_0</option>
+                        <option value="q5_1">q5_1</option>
+                        <option value="q5_0">q5_0</option>
+                        <option value="iq4_nl">iq4_nl</option>
+                        <option value="q4_1">q4_1</option>
+                        <option value="q4_0">q4_0</option>
+                      </select>
+                    </div>
+                    <div class="form-group" id="f-cache-type-v-group">
+                      <span class="label-row">
+                        <label for="f-cache-type-v">V Cache Type</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="V Cache Type help" data-tip="Maps to llama-server --cache-type-v. Precision for the V (values) side of the KV cache. Default f16. Same values as K Cache Type. Any quantized value (q8_0, q4_0, ...) REQUIRES Flash Attention to be on - llama-server refuses to start otherwise with 'quantized V cache was requested, but this requires Flash Attention'. V is typically less sensitive to quantization than K."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <select id="f-cache-type-v">
+                        <option value="f16" selected>f16 (default)</option>
+                        <option value="f32">f32</option>
+                        <option value="bf16">bf16</option>
+                        <option value="q8_0">q8_0</option>
+                        <option value="q5_1">q5_1</option>
+                        <option value="q5_0">q5_0</option>
+                        <option value="iq4_nl">iq4_nl</option>
+                        <option value="q4_1">q4_1</option>
+                        <option value="q4_0">q4_0</option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-flash-attn">Flash Attention</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Flash Attention help" data-tip="Maps to llama-server --flash-attn. Enables the fused Flash Attention kernel: faster prompt processing and lower activation memory during inference. Independent of KV cache type, but a quantized V Cache Type REQUIRES this to be on - llama-server throws 'quantized V cache was requested, but this requires Flash Attention' otherwise. Not always available on every backend/GPU; if the model errors at launch, disable this."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <label class="toggle-switch" for="f-flash-attn" aria-label="Enable Flash Attention">
+                        <input id="f-flash-attn" type="checkbox" />
+                        <span class="toggle-slider"></span>
+                      </label>
                     </div>
                   </div>
                 </div>

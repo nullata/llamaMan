@@ -472,6 +472,14 @@ async function selectModel(model, el) {
       document.getElementById('f-proxy-sampling-top-p').value = p.proxy_sampling_top_p ?? 0.95;
       document.getElementById('f-proxy-sampling-presence-penalty').value = p.proxy_sampling_presence_penalty ?? 0.0;
       document.getElementById('f-proxy-sampling-repeat-penalty').value = p.proxy_sampling_repeat_penalty ?? 0.0;
+      // Flash Attention + KV cache types are shared across nodes (behavior
+      // knobs, not topology) - restore them here alongside other shared fields.
+      const flashAttnEl = document.getElementById('f-flash-attn');
+      if (flashAttnEl) flashAttnEl.checked = !!p.flash_attn;
+      const ctkEl = document.getElementById('f-cache-type-k');
+      if (ctkEl) ctkEl.value = p.cache_type_k || 'f16';
+      const ctvEl = document.getElementById('f-cache-type-v');
+      if (ctvEl) ctvEl.value = p.cache_type_v || 'f16';
       document.getElementById('f-note').value = p.note || '';
       // Per-node hardware (base, overlaid with the selected node's override)
       applyPresetHardwareForNode(p, _launchNode());
@@ -479,6 +487,7 @@ async function selectModel(model, el) {
       if (typeof updateSpecState === 'function') updateSpecState();
       if (typeof updateMmprojState === 'function') updateMmprojState();
       if (typeof updateGpuSettingsState === 'function') updateGpuSettingsState();
+      if (typeof updateModelSettingsState === 'function') updateModelSettingsState();
       toast('Preset loaded', 'info');
     }
   } catch (e) { /* no preset, use defaults */ }
@@ -602,6 +611,7 @@ function resetLaunchForm() {
   const tsHint = document.getElementById('f-tensor-split-hint');
   if (tsHint) tsHint.textContent = '';
   if (typeof updateGpuSettingsState === 'function') updateGpuSettingsState();
+  if (typeof updateModelSettingsState === 'function') updateModelSettingsState();
   if (typeof updateQuickLaunchVisibility === 'function') updateQuickLaunchVisibility();
 }
 
