@@ -483,8 +483,18 @@ async function selectModel(model, el) {
       document.getElementById('f-proxy-sampling-repeat-penalty').value = p.proxy_sampling_repeat_penalty ?? 0.0;
       // Flash Attention + KV cache types are shared across nodes (behavior
       // knobs, not topology) - restore them here alongside other shared fields.
+      // flash_attn is llama.cpp's tri-state ('on'|'off'|'auto'); legacy presets
+      // stored a bool, so coerce true -> 'on' / false -> 'off' and fall back to
+      // 'auto' for anything else (missing, null, unknown string).
       const flashAttnEl = document.getElementById('f-flash-attn');
-      if (flashAttnEl) flashAttnEl.checked = !!p.flash_attn;
+      if (flashAttnEl) {
+        let fa = p.flash_attn;
+        if (fa === true) fa = 'on';
+        else if (fa === false) fa = 'off';
+        else if (typeof fa === 'string') fa = fa.trim().toLowerCase();
+        if (fa !== 'on' && fa !== 'off' && fa !== 'auto') fa = 'auto';
+        flashAttnEl.value = fa;
+      }
       const ctkEl = document.getElementById('f-cache-type-k');
       if (ctkEl) ctkEl.value = p.cache_type_k || 'f16';
       const ctvEl = document.getElementById('f-cache-type-v');

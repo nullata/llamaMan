@@ -33,8 +33,8 @@ from core.gpu import get_vendor
 from core.helpers import (
     build_llama_cmd, ensure_docker_network, find_available_port,
     get_docker_client, is_container_running, is_port_available,
-    kill_instance_process, public_dict, read_log_file, resolve_llama_endpoint,
-    stop_container, stream_log_file,
+    kill_instance_process, normalize_flash_attn, public_dict, read_log_file,
+    resolve_llama_endpoint, stop_container, stream_log_file,
 )
 from core.proxy_sampling import parse_proxy_sampling_config
 from core.spec_decoding import DEFAULT_SPEC_TYPE, parse_spec_config
@@ -479,7 +479,7 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
                     spec_draft_p_min=None,
                     mmproj_enabled=False, mmproj_path="",
                     gpu_devices=None, split_mode="", tensor_split="",
-                    flash_attn=False, cache_type_k="", cache_type_v="",
+                    flash_attn="auto", cache_type_k="", cache_type_v="",
                     idle_timeout_min=0,
                     max_concurrent=0, max_queue_depth=200,
                     share_queue=False, share_queue_group="",
@@ -550,7 +550,9 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
         # Flash Attention + KV cache quantization (see build_llama_cmd).
         # Normalize at the boundary so downstream reads don't each have to
         # defend against case/whitespace drift from hand-crafted requests.
-        "flash_attn": bool(flash_attn),
+        # flash_attn is llama.cpp's tri-state ('on'|'off'|'auto'); the helper
+        # also folds legacy True/False from pre-tri-state configs into it.
+        "flash_attn": normalize_flash_attn(flash_attn),
         "cache_type_k": (cache_type_k or "").strip().lower(),
         "cache_type_v": (cache_type_v or "").strip().lower(),
         "idle_timeout_min": idle_timeout_min,
@@ -867,7 +869,7 @@ def api_instances_create():
         gpu_devices=body.get("gpu_devices", "").strip() or None,
         split_mode=body.get("split_mode", "").strip(),
         tensor_split=body.get("tensor_split", "").strip(),
-        flash_attn=bool(body.get("flash_attn", False)),
+        flash_attn=body.get("flash_attn", "auto"),
         cache_type_k=body.get("cache_type_k", "").strip(),
         cache_type_v=body.get("cache_type_v", "").strip(),
         idle_timeout_min=int(body.get("idle_timeout_min", 0)),
@@ -966,7 +968,7 @@ def api_instances_restart(inst_id):
         gpu_devices=config.get("gpu_devices"),
         split_mode=config.get("split_mode", ""),
         tensor_split=config.get("tensor_split", ""),
-        flash_attn=config.get("flash_attn", False),
+        flash_attn=config.get("flash_attn", "auto"),
         cache_type_k=config.get("cache_type_k", ""),
         cache_type_v=config.get("cache_type_v", ""),
         idle_timeout_min=config.get("idle_timeout_min", 0),

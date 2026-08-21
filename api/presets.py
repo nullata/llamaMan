@@ -2,6 +2,7 @@
 
 from flask import Blueprint, jsonify, request
 
+from core.helpers import normalize_flash_attn
 from core.model_alias import PRETTY_NAME_KEY, existing_aliases
 from core.model_alias import invalidate as invalidate_alias_cache
 from core.model_alias import _normalize as _normalize_alias
@@ -165,7 +166,9 @@ def api_preset_save(model_path):
         # Flash Attention + KV cache quantization. Shared cluster-wide (not
         # per-node hardware) because these are semantic knobs describing the
         # model's runtime behavior, not the node's topology - same as ctx_size.
-        "flash_attn": bool(body.get("flash_attn", False)),
+        # flash_attn is llama.cpp's tri-state ('on'|'off'|'auto'); the helper
+        # also folds legacy True/False from pre-tri-state presets into it.
+        "flash_attn": normalize_flash_attn(body.get("flash_attn")),
         "cache_type_k": (body.get("cache_type_k") or "").strip().lower(),
         "cache_type_v": (body.get("cache_type_v") or "").strip().lower(),
         "idle_timeout_min": body.get("idle_timeout_min", 0),

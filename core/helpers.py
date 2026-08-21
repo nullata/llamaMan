@@ -16,6 +16,28 @@ def model_name_from_path(path: str) -> str:
     return Path(path).stem.lower()
 
 
+def normalize_flash_attn(value) -> str:
+    """Coerce any accepted flash_attn input to llama.cpp's tri-state string.
+
+    llama.cpp switched --flash-attn from a bare boolean flag to a valued flag
+    ('on'|'off'|'auto', default 'auto'). We accept:
+      - the new strings ('on'/'off'/'auto'), case- and whitespace-tolerant
+      - legacy bools from configs/presets saved before the tri-state rollout,
+        mapped True -> 'on' and False -> 'off' so behavior is preserved (the
+        old code emitted a bare --flash-attn only when True, which under the
+        old semantics meant "force on"; False meant "force off")
+      - anything else (None, empty, garbage) -> 'auto', which mirrors the
+        server's own default when the flag is omitted.
+    """
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("on", "off", "auto"):
+            return s
+    return "auto"
+
+
 def request_local_worker(url, *, method="POST", json=None, data=None,
                          headers=None, stream=False):
     """Send an HTTP request to a local llama-server with bounded connect
@@ -118,8 +140,14 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
     tensor_split = (config.get("tensor_split") or "").strip()
     if tensor_split:
         cmd += ["--tensor-split", tensor_split]
-    # Flash Attention + KV cache quantization. Flash-attn is a plain toggle;
-    # cache types map to --cache-type-k / --cache-type-v. Only emit cache-type
+    # Flash Attention + KV cache quantization. As of the tri-state llama.cpp
+    # rollout --flash-attn takes a value ('on'|'off'|'auto', default 'auto'),
+    # so a bare --flash-attn now swallows the next arg instead of enabling
+    # anything. Emit the value explicitly for 'on'/'off' and omit the flag
+    # entirely for 'auto' (which is llama.cpp's own default when the flag is
+    # absent) - that keeps the command line quiet for the common case.
+    #
+    # Cache types map to --cache-type-k / --cache-type-v. Only emit cache-type
     # flags when the user picked a non-default value (llama.cpp's own default
     # is f16 for both), and only from a whitelist of the types llama-server
     # actually accepts - a corrupt/hand-crafted value would otherwise make the
@@ -128,8 +156,9 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
     # startup if that combination is passed; the UI grey-out prevents it, but
     # we deliberately don't second-guess here so API callers see the real
     # error message rather than a silently-dropped flag.
-    if config.get("flash_attn"):
-        cmd += ["--flash-attn"]
+    flash_attn = normalize_flash_attn(config.get("flash_attn"))
+    if flash_attn in ("on", "off"):
+        cmd += ["--flash-attn", flash_attn]
     _ALLOWED_CACHE_TYPES = {"f32", "f16", "bf16", "q8_0", "q4_0", "q4_1",
                             "iq4_nl", "q5_0", "q5_1"}
     cache_type_k = (config.get("cache_type_k") or "").strip().lower()
