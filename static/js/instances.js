@@ -737,6 +737,10 @@ function readLaunchForm() {
     spec_draft_model: document.getElementById('f-spec-draft-model').value.trim(),
     mmproj_enabled: document.getElementById('f-mmproj-enabled').checked,
     mmproj_path: document.getElementById('f-mmproj-path').value.trim(),
+    pdf_input_enabled: document.getElementById('f-pdf-input-enabled')?.checked || false,
+    pdf_extract_text_first: document.getElementById('f-pdf-extract-text-first')?.checked || false,
+    pdf_dpi: parseInt(document.getElementById('f-pdf-dpi')?.value, 10) || 200,
+    pdf_max_pages: parseInt(document.getElementById('f-pdf-max-pages')?.value, 10) || 20,
     proxy_sampling_override_enabled: document.getElementById('f-proxy-sampling-override-enabled').checked,
     proxy_sampling_temperature: parseFloat(document.getElementById('f-proxy-sampling-temperature').value),
     proxy_sampling_top_k: parseInt(document.getElementById('f-proxy-sampling-top-k').value, 10),
@@ -764,6 +768,15 @@ function readLaunchForm() {
   }
   if (body.mmproj_enabled && !body.mmproj_path) {
     throw new Error('Image input requires an MMPROJ model path');
+  }
+  if (body.pdf_input_enabled && !body.mmproj_enabled) {
+    throw new Error('PDF input requires image input (MMPROJ) to be enabled');
+  }
+  if (body.pdf_dpi < 72 || body.pdf_dpi > 600) {
+    throw new Error('PDF DPI must be between 72 and 600');
+  }
+  if (body.pdf_max_pages < 1 || body.pdf_max_pages > 200) {
+    throw new Error('Max PDF pages must be between 1 and 200');
   }
   const threads = document.getElementById('f-threads').value.trim();
   if (threads) body.threads = parseInt(threads);

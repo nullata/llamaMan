@@ -443,17 +443,17 @@
                 </div>
                 <div class="form-group full launch-settings-section">
                   <div class="launch-settings-section-header">
-                    <h3>Image Input</h3>
+                    <h3>Image &amp; PDF Input</h3>
                     <label class="toggle-switch" for="f-mmproj-enabled"
-                      aria-label="Enable image input">
+                      aria-label="Enable image and PDF input">
                       <input id="f-mmproj-enabled" type="checkbox" />
                       <span class="toggle-slider"></span>
                     </label>
                   </div>
-                  <!-- Collapsed until Image Input is toggled on; expands with a height transition. -->
+                  <!-- Collapsed until Image &amp; PDF Input is toggled on; expands with a height transition. -->
                   <div class="launch-settings-reveal" id="mmproj-reveal">
                     <div class="launch-settings-reveal-inner">
-                      <p class="hint-text">When enabled, loads a multimodal projector (<code>--mmproj</code>) so a vision model can accept image inputs. Point it at the model's mmproj GGUF alongside the main weights.</p>
+                      <p class="hint-text">When enabled, loads a multimodal projector (<code>--mmproj</code>) so a vision model can accept image inputs. Point it at the model's mmproj GGUF alongside the main weights. Optionally accept PDF uploads: pages are rasterized to images before the vision model sees them.</p>
                       <div class="form-group">
                         <span class="label-row">
                           <label for="f-mmproj-path">MMPROJ Model</label>
@@ -461,6 +461,39 @@
                         </span>
                         <input id="f-mmproj-path" type="text" list="mmproj-model-options" placeholder="/models/Qwen2-VL-7B-Instruct/mmproj-Qwen2-VL-7B-Instruct-f16.gguf" />
                         <datalist id="mmproj-model-options"></datalist>
+                      </div>
+                      <div class="form-group full launch-toggle-table">
+                        <div class="launch-toggle-pair">
+                          <label for="f-pdf-input-enabled">Accept PDF uploads</label>
+                          <label class="toggle-switch" for="f-pdf-input-enabled" aria-label="Accept PDF uploads">
+                            <input id="f-pdf-input-enabled" type="checkbox" />
+                            <span class="toggle-slider"></span>
+                          </label>
+                        </div>
+                        <div class="launch-toggle-pair toggle-right">
+                          <label for="f-pdf-extract-text-first">Try text layer first</label>
+                          <label class="toggle-switch" for="f-pdf-extract-text-first" aria-label="Try PDF text layer first">
+                            <input id="f-pdf-extract-text-first" type="checkbox" />
+                            <span class="toggle-slider"></span>
+                          </label>
+                        </div>
+                      </div>
+                      <p class="hint-text">Text-layer-first skips rasterization for born-digital PDFs (Word/LaTeX/browser print) and inlines their embedded text instead. Off by default: predictable behavior on every PDF, and layout information is preserved for the vision model. Scanned PDFs always fall through to rasterization.</p>
+                      <div class="form-row">
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-pdf-dpi">PDF DPI</label>
+                            <span class="info-tip" tabindex="0" role="button" aria-label="PDF DPI help" data-tip="Rasterization resolution. 200 is a solid default; 300 for dense text; higher wastes CPU and RAM without extra quality (vision models resize internally)."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-pdf-dpi" type="number" min="72" max="600" step="1" placeholder="200" />
+                        </div>
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-pdf-max-pages">Max PDF Pages</label>
+                            <span class="info-tip" tabindex="0" role="button" aria-label="Max PDF pages help" data-tip="Per-request cap. A PDF over this size returns 400 rather than being silently truncated."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-pdf-max-pages" type="number" min="1" max="200" step="1" placeholder="20" />
+                        </div>
                       </div>
                     </div>
                   </div>

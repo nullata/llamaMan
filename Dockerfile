@@ -2,7 +2,9 @@ FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -30,6 +32,7 @@ ENV INTERNAL_PORT_RANGE_END=9020
 ENV LLAMAMAN_MAX_MODELS=1
 ENV LLAMAMAN_PROXY_PORT=42069
 ENV LLAMAMAN_IDLE_TIMEOUT=0
+ENV LLAMAMAN_PDF_MAX_CONCURRENT=4
 ENV LLAMA_NETWORK=llamaman-net
 ENV LLAMA_CONTAINER_PREFIX=llamaman-
 

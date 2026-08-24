@@ -464,6 +464,14 @@ async function selectModel(model, el) {
       if (pMinEl) pMinEl.value = p.spec_draft_p_min ?? '';
       document.getElementById('f-mmproj-enabled').checked = !!p.mmproj_enabled;
       document.getElementById('f-mmproj-path').value = p.mmproj_path || '';
+      const pdfIn = document.getElementById('f-pdf-input-enabled');
+      if (pdfIn) pdfIn.checked = !!p.pdf_input_enabled;
+      const pdfText = document.getElementById('f-pdf-extract-text-first');
+      if (pdfText) pdfText.checked = !!p.pdf_extract_text_first;
+      const pdfDpi = document.getElementById('f-pdf-dpi');
+      if (pdfDpi) pdfDpi.value = p.pdf_dpi || 200;
+      const pdfMax = document.getElementById('f-pdf-max-pages');
+      if (pdfMax) pdfMax.value = p.pdf_max_pages || 20;
       document.getElementById('f-idle-timeout').value = p.idle_timeout_min || 0;
       document.getElementById('f-max-concurrent').value = p.max_concurrent || 0;
       document.getElementById('f-max-queue-depth').value = p.max_queue_depth || 200;

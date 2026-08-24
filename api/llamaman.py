@@ -654,20 +654,59 @@ def _sniff_image_mime(b64: str) -> str:
     return "image/jpeg"
 
 
-def _translate_message(msg: dict) -> dict:
+class _PDFExpansionError(Exception):
+    """Wraps a core.pdf_input.PDFError with a client-facing message. Callers
+    convert this into a 400 response so a broken PDF surfaces as a normal
+    client error, not a 500."""
+
+
+def _expand_pdf_in_openai_body(body: dict, inst_config: dict) -> dict:
+    """Walk an OpenAI chat body and rewrite any PDF-carrying content blocks
+    (image_url with application/pdf, or type=file with inline file_data) into
+    text or image_url blocks before forwarding to llama-server.
+
+    Safe to call unconditionally: expand_pdf_blocks is a no-op when
+    inst_config.pdf_input_enabled is False or when a message has no PDFs."""
+    from core.pdf_input import expand_pdf_blocks, PDFError
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return body
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        content = m.get("content")
+        if isinstance(content, list):
+            try:
+                m["content"] = expand_pdf_blocks(content, inst_config)
+            except PDFError as e:
+                raise _PDFExpansionError(f"PDF input error: {e}")
+    return body
+
+
+def _translate_message(msg: dict, pdf_config: dict | None = None) -> dict:
     """Convert an Ollama-style message into an OpenAI one, lifting the native
     `images` array (base64 strings) into `image_url` content blocks so vision
-    models served via llama.cpp's OpenAI endpoint actually see them."""
+    models served via llama.cpp's OpenAI endpoint actually see them.
+
+    When PDFs appear in `images`, expand_ollama_images pulls them out and hands
+    back ready-made content blocks (text if the text-layer shortcut is on,
+    otherwise one image_url block per rasterized page). Real images stay in the
+    returned list and go through the existing lifting loop below."""
     if not isinstance(msg, dict):
         return msg
     images = msg.get("images")
     if not images or not isinstance(images, list):
         return msg
+
+    from core.pdf_input import expand_ollama_images
+    images, pdf_blocks = expand_ollama_images(images, pdf_config or {})
+
     out = {k: v for k, v in msg.items() if k != "images"}
     content = out.get("content")
     blocks = list(content) if isinstance(content, list) else [
         {"type": "text", "text": content or ""}
     ]
+    blocks.extend(pdf_blocks)
     for img in images:
         if not isinstance(img, str):
             continue
@@ -678,14 +717,14 @@ def _translate_message(msg: dict) -> dict:
     return out
 
 
-def _translate_to_openai(body: dict) -> dict:
+def _translate_to_openai(body: dict, pdf_config: dict | None = None) -> dict:
     openai_body = {
         "model": body.get("model", ""),
         "stream": body.get("stream", True),
     }
 
     if "messages" in body:
-        openai_body["messages"] = [_translate_message(m) for m in body["messages"]]
+        openai_body["messages"] = [_translate_message(m, pdf_config) for m in body["messages"]]
 
     if "prompt" in body and "messages" not in body:
         msgs = []
@@ -695,7 +734,7 @@ def _translate_to_openai(body: dict) -> dict:
         user_msg = {"role": "user", "content": body["prompt"]}
         if isinstance(body.get("images"), list) and body["images"]:
             user_msg["images"] = body["images"]
-        msgs.append(_translate_message(user_msg))
+        msgs.append(_translate_message(user_msg, pdf_config))
         openai_body["messages"] = msgs
 
     opts = body.get("options", {})
@@ -1007,7 +1046,14 @@ def _handle_request(mode: str = "chat"):
         model=model_name,
     )
 
-    openai_body = _translate_to_openai(body)
+    # Ollama path: hand the instance's config to the translator so any PDF
+    # payloads inside images[] are rewritten (to text or image_url blocks)
+    # before llama-server sees the request. llama-server has no PDF support.
+    openai_body = _translate_to_openai(body, pdf_config=inst.get("config", {}))
+    try:
+        openai_body = _expand_pdf_in_openai_body(openai_body, inst.get("config", {}))
+    except _PDFExpansionError as e:
+        return jsonify({"error": str(e)}), 400
     openai_body = apply_proxy_sampling_overrides(openai_body, effective_inference_config(inst))
     stream_qp = request.args.get("stream", "").lower()
     if stream_qp in ("false", "0", "no"):
@@ -1225,6 +1271,14 @@ def llamaman_v1_chat():
 
     if inst.get("config", {}).get("embedding_model"):
         return jsonify({"error": {"message": f"model '{model_name}' is embedding-only and cannot handle chat completions"}}), 422
+
+    # Rewrite PDF payloads before forwarding - llama-server doesn't understand
+    # them and would return an opaque decode error otherwise. No-op when the
+    # instance has pdf_input_enabled off.
+    try:
+        body = _expand_pdf_in_openai_body(body, inst.get("config", {}))
+    except _PDFExpansionError as e:
+        return jsonify({"error": {"message": str(e)}}), 400
 
     body = apply_proxy_sampling_overrides(body, effective_inference_config(inst))
 

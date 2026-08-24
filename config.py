@@ -50,6 +50,11 @@ PRESETS_FILE = os.path.join(DATA_DIR, "presets.json")
 LLAMAMAN_MAX_MODELS = int(os.environ.get("LLAMAMAN_MAX_MODELS", 0))
 LLAMAMAN_PROXY_PORT = int(os.environ.get("LLAMAMAN_PROXY_PORT", 42069))
 LLAMAMAN_IDLE_TIMEOUT = int(os.environ.get("LLAMAMAN_IDLE_TIMEOUT", 0))  # minutes, 0=disabled
+# Cap on concurrent PDF rasterizations across the whole process. Each raster is
+# CPU-heavy and can spike a few hundred MB of transient RAM, so this budget is
+# independent of any per-instance RequestGate. 4 fits a modest host; raise for
+# beefy boxes with PDF-heavy traffic.
+LLAMAMAN_PDF_MAX_CONCURRENT = int(os.environ.get("LLAMAMAN_PDF_MAX_CONCURRENT", 4))
 HEALTH_CHECK_TIMEOUT = int(os.environ.get("HEALTH_CHECK_TIMEOUT", 3))
 MODEL_LOAD_TIMEOUT = int(os.environ.get("MODEL_LOAD_TIMEOUT", 300))
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", 300))
