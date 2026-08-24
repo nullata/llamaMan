@@ -11,8 +11,9 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Universal GPU support** - single image for NVIDIA, AMD (ROCm), Intel Arc, and CPU. The GPU vendor and matching `LLAMA_IMAGE` are auto-detected at startup; `GPU_TYPE` / `LLAMA_IMAGE` override if needed.
 - **Model library** - scans `/models` for GGUF files, shows quant type and file size
 - **One-click launch** - configure GPU layers, context size, threads, multi-GPU, speculative decoding, extra args
-- **Speculative decoding** - `--spec-type` toggle for all five draft-model-family values (`draft-simple` / `draft-mtp` / `draft-dflash` / `draft-dspark` / `draft-eagle3`) with configurable draft length and an Advanced subsection for `--spec-draft-n-min` / `-p-split` / `-p-min`. Only `draft-mtp` runs without a separate drafter (built-in MTP heads)
-- **Flash Attention + KV cache quantization** - `--flash-attn [on|off|auto]` select (default Auto) and per-side `--cache-type-k` / `--cache-type-v` dropdowns; the UI enforces llama-server's "quantized V cache requires Flash Attention = On" constraint
+- **Speculative decoding** - `--spec-type` toggle for all five draft-model families, configurable draft length, Advanced subsection for `--spec-draft-n-min` / `-p-split` / `-p-min`. Only `draft-mtp` runs without a drafter (built-in MTP heads)
+- **Flash Attention + KV cache quantization** - `--flash-attn` select and per-side `--cache-type-k` / `--cache-type-v` dropdowns; UI enforces the quantized-V-requires-FA-On constraint
+- **Image & PDF Input** - load a vision model with its multimodal projector (`--mmproj`) for image inputs. Inbound PDFs are rasterized page-by-page before the model sees them; optional text-layer shortcut inlines born-digital PDFs as plain text with no raster pass. Works on OpenAI `image_url`/`file` blocks and Ollama `images[]`. Per-request DPI/max-pages caps plus a process-wide semaphore bound bursts
 - **Preset configs** - save/load per-model launch settings, with live updates to running instances where possible
 - **Download manager** - pull models from HuggingFace with speed throttling and auto-retry on failure
 - **Model update detection & re-pull** - detects when a repo has republished a model under the same filenames (requant, fixed template) via its content hash, verifies local files by hashing on disk, re-pulls through the normal download pipeline with an atomic swap. Optional background scan
@@ -30,8 +31,8 @@ A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](
 - **Require auth toggle** - enforce bearer token authentication on all endpoints (including model loading) or leave model endpoints open
 - **Persistent state** - instance history and configs survive container restarts
 - **Storage backends** - JSON files (default) or MariaDB/MySQL via SQLAlchemy
-- **Database outage survival** *(optional)* - with a database backend, keep a write-through mirror on local disk so the node keeps serving inference and saving presets/API keys/settings if the database goes away, including across a container restart. Offline changes are journalled and replayed on reconnect. Off by default
-- **Multi-node clustering** *(optional)* - run several instances as one cluster sharing a database and a secret: aggregated dashboard, cross-node launches/pulls/downloads, and multi-node shared-queue load balancing. Off by default; single-node installs are unaffected.
+- **Database outage survival** *(optional)* - with the DB backend, keep a write-through mirror on disk so the node keeps serving inference and saving presets/keys/settings if the DB goes away (across container restarts too). Offline writes are journalled and replayed on reconnect. Off by default
+- **Multi-node clustering** *(optional)* - run several instances as one cluster: aggregated dashboard, cross-node launches/pulls/downloads, and shared-queue load balancing. Off by default
 - **Proxy sampling overrides** - force temperature, top-k, top-p, presence penalty, and repeat penalty on all proxied requests, configurable per model preset
 - **CPU quota + memory limit** - CPU Threads also applies a Docker CPU quota; a Memory Limit field caps container RAM
 - **Docker image management** - pull any llama.cpp image by name, delete old local images from the UI
@@ -190,12 +191,13 @@ networks:
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLAMAMAN_NODE_NAME` | *(required)* | **Required - the container refuses to start without it.** Unique, stable identity for this deployment: the partition key for its instances, downloads, and per-node settings in storage, and its key in the cluster registry. Any string (`srv1`, a hostname, a uuid). Pick once and keep it - changing it later orphans this node's stored state. |
+| `LLAMAMAN_NODE_NAME` | *(required)* | **Required - the container refuses to start without it.** Unique, stable identity: partition key for this node's instances, downloads, per-node settings, and its cluster identity. Any string (`srv1`, hostname, uuid). Pick once and keep it - changing later orphans stored state. |
 | `LLAMA_IMAGE` | *(auto)* | llama.cpp server image for spawned containers. Auto-selected from detected GPU vendor if not set. Set explicitly to pin a version or backend (`server-cuda`, `server-rocm`, `server-sycl`, `server`). |
 | `GPU_TYPE` | *(auto-detect)* | Override GPU vendor detection: `cuda`, `rocm`, or `intel`. Leave unset to auto-detect. |
 | `LLAMA_GPU_DEVICES` | *(all)* | Comma-separated GPU indices visible to spawned containers, e.g. `0,1`. Not supported on Intel Arc. |
 | `LLAMAMAN_MAX_MODELS` | `0` | Max concurrent **chat** models via the proxy. Uses LRU eviction when the limit is reached. `0` = unlimited. |
 | `LLAMAMAN_IDLE_TIMEOUT` | `0` | Idle timeout in minutes for proxy-managed instances. Stopped instances auto-restart on next request. `0` = disabled. |
+| `LLAMAMAN_PDF_MAX_CONCURRENT` | `4` | Max concurrent PDF rasterizations process-wide. Independent of per-instance gates; each raster spawns a poppler subprocess with transient RAM, so this cap bounds bursts. |
 | `LLAMAMAN_PROXY_PORT` | `42069` | Port for the Ollama-compatible proxy. |
 | `MODELS_DIR` | `/models` | Directory scanned for model files (container path). |
 | `DATA_DIR` | `/data` | Directory for persistent config/state. |
@@ -210,14 +212,14 @@ networks:
 | `SECRET_KEY` | *(auto)* | Flask session secret. Auto-derived from machine-id if unset. |
 | `SESSION_COOKIE_NAME` | `llamaman_session` | Name of the session cookie. Namespaced so llamaman coexists with other Flask apps on the same host (cookies are scoped by host+path, not port). |
 | `DATABASE_URL` | *(unset)* | MariaDB/MySQL connection string (e.g. `mysql+pymysql://user:pass@host/db`). Unset = JSON file storage. |
-| `LLAMAMAN_DB_MIRROR` | *(unset)* | Force the local database mirror on (`1`) or off (`0`), overriding the per-node setting. Only meaningful with `DATABASE_URL`. |
+| `LLAMAMAN_DB_MIRROR` | *(unset)* | Force local DB mirror on (`1`)/off (`0`), overriding per-node setting. Only meaningful with `DATABASE_URL`. |
 | `HEALTH_CHECK_TIMEOUT` | `3` | Timeout in seconds for instance health checks. |
 | `MODEL_LOAD_TIMEOUT` | `300` | Seconds to wait for a model to become healthy during launch/relaunch. Increase for very large models. |
-| `REQUEST_TIMEOUT` | `300` | **Read** timeout in seconds for upstream requests to llama-server, cross-node inference forwarding, and gate acquire waits. On the forwarding path it covers the peer's on-demand model load plus time to first token. It does **not** govern how long a node waits for a peer to accept the connection (that is a separate 5s connect bound). |
+| `REQUEST_TIMEOUT` | `300` | **Read** timeout for upstream llama-server calls, cross-node forwarding, and gate waits. Covers peer on-demand model load + time to first token on the forwarding path. Does **not** govern peer connect time (separate 5s bound). |
 | `CLUSTER_ENABLED` | `false` | Set `true`/`1`/`yes`/`on` to join this node to a cluster. Requires `CLUSTER_SECRET` and a shared `DATABASE_URL`. See [Clustering](#clustering). |
 | `CLUSTER_SECRET` | *(unset)* | Shared bearer secret sent on every node-to-node call (`X-Cluster-Secret`). Must be identical on every node. Use a long random value over a trusted network or behind TLS. |
-| `CLUSTER_ADVERTISE_URL` | *(unset)* | How peers reach **this** node's UI/API - a hostname/IP routable from the other hosts (e.g. `http://srv1:5000`), not `localhost`. Needed for cross-node actions and shared-queue inference forwarding; a node without it is view-only and skipped as an inference target. |
-| `CLUSTER_NODE_ONLINE_WINDOW_S` | `45` | Seconds since a node's last heartbeat before it's shown offline. Raise it if nodes flap offline under load or clock skew (e.g. an unsynced WSL host). |
+| `CLUSTER_ADVERTISE_URL` | *(unset)* | How peers reach **this** node's UI/API - hostname/IP routable from other hosts (e.g. `http://srv1:5000`), not `localhost`. Without it the node is view-only and skipped as an inference target. |
+| `CLUSTER_NODE_ONLINE_WINDOW_S` | `45` | Seconds since last heartbeat before a node shows offline. Raise if nodes flap under load or clock skew. |
 
 ## First Launch
 
