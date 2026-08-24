@@ -149,6 +149,9 @@ def _admin_ui_enforces_eviction() -> bool:
 
 
 def _count_running_chat_instances(exclude_instance_id: str | None = None) -> int:
+    # Sleeping instances still count against the cap: they retain the slot
+    # claim their launcher made for that model's config. See the docstring on
+    # llamaman._count_running_instances for the full rationale.
     with instances_lock:
         return sum(
             1 for inst in instances.values()

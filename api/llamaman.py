@@ -130,7 +130,14 @@ def _find_any_instance_for_model(model_path: str) -> dict | None:
 
 
 def _count_running_instances() -> int:
-    """Count running non-embedding instances (manual + managed)."""
+    """Count non-embedding instances holding a slot against LLAMAMAN_MAX_MODELS.
+
+    Sleeping instances still count: the admin (or a prior auto-launch) claimed
+    that slot for that model's config; sleep is a resource-saving pause, not a
+    slot release. This is what makes "Allow OpenAI/Ollama API to evict
+    admin-launched models" meaningful - without it, an API request for a NEW
+    model must not displace an admin-launched sleeper. Only fully stopped
+    records (port released) are excluded."""
     with instances_lock:
         return sum(
             1 for inst in instances.values()
@@ -140,7 +147,11 @@ def _count_running_instances() -> int:
 
 
 def _get_llamaman_managed_instances() -> list[dict]:
-    """Return llamaman-managed instances sorted by LRU (eviction candidates)."""
+    """Return llamaman-managed instances sorted by LRU (eviction candidates).
+
+    Sleeping is included: freeing an admin-launched (or auto-launched) sleeper's
+    slot is a valid way to make room for a new model, and sleeping records
+    naturally sort oldest under LRU."""
     with instances_lock:
         managed = [
             inst for inst in instances.values()
@@ -153,7 +164,7 @@ def _get_llamaman_managed_instances() -> list[dict]:
 
 
 def _get_all_evictable_instances() -> list[dict]:
-    """Return ALL non-embedding running instances sorted by LRU."""
+    """Return ALL non-embedding not-fully-stopped instances sorted by LRU."""
     with instances_lock:
         all_insts = [
             inst for inst in instances.values()
@@ -315,28 +326,42 @@ def _ensure_model_running(
         preset = resolve_preset_for_node(get_storage().get_preset(model["path"]) or {}, get_node_id())
         incoming_embedding_model = preset.get("embedding_model", False)
 
-        if allow_eviction:
-            # Evict LRU Ollama-managed instances (and admin-UI ones if the
-            # override toggle is on) to stay within LLAMAMAN_MAX_MODELS.
-            room = _evict_llamaman_instances_if_needed(
-                incoming_embedding_model=incoming_embedding_model,
-                can_evict_admin=can_evict_admin,
-            )
-            if not room:
-                return None, (
-                    f"model limit reached (LLAMAMAN_MAX_MODELS={LLAMAMAN_MAX_MODELS}); "
-                    "admin-launched models cannot be evicted via the API"
+        # Waking an existing sleeping/stopped instance for its own model does
+        # NOT consume a new slot - that slot was already claimed at launch
+        # time and sleep only pauses the container. The cap check (and any
+        # eviction) is for adding a fresh model to the mix. Skipping it here
+        # is what fixes the "cap saturated by sleepers, request for one of
+        # those sleepers returns 503" bug without weakening the protection
+        # the "Allow API to evict admin-launched" toggles are meant to give:
+        # an API request for a DIFFERENT model still falls through to the
+        # normal cap check below.
+        would_wake_existing = bool(
+            existing and existing["status"] in ("sleeping", "stopped")
+        )
+
+        if not would_wake_existing:
+            if allow_eviction:
+                # Evict LRU Ollama-managed instances (and admin-UI ones if the
+                # override toggle is on) to stay within LLAMAMAN_MAX_MODELS.
+                room = _evict_llamaman_instances_if_needed(
+                    incoming_embedding_model=incoming_embedding_model,
+                    can_evict_admin=can_evict_admin,
                 )
-        else:
-            # OpenAI API: never evict - only proceed if there is already room.
-            if not incoming_embedding_model and LLAMAMAN_MAX_MODELS > 0:
-                if _count_running_instances() >= LLAMAMAN_MAX_MODELS:
+                if not room:
                     return None, (
                         f"model limit reached (LLAMAMAN_MAX_MODELS={LLAMAMAN_MAX_MODELS}); "
-                        "the OpenAI API does not evict running models"
+                        "admin-launched models cannot be evicted via the API"
                     )
+            else:
+                # OpenAI API: never evict - only proceed if there is already room.
+                if not incoming_embedding_model and LLAMAMAN_MAX_MODELS > 0:
+                    if _count_running_instances() >= LLAMAMAN_MAX_MODELS:
+                        return None, (
+                            f"model limit reached (LLAMAMAN_MAX_MODELS={LLAMAMAN_MAX_MODELS}); "
+                            "the OpenAI API does not evict running models"
+                        )
 
-        if existing and existing["status"] in ("sleeping", "stopped"):
+        if would_wake_existing:
             # relaunch_inactive_instance blocks until healthy; if it
             # succeeds the instance is ready for requests immediately.
             if relaunch_inactive_instance(existing["id"]):
