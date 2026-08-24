@@ -5,7 +5,7 @@ import os
 
 from flask import Flask, jsonify, make_response, render_template
 
-from config import SECRET_KEY, SESSION_COOKIE_NAME, logger
+from config import SECRET_KEY, SESSION_COOKIE_NAME, VERSION, logger
 from core.migrations import run_pending_migrations
 from core.state import load_state
 from proxy import start_idle_proxy
@@ -77,6 +77,12 @@ def create_app() -> Flask:
             "detail": str(err),
             "degraded": True,
         }), 503
+
+    # Expose the app version to every template so the footer (and any future
+    # per-page version display) reads it without each route threading it in.
+    @application.context_processor
+    def _inject_version():
+        return {"llamaman_version": VERSION}
 
     @application.route("/")
     def index():

@@ -2511,3 +2511,28 @@ body.login-page {
 .storage-degraded-banner strong {
   color: var(--yellow);
 }
+
+/* Small identity footer inside the main scroll column - version + repo link,
+   no visual weight. It lives inside <main> (not <body>) so it does NOT stick
+   to the viewport bottom and does NOT span the sidebar. `margin-top: auto`
+   pins it to the bottom of the main column when content is short, and it
+   flows naturally after the last card when content is tall. */
+.app-footer {
+  margin-top: auto;
+  padding: 4px 0 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+.app-footer a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dotted currentColor;
+}
+
+.app-footer a:hover {
+  opacity: 1;
+  color: var(--text);
+}
