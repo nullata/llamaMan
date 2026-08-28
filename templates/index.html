@@ -219,6 +219,18 @@
                         <option value="off">Off</option>
                       </select>
                     </div>
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-reasoning-format">Reasoning Format</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Reasoning Format help" data-tip="Maps to llama-server --reasoning-format (none|auto|deepseek|deepseek-legacy, default auto). Controls how thought/thinking tags are parsed out of model output. Auto lets llama.cpp pick per model (detects DeepSeek-R1, Qwen-thinking, etc. and routes their thoughts to a separate reasoning_content field). None leaves any thought tags inline in the response content untouched. Deepseek forces DeepSeek-R1 style extraction into reasoning_content. Deepseek-legacy keeps &lt;think&gt; tags in the response content while also populating reasoning_content - useful for clients that only render content. Only matters for models that emit reasoning tokens; ignored otherwise."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <select id="f-reasoning-format">
+                        <option value="auto" selected>Auto (default)</option>
+                        <option value="none">None</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="deepseek-legacy">DeepSeek Legacy</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
                 <div class="form-group full launch-settings-section" id="container-proxy-settings-section">
@@ -236,9 +248,16 @@
                     <div class="form-group">
                       <span class="label-row">
                         <label for="f-threads">CPU Threads (optional)</label>
-                        <span class="info-tip" tabindex="0" role="button" aria-label="CPU Threads help" data-tip="Number of CPU threads llama-server uses. Leave blank to let llama-server auto-detect based on the host."><i class="fa-solid fa-circle-info"></i></span>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="CPU Threads help" data-tip="Maps to llama-server --threads. Number of CPU threads used during generation. Leave blank to let llama-server auto-detect based on the host."><i class="fa-solid fa-circle-info"></i></span>
                       </span>
                       <input id="f-threads" type="number" placeholder="(auto)" min="1" />
+                    </div>
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="f-threads-batch">CPU Threads Batch (optional)</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="CPU Threads Batch help" data-tip="Maps to llama-server --threads-batch. Number of CPU threads used during batch and prompt processing (the prefill / evaluation phase), separate from the generation threads set by CPU Threads. Leave blank and llama-server falls back to the CPU Threads value. Useful on CPUs with a big/little split (e.g. Intel P+E cores) where prefill can benefit from more threads than steady-state generation, or when you want prefill to use every core but keep generation on the performance cores only."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-threads-batch" type="number" placeholder="(= CPU Threads)" min="1" />
                     </div>
                     <div class="form-group">
                       <span class="label-row">
@@ -278,8 +297,8 @@
                   <div class="launch-section-grid">
                     <div class="form-group">
                       <span class="label-row">
-                        <label for="f-gpu-layers">GPU Layers (-1 = all, 0 = CPU only)</label>
-                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="GPU Layers help" data-tip="Maps to llama-server --n-gpu-layers. Sets how many transformer layers to offload onto GPU(s). -1 offloads every layer (the common choice when everything fits in VRAM). 0 disables GPU entirely and runs the whole model on CPU. Any positive value offloads that many layers from the bottom of the stack and leaves the rest on CPU RAM - useful when the model is larger than your VRAM. This is orthogonal to Split Mode: -ngl decides GPU-vs-CPU, split mode decides how the GPU-resident portion is distributed across the visible GPUs."><i class="fa-solid fa-circle-info"></i></span>
+                        <label for="f-gpu-layers">GPU Layers (-1 = auto, -2 = all, 0 = CPU only)</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="GPU Layers help" data-tip="Maps to llama-server --n-gpu-layers / --gpu-layers / -ngl (all three are aliases for the same flag). Sets how many transformer layers to offload onto GPU(s). -1 = 'auto' (llama.cpp's default: it estimates VRAM and picks a layer count that fits, which can be less than every layer). -2 = 'all' (force every layer onto GPU; fails if it doesn't fit). 0 disables GPU entirely and runs the whole model on CPU. Any positive value offloads exactly that many layers from the bottom of the stack and leaves the rest on CPU RAM - useful when the model is larger than your VRAM or when auto's estimate is off. This is orthogonal to Split Mode: this flag decides GPU-vs-CPU, split mode decides how the GPU-resident portion is distributed across the visible GPUs."><i class="fa-solid fa-circle-info"></i></span>
                       </span>
                       <div class="inline-field">
                         <input id="f-gpu-layers" type="number" value="-1" min="-1" />

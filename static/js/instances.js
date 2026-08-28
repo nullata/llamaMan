@@ -722,6 +722,7 @@ function readLaunchForm() {
     split_mode: document.getElementById('f-split-mode').value.trim(),
     tensor_split: document.getElementById('f-tensor-split').value.trim(),
     flash_attn: document.getElementById('f-flash-attn').value,
+    reasoning_format: document.getElementById('f-reasoning-format')?.value || 'auto',
     cache_type_k: document.getElementById('f-cache-type-k').value.trim(),
     cache_type_v: document.getElementById('f-cache-type-v').value.trim(),
     idle_timeout_min: parseInt(document.getElementById('f-idle-timeout').value) || 0,
@@ -780,6 +781,8 @@ function readLaunchForm() {
   }
   const threads = document.getElementById('f-threads').value.trim();
   if (threads) body.threads = parseInt(threads);
+  const threadsBatch = document.getElementById('f-threads-batch')?.value.trim();
+  if (threadsBatch) body.threads_batch = parseInt(threadsBatch);
   const memoryLimit = document.getElementById('f-memory-limit').value.trim();
   if (memoryLimit) body.memory_limit = memoryLimit;
   const parallel = document.getElementById('f-parallel').value.trim();

@@ -33,8 +33,9 @@ from core.gpu import get_vendor
 from core.helpers import (
     build_llama_cmd, ensure_docker_network, find_available_port,
     get_docker_client, is_container_running, is_port_available,
-    kill_instance_process, normalize_flash_attn, public_dict, read_log_file,
-    resolve_llama_endpoint, stop_container, stream_log_file,
+    kill_instance_process, normalize_flash_attn, normalize_reasoning_format,
+    public_dict, read_log_file, resolve_llama_endpoint, stop_container,
+    stream_log_file,
 )
 from core.proxy_sampling import parse_proxy_sampling_config
 from core.spec_decoding import DEFAULT_SPEC_TYPE, parse_spec_config
@@ -87,10 +88,12 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
             "n_gpu_layers",
             "ctx_size",
             "threads",
+            "threads_batch",
             "memory_limit",
             "parallel",
             "extra_args",
             "flash_attn",
+            "reasoning_format",
             "cache_type_k",
             "cache_type_v",
             "spec_enabled",
@@ -479,7 +482,8 @@ def relaunch_sleeping_instance(inst_id: str) -> bool:
 
 
 def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
-                    threads=None, memory_limit=None, parallel=None, extra_args="",
+                    threads=None, threads_batch=None,
+                    memory_limit=None, parallel=None, extra_args="",
                     spec_enabled=False, spec_type=DEFAULT_SPEC_TYPE,
                     spec_draft_model="", spec_draft_n_max=None,
                     spec_draft_n_min=None, spec_draft_p_split=None,
@@ -488,7 +492,8 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
                     pdf_input_enabled=False, pdf_extract_text_first=False,
                     pdf_dpi=200, pdf_max_pages=20,
                     gpu_devices=None, split_mode="", tensor_split="",
-                    flash_attn="auto", cache_type_k="", cache_type_v="",
+                    flash_attn="auto", reasoning_format="auto",
+                    cache_type_k="", cache_type_v="",
                     idle_timeout_min=0,
                     max_concurrent=0, max_queue_depth=200,
                     share_queue=False, share_queue_group="",
@@ -533,6 +538,10 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
         "n_gpu_layers": n_gpu_layers,
         "ctx_size": ctx_size,
         "threads": threads,
+        # --threads-batch overrides the batch/prefill thread count when set;
+        # blank/None means build_llama_cmd omits the flag and llama-server
+        # falls back to the --threads value.
+        "threads_batch": threads_batch,
         "memory_limit": memory_limit,
         "parallel": parallel,
         "extra_args": extra_args,
@@ -566,6 +575,13 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
         # flash_attn is llama.cpp's tri-state ('on'|'off'|'auto'); the helper
         # also folds legacy True/False from pre-tri-state configs into it.
         "flash_attn": normalize_flash_attn(flash_attn),
+        # Reasoning format is llama.cpp's --reasoning-format tri-state-plus
+        # (none|auto|deepseek|deepseek-legacy, default auto). Normalize at
+        # the boundary so downstream reads (build_llama_cmd, cluster snapshot,
+        # live preset merge) don't each have to defend against case /
+        # whitespace drift from hand-crafted requests. Unknown / missing
+        # values fold to 'auto' to match llama.cpp's own default.
+        "reasoning_format": normalize_reasoning_format(reasoning_format),
         "cache_type_k": (cache_type_k or "").strip().lower(),
         "cache_type_v": (cache_type_v or "").strip().lower(),
         "idle_timeout_min": idle_timeout_min,
@@ -876,6 +892,7 @@ def api_instances_create():
         n_gpu_layers=int(body.get("n_gpu_layers", -1)),
         ctx_size=ctx_size,
         threads=body.get("threads"),
+        threads_batch=body.get("threads_batch"),
         memory_limit=body.get("memory_limit", "").strip() or None,
         parallel=body.get("parallel"),
         extra_args=body.get("extra_args", "").strip(),
@@ -883,6 +900,7 @@ def api_instances_create():
         split_mode=body.get("split_mode", "").strip(),
         tensor_split=body.get("tensor_split", "").strip(),
         flash_attn=body.get("flash_attn", "auto"),
+        reasoning_format=body.get("reasoning_format", "auto"),
         cache_type_k=body.get("cache_type_k", "").strip(),
         cache_type_v=body.get("cache_type_v", "").strip(),
         idle_timeout_min=int(body.get("idle_timeout_min", 0)),
@@ -966,6 +984,7 @@ def api_instances_restart(inst_id):
         n_gpu_layers=config.get("n_gpu_layers", -1),
         ctx_size=config.get("ctx_size", 4096),
         threads=config.get("threads"),
+        threads_batch=config.get("threads_batch"),
         memory_limit=config.get("memory_limit") or None,
         parallel=config.get("parallel"),
         extra_args=config.get("extra_args", ""),
@@ -986,6 +1005,7 @@ def api_instances_restart(inst_id):
         split_mode=config.get("split_mode", ""),
         tensor_split=config.get("tensor_split", ""),
         flash_attn=config.get("flash_attn", "auto"),
+        reasoning_format=config.get("reasoning_format", "auto"),
         cache_type_k=config.get("cache_type_k", ""),
         cache_type_v=config.get("cache_type_v", ""),
         idle_timeout_min=config.get("idle_timeout_min", 0),

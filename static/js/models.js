@@ -507,6 +507,15 @@ async function selectModel(model, el) {
       if (ctkEl) ctkEl.value = p.cache_type_k || 'f16';
       const ctvEl = document.getElementById('f-cache-type-v');
       if (ctvEl) ctvEl.value = p.cache_type_v || 'f16';
+      // Reasoning format is a shared behavior knob (same tier as flash_attn /
+      // cache types). Coerce unknown / missing to 'auto' so a preset saved
+      // before this field existed lands on llama.cpp's own default.
+      const rfEl = document.getElementById('f-reasoning-format');
+      if (rfEl) {
+        let rf = (typeof p.reasoning_format === 'string') ? p.reasoning_format.trim().toLowerCase() : '';
+        if (!['auto', 'none', 'deepseek', 'deepseek-legacy'].includes(rf)) rf = 'auto';
+        rfEl.value = rf;
+      }
       document.getElementById('f-note').value = p.note || '';
       // Per-node hardware (base, overlaid with the selected node's override)
       applyPresetHardwareForNode(p, _launchNode());
@@ -587,6 +596,8 @@ function applyPresetHardwareForNode(p, nodeId) {
   const layers = val('n_gpu_layers');
   if (layers != null) document.getElementById('f-gpu-layers').value = layers;
   document.getElementById('f-threads').value = val('threads') || '';
+  const tbEl = document.getElementById('f-threads-batch');
+  if (tbEl) tbEl.value = val('threads_batch') || '';
   document.getElementById('f-memory-limit').value = val('memory_limit') || '';
   document.getElementById('f-parallel').value = val('parallel') || '';
   document.getElementById('f-gpu-devices').value = val('gpu_devices') || '';

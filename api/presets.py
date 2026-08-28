@@ -2,7 +2,7 @@
 
 from flask import Blueprint, jsonify, request
 
-from core.helpers import normalize_flash_attn
+from core.helpers import normalize_flash_attn, normalize_reasoning_format
 from core.model_alias import PRETTY_NAME_KEY, existing_aliases
 from core.model_alias import invalidate as invalidate_alias_cache
 from core.model_alias import _normalize as _normalize_alias
@@ -23,8 +23,8 @@ PRETTY_NAME_MAX_LEN = 100
 # number of GPUs with different VRAM sizes, so hard-coding one tensor_split
 # vector cluster-wide would be wrong on any node whose layout differs.
 PRESET_HARDWARE_KEYS = (
-    "n_gpu_layers", "threads", "memory_limit", "gpu_devices", "parallel",
-    "split_mode", "tensor_split",
+    "n_gpu_layers", "threads", "threads_batch", "memory_limit", "gpu_devices",
+    "parallel", "split_mode", "tensor_split",
 )
 
 
@@ -157,6 +157,10 @@ def api_preset_save(model_path):
         "n_gpu_layers": body.get("n_gpu_layers", -1),
         "ctx_size": ctx_size,
         "threads": body.get("threads"),
+        # threads_batch is per-node hardware like threads (CPU-core count
+        # varies), so it's overlaid in resolve_preset_for_node when a node
+        # override exists; the base value here is the cluster-wide default.
+        "threads_batch": body.get("threads_batch"),
         "memory_limit": body.get("memory_limit", ""),
         "parallel": body.get("parallel"),
         "extra_args": body.get("extra_args", ""),
@@ -169,6 +173,10 @@ def api_preset_save(model_path):
         # flash_attn is llama.cpp's tri-state ('on'|'off'|'auto'); the helper
         # also folds legacy True/False from pre-tri-state presets into it.
         "flash_attn": normalize_flash_attn(body.get("flash_attn")),
+        # Reasoning format is a shared behavior knob (not per-node hardware),
+        # same tier as flash_attn / cache types - it describes how model
+        # output is parsed, which doesn't vary by node.
+        "reasoning_format": normalize_reasoning_format(body.get("reasoning_format")),
         "cache_type_k": (body.get("cache_type_k") or "").strip().lower(),
         "cache_type_v": (body.get("cache_type_v") or "").strip().lower(),
         "idle_timeout_min": body.get("idle_timeout_min", 0),

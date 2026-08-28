@@ -38,6 +38,25 @@ def normalize_flash_attn(value) -> str:
     return "auto"
 
 
+_REASONING_FORMAT_VALUES = ("auto", "none", "deepseek", "deepseek-legacy")
+
+
+def normalize_reasoning_format(value) -> str:
+    """Coerce any --reasoning-format input to the exact string llama-server
+    accepts (none|auto|deepseek|deepseek-legacy).
+
+    Anything unknown / missing / non-string falls back to 'auto' - that's
+    llama.cpp's own default when the flag is absent, so a corrupt or legacy
+    preset value cannot make the server refuse to start. Case- and
+    whitespace-tolerant, same contract as normalize_flash_attn.
+    """
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in _REASONING_FORMAT_VALUES:
+            return s
+    return "auto"
+
+
 def request_local_worker(url, *, method="POST", json=None, data=None,
                          headers=None, stream=False):
     """Send an HTTP request to a local llama-server with bounded connect
@@ -122,6 +141,12 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
     ]
     if config.get("threads"):
         cmd += ["--threads", str(int(config["threads"]))]
+    # --threads-batch controls the CPU threads used during batch/prompt
+    # processing. Defaults to the value of --threads when absent, so we only
+    # emit when the user set it explicitly - leaving blank falls back to
+    # llama-server's own default (== threads) rather than us second-guessing.
+    if config.get("threads_batch"):
+        cmd += ["--threads-batch", str(int(config["threads_batch"]))]
     if config.get("parallel"):
         cmd += ["--parallel", str(int(config["parallel"]))]
     if config.get("embedding_model"):
@@ -159,6 +184,16 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
     flash_attn = normalize_flash_attn(config.get("flash_attn"))
     if flash_attn in ("on", "off"):
         cmd += ["--flash-attn", flash_attn]
+    # Reasoning format. Maps to llama-server --reasoning-format
+    # (none|auto|deepseek|deepseek-legacy, default auto). 'auto' matches
+    # llama.cpp's own default when the flag is absent, so omit it for the
+    # common case to keep the command line quiet. Only emit values from the
+    # whitelist llama-server actually accepts - a hand-crafted / corrupt
+    # value would make the server refuse to start with an opaque error.
+    _ALLOWED_REASONING_FORMATS = {"none", "deepseek", "deepseek-legacy"}
+    reasoning_format = (config.get("reasoning_format") or "").strip().lower()
+    if reasoning_format in _ALLOWED_REASONING_FORMATS:
+        cmd += ["--reasoning-format", reasoning_format]
     _ALLOWED_CACHE_TYPES = {"f32", "f16", "bf16", "q8_0", "q4_0", "q4_1",
                             "iq4_nl", "q5_0", "q5_1"}
     cache_type_k = (config.get("cache_type_k") or "").strip().lower()
