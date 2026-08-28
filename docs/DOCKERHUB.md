@@ -4,68 +4,53 @@
 
 # <img src="https://raw.githubusercontent.com/nullata/llamaMan/4d17202d108547537c0dbc13083794274b491fd3/static/images/logo.svg" alt="logo" width="24"> llamaMan
 
-A browser-based UI for launching, monitoring, and managing multiple [llama.cpp](https://github.com/ggerganov/llama.cpp) server instances from inside a Docker container. Includes an Ollama-compatible API proxy so it works as a drop-in replacement for Ollama with [Open WebUI](https://github.com/open-webui/open-webui).
+Browser UI for launching and managing multiple [llama.cpp](https://github.com/ggerganov/llama.cpp) server instances from a single Docker container. Ships an Ollama-compatible API proxy so it drops in as an Ollama replacement for [Open WebUI](https://github.com/open-webui/open-webui).
+
+Full docs and source: **[github.com/nullata/llamaman](https://github.com/nullata/llamaman)**
 
 ## Features
 
-- **Universal GPU support** - single image for NVIDIA, AMD (ROCm), Intel Arc, and CPU. The GPU vendor and matching `LLAMA_IMAGE` are auto-detected at startup; `GPU_TYPE` / `LLAMA_IMAGE` override if needed.
-- **Model library** - scans `/models` for GGUF files, shows quant type and file size
-- **One-click launch** - configure GPU layers, context size, threads, multi-GPU, speculative decoding, extra args
-- **Speculative decoding** - `--spec-type` toggle for all five draft-model families, configurable draft length, Advanced subsection for `--spec-draft-n-min` / `-p-split` / `-p-min`. Only `draft-mtp` runs without a drafter (built-in MTP heads)
-- **Flash Attention + KV cache quantization** - `--flash-attn` select and per-side `--cache-type-k` / `--cache-type-v` dropdowns; UI enforces the quantized-V-requires-FA-On constraint
-- **Image & PDF Input** - load a vision model with its multimodal projector (`--mmproj`) for image inputs. Inbound PDFs are rasterized page-by-page before the model sees them; optional text-layer shortcut inlines born-digital PDFs as plain text with no raster pass. Works on OpenAI `image_url`/`file` blocks and Ollama `images[]`. Per-request DPI/max-pages caps plus a process-wide semaphore bound bursts
-- **Preset configs** - save/load per-model launch settings, with live updates to running instances where possible
-- **Download manager** - pull models from HuggingFace with speed throttling and auto-retry on failure
-- **Model update detection & re-pull** - detects when a repo has republished a model under the same filenames (requant, fixed template) via its content hash, verifies local files by hashing on disk, re-pulls through the normal download pipeline with an atomic swap. Optional background scan
-- **Model backup and restore** - export model metadata and presets to JSON, restore on any instance with downloads queued automatically for missing models
-- **Instance management** - stop, restart, remove, view live-streamed logs
-- **GPU VRAM indicator** - per-GPU VRAM and utilization, queried natively (no running instance required)
-- **Container resource monitoring** - live CPU%, core quota, RAM usage with thin progress bars, and GPU assignment per running instance card
-- **Per-instance stats** - a Stats button on each instance card surfaces throughput (tokens/s), time-to-first-token, latency, and token totals rolled up from the request log
-- **Request log dashboard** - a dedicated Logging page with summary tiles, a conversations list, and per-conversation drill-down over the recorded request log, filterable by time window
-- **Request recording** - optionally record proxied requests/responses per request or per conversation, with configurable retention
-- **Idle timeout** - auto-sleep instances after configurable idle period, wake on next request
-- **Ollama-compatible proxy** - OpenWebUI discovers models and auto-starts servers on demand
-- **Per-model display names** - give a model a friendly name that API clients (OpenWebUI) see and accept instead of the raw quant filename
-- **Authentication** - user accounts with session login, API key management with bearer tokens
-- **Require auth toggle** - enforce bearer token authentication on all endpoints (including model loading) or leave model endpoints open
-- **Persistent state** - instance history and configs survive container restarts
-- **Storage backends** - JSON files (default) or MariaDB/MySQL via SQLAlchemy
-- **Database outage survival** *(optional)* - with the DB backend, keep a write-through mirror on disk so the node keeps serving inference and saving presets/keys/settings if the DB goes away (across container restarts too). Offline writes are journalled and replayed on reconnect. Off by default
-- **Multi-node clustering** *(optional)* - run several instances as one cluster: aggregated dashboard, cross-node launches/pulls/downloads, and shared-queue load balancing. Off by default
-- **Proxy sampling overrides** - force temperature, top-k, top-p, presence penalty, and repeat penalty on all proxied requests, configurable per model preset
-- **CPU quota + memory limit** - CPU Threads also applies a Docker CPU quota; a Memory Limit field caps container RAM
-- **Docker image management** - pull any llama.cpp image by name, delete old local images from the UI
+- **Universal GPU image** - one image, auto-detects NVIDIA / AMD (ROCm) / Intel Arc / CPU
+- **Model library + downloader** - scans `/models` for GGUF, pulls from HuggingFace with speed limits, resume, auto-retry, and republish detection with atomic re-pull
+- **One-click launch + presets** - per-model launch settings with live updates for the fields that don't need a relaunch (idle-timeout, gates, sampling overrides)
+- **Instance management** - stop / restart / logs / stats; per-GPU VRAM, container CPU% + RAM, and per-instance throughput / TTFT / latency rolled up from the request log
+- **Ollama + OpenAI proxy on `:42069`** - Open WebUI drops in, auto-starts models on demand, LRU-evicts once `LLAMAMAN_MAX_MODELS` is hit
+- **Flash Attention + KV cache quant + reasoning format** - `--flash-attn`, `--cache-type-k/v`, `--reasoning-format` all exposed; UI enforces the quantized-V-requires-FA-On constraint
+- **Speculative decoding** - all five draft-model families (`draft-simple/-mtp/-dflash/-dspark/-eagle3`) with advanced knobs (`n-min`, `p-split`, `p-min`)
+- **Image & PDF input** - `--mmproj` for vision models, PDFs rasterized page-by-page (or inlined as text via the born-digital shortcut). Works on OpenAI `image_url`/`file` and Ollama `images[]`
+- **Auth** - user accounts, API keys (bearer tokens), toggle for whether model endpoints require auth
+- **Persistent state, JSON or MariaDB** - MariaDB unlocks multi-node clustering (shared dashboard, cross-node launch/download, shared-queue load balancing) and an optional local write-through mirror that keeps the node serving through a DB outage
+- **Request recording + logging dashboard** - opt-in per-request or per-conversation recording with retention, plus a dedicated logging page
 
 ## Tags
 
-- `latest`, `<version>` - Universal image, auto-detects GPU vendor (NVIDIA / AMD / Intel Arc / CPU)
+- `latest`, `<version>` - universal image, auto-detects GPU vendor
 
 ## Quick Start
 
-Pull the llama.cpp image for your GPU first, then run llamaMan.
+Pull the llama.cpp server image for your GPU, then run llamaMan. `HOST_MODELS_DIR` / `HOST_LOGS_DIR` MUST be the absolute paths on the Docker host - llamaMan passes them to the daemon when spawning sibling llama-server containers.
 
-`HOST_MODELS_DIR` and `HOST_LOGS_DIR` must be the **absolute paths on the Docker host** that match your volume mounts. llamaMan passes these to the Docker daemon when spawning sibling llama-server containers.
-
-### NVIDIA
+| GPU | `LLAMA_IMAGE` |
+|---|---|
+| NVIDIA | `ghcr.io/ggml-org/llama.cpp:server-cuda` |
+| AMD (ROCm) | `ghcr.io/ggml-org/llama.cpp:server-rocm` |
+| Intel Arc | `ghcr.io/ggml-org/llama.cpp:server-sycl` |
+| CPU only | `ghcr.io/ggml-org/llama.cpp:server` |
 
 ```bash
-docker pull ghcr.io/ggml-org/llama.cpp:server-cuda
-
+docker pull <LLAMA_IMAGE>              # from the table above
 docker network create llamaman-net
 
 docker run -d \
   --name llamaman \
   --network llamaman-net \
-  -p 5000:5000 \
-  -p 42069:42069 \
-  -p 8000-8020:9000-9020 \
+  -p 5000:5000 -p 42069:42069 -p 8000-8020:9000-9020 \
   -v /path/to/models:/models \
   -v /path/to/data:/data \
   -v /path/to/logs:/tmp/llama-logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /sys/class/drm:/sys/class/drm:ro \
-  -e LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda \
+  -e LLAMA_IMAGE=<LLAMA_IMAGE> \
   -e HOST_MODELS_DIR=/path/to/models \
   -e HOST_LOGS_DIR=/path/to/logs \
   -e LLAMAMAN_NODE_NAME=srv1 \
@@ -73,61 +58,11 @@ docker run -d \
   nullata/llamaman:latest
 ```
 
-For native GPU monitoring (pynvml), add `--gpus` with utility capability:
+`LLAMAMAN_NODE_NAME` is **required** - the container refuses to start without it. Pick it once and keep it (changing later orphans stored state). See the full env-var list below.
+
+For native NVIDIA VRAM monitoring (pynvml), also add:
 ```bash
   --gpus '"driver=nvidia,capabilities=utility"' \
-```
-
-### AMD (ROCm)
-
-```bash
-docker pull ghcr.io/ggml-org/llama.cpp:server-rocm
-
-docker network create llamaman-net
-
-docker run -d \
-  --name llamaman \
-  --network llamaman-net \
-  -p 5000:5000 \
-  -p 42069:42069 \
-  -p 8000-8020:9000-9020 \
-  -v /path/to/models:/models \
-  -v /path/to/data:/data \
-  -v /path/to/logs:/tmp/llama-logs \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /sys/class/drm:/sys/class/drm:ro \
-  -e LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-rocm \
-  -e HOST_MODELS_DIR=/path/to/models \
-  -e HOST_LOGS_DIR=/path/to/logs \
-  -e LLAMAMAN_NODE_NAME=srv1 \
-  --restart unless-stopped \
-  nullata/llamaman:latest
-```
-
-### Intel Arc
-
-```bash
-docker pull ghcr.io/ggml-org/llama.cpp:server-sycl
-
-docker network create llamaman-net
-
-docker run -d \
-  --name llamaman \
-  --network llamaman-net \
-  -p 5000:5000 \
-  -p 42069:42069 \
-  -p 8000-8020:9000-9020 \
-  -v /path/to/models:/models \
-  -v /path/to/data:/data \
-  -v /path/to/logs:/tmp/llama-logs \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /sys/class/drm:/sys/class/drm:ro \
-  -e LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-sycl \
-  -e HOST_MODELS_DIR=/path/to/models \
-  -e HOST_LOGS_DIR=/path/to/logs \
-  -e LLAMAMAN_NODE_NAME=srv1 \
-  --restart unless-stopped \
-  nullata/llamaman:latest
 ```
 
 ### Docker Compose
@@ -148,21 +83,17 @@ services:
       - /sys/class/drm:/sys/class/drm:ro
     environment:
       - LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda
-      # Required - unique, stable identity for this deployment. Any string; pick
-      # once and keep it. The container refuses to start without it.
       - LLAMAMAN_NODE_NAME=srv1
-      # Must be the absolute host-side paths matching the volume mounts above.
       - HOST_MODELS_DIR=/path/to/models
       - HOST_LOGS_DIR=/path/to/logs
-    # NVIDIA native GPU monitoring (pynvml) - uncomment on NVIDIA hosts.
+    # NVIDIA native GPU monitoring - uncomment on NVIDIA hosts.
     # deploy:
     #   resources:
     #     reservations:
     #       devices:
     #         - driver: nvidia
     #           capabilities: [utility]
-    networks:
-      - llamaman-net
+    networks: [llamaman-net]
     restart: unless-stopped
 
 networks:
@@ -171,106 +102,52 @@ networks:
     name: llamaman-net
 ```
 
-## Ports
+## First Launch
 
-| Port | Description |
+1. Open <http://localhost:5000>
+2. Create an admin account on `/setup`
+3. Drop GGUF files into `/models` (or download via the UI)
+
+## Ports & Volumes
+
+| Port | Purpose |
 |---|---|
-| `5000` | Management UI and REST API |
+| `5000` | Management UI + REST API |
 | `42069` | Ollama-compatible API proxy |
 | `8000-8020` | Individual llama-server instances |
 
-## Volumes
-
-| Path | Description |
+| Path | Purpose |
 |---|---|
-| `/models` | GGUF model files. Place your models here or use the built-in download manager. |
-| `/data` | Persistent state: instance configs, presets, user accounts, settings, API keys, and recorded request logs. |
-| `/tmp/llama-logs` | Instance and download logs. Optional - mount to preserve logs across restarts. |
+| `/models` | GGUF model files |
+| `/data` | Persistent state: instances, presets, users, API keys, settings, request logs |
+| `/tmp/llama-logs` | Instance and download logs (optional; mount to preserve across restarts) |
 
 ## Environment Variables
 
+Only the ones you'll typically touch. See the [full reference on GitHub](https://github.com/nullata/llamaman#environment-variables) for every knob.
+
 | Variable | Default | Description |
 |---|---|---|
-| `LLAMAMAN_NODE_NAME` | *(required)* | **Required - the container refuses to start without it.** Unique, stable identity: partition key for this node's instances, downloads, per-node settings, and its cluster identity. Any string (`srv1`, hostname, uuid). Pick once and keep it - changing later orphans stored state. |
-| `LLAMA_IMAGE` | *(auto)* | llama.cpp server image for spawned containers. Auto-selected from detected GPU vendor if not set. Set explicitly to pin a version or backend (`server-cuda`, `server-rocm`, `server-sycl`, `server`). |
-| `GPU_TYPE` | *(auto-detect)* | Override GPU vendor detection: `cuda`, `rocm`, or `intel`. Leave unset to auto-detect. |
-| `LLAMA_GPU_DEVICES` | *(all)* | Comma-separated GPU indices visible to spawned containers, e.g. `0,1`. Not supported on Intel Arc. |
-| `LLAMAMAN_MAX_MODELS` | `0` | Max concurrent **chat** models via the proxy. Uses LRU eviction when the limit is reached. `0` = unlimited. |
-| `LLAMAMAN_IDLE_TIMEOUT` | `0` | Idle timeout in minutes for proxy-managed instances. Stopped instances auto-restart on next request. `0` = disabled. |
-| `LLAMAMAN_PDF_MAX_CONCURRENT` | `4` | Max concurrent PDF rasterizations process-wide. Independent of per-instance gates; each raster spawns a poppler subprocess with transient RAM, so this cap bounds bursts. |
+| `LLAMAMAN_NODE_NAME` | *(required)* | **Required.** Unique stable identity for this deployment - partition key for its stored state and its cluster identity. Pick once, keep it. |
+| `LLAMA_IMAGE` | *(auto)* | llama.cpp server image for spawned containers. Auto-picked from detected GPU vendor; set to pin a version / backend. |
+| `HOST_MODELS_DIR` | *(same as `MODELS_DIR`)* | **Host-side** absolute path of the models volume. Must match the left side of `-v /host/path:/models`. |
+| `HOST_LOGS_DIR` | *(same as `LOGS_DIR`)* | Same requirement as `HOST_MODELS_DIR`. |
+| `GPU_TYPE` | *(auto)* | Override GPU vendor detection: `cuda` / `rocm` / `intel`. |
+| `LLAMA_GPU_DEVICES` | *(all)* | Comma-separated GPU indices visible to spawned containers (e.g. `0,1`). Not supported on Intel Arc. |
+| `LLAMAMAN_MAX_MODELS` | `0` | Max concurrent chat models via the proxy (LRU eviction). `0` = unlimited. |
+| `LLAMAMAN_IDLE_TIMEOUT` | `0` | Idle-timeout minutes for proxy-managed instances (auto-restarts on next request). `0` = disabled. |
 | `LLAMAMAN_PROXY_PORT` | `42069` | Port for the Ollama-compatible proxy. |
-| `MODELS_DIR` | `/models` | Directory scanned for model files (container path). |
-| `DATA_DIR` | `/data` | Directory for persistent config/state. |
-| `RECORDINGS_DIR` | `{DATA_DIR}/request_log` | Directory for recorded request-log records (JSON backend only; ignored when `DATABASE_URL` is set). |
-| `LOGS_DIR` | `/tmp/llama-logs` | Directory for instance and download logs (container path). |
-| `HOST_MODELS_DIR` | *(same as `MODELS_DIR`)* | **Host-side** absolute path of the models volume. Must match the left side of `-v /host/path/models:/models`. llamaMan passes this to the Docker daemon when spawning sibling containers. |
-| `HOST_LOGS_DIR` | *(same as `LOGS_DIR`)* | **Host-side** absolute path of the logs volume. Same requirement as `HOST_MODELS_DIR`. |
-| `PORT_RANGE_START` | `8000` | Start of public llama-server/proxy port pool. |
-| `PORT_RANGE_END` | `8020` | End of public llama-server/proxy port pool. |
-| `INTERNAL_PORT_RANGE_START` | `9000` | Start of internal llama-server port pool used for proxied instances. |
-| `INTERNAL_PORT_RANGE_END` | `9020` | End of internal llama-server port pool used for proxied instances. |
-| `SECRET_KEY` | *(auto)* | Flask session secret. Auto-derived from machine-id if unset. |
-| `SESSION_COOKIE_NAME` | `llamaman_session` | Name of the session cookie. Namespaced so llamaman coexists with other Flask apps on the same host (cookies are scoped by host+path, not port). |
-| `DATABASE_URL` | *(unset)* | MariaDB/MySQL connection string (e.g. `mysql+pymysql://user:pass@host/db`). Unset = JSON file storage. |
-| `LLAMAMAN_DB_MIRROR` | *(unset)* | Force local DB mirror on (`1`)/off (`0`), overriding per-node setting. Only meaningful with `DATABASE_URL`. |
-| `HEALTH_CHECK_TIMEOUT` | `3` | Timeout in seconds for instance health checks. |
-| `MODEL_LOAD_TIMEOUT` | `300` | Seconds to wait for a model to become healthy during launch/relaunch. Increase for very large models. |
-| `REQUEST_TIMEOUT` | `300` | **Read** timeout for upstream llama-server calls, cross-node forwarding, and gate waits. Covers peer on-demand model load + time to first token on the forwarding path. Does **not** govern peer connect time (separate 5s bound). |
-| `CLUSTER_ENABLED` | `false` | Set `true`/`1`/`yes`/`on` to join this node to a cluster. Requires `CLUSTER_SECRET` and a shared `DATABASE_URL`. See [Clustering](#clustering). |
-| `CLUSTER_SECRET` | *(unset)* | Shared bearer secret sent on every node-to-node call (`X-Cluster-Secret`). Must be identical on every node. Use a long random value over a trusted network or behind TLS. |
-| `CLUSTER_ADVERTISE_URL` | *(unset)* | How peers reach **this** node's UI/API - hostname/IP routable from other hosts (e.g. `http://srv1:5000`), not `localhost`. Without it the node is view-only and skipped as an inference target. |
-| `CLUSTER_NODE_ONLINE_WINDOW_S` | `45` | Seconds since last heartbeat before a node shows offline. Raise if nodes flap under load or clock skew. |
-
-## First Launch
-
-1. Start the container
-2. Open **http://localhost:5000** in your browser
-3. Create an admin account on the `/setup` page
-4. Place GGUF model files in the `models/` volume, or download from HuggingFace via the UI
-
-## Cleanup Settings
-
-The UI provides automatic cleanup under **Settings >> Cleanup Settings**:
-
-- **Auto-clean completed/failed downloads** - removes download records older than a configurable number of hours (default: 24). Active downloads are never touched.
-- **Auto-clean stopped instances** - removes stopped instance records older than a configurable number of hours (default: 24). Running instances are never removed.
-- **Auto-remove stale instance records** - periodically checks `starting`/`healthy`/`sleeping` records against their Docker container; records whose container is gone are marked stopped. Configurable interval (default: 5 minutes).
-
-Cleanup runs periodically in the background. These settings only remove or update records in the UI/state - they do not delete model files.
-
-## Request Recording & Stats
-
-Under **Settings >> App Settings >> Request recording**, choose how proxied inference traffic is logged: **Off** (default), **Per request**, or **Per conversation** (turns grouped by a hash of the system prompt + first user message). Each record captures the request/response bodies plus envelope fields and accurate per-turn metrics - generation throughput (tokens/s, measured over the generation window) and time-to-first-token. Records are stored under `RECORDINGS_DIR` (inside `/data`) for the JSON backend or the `request_log` table for MariaDB; a **Retention (days)** setting prunes older records hourly (`0` = keep forever).
-
-Each instance card then exposes a **Stats** button that opens a modal summarizing that instance's recorded traffic - request count (with errors), average and peak throughput, average time-to-first-token, average latency, prompt/completion/total tokens, and the active time span. Stats are rolled up from the request log, so they persist after an instance is stopped and the modal prompts you to enable recording when it's off.
-
-The **Logging** link in the header opens a full-page dashboard over the same request log - summary tiles, a recent-conversations list, and a per-conversation drill-down (prompts and responses with metrics in a collapsible), all scoped by a 24h / 7d / 30d / All time-window selector.
+| `DATABASE_URL` | *(unset)* | MariaDB/MySQL connection string (`mysql+pymysql://user:pass@host/db`). Unset = JSON files. Required for clustering. |
+| `LLAMAMAN_DB_MIRROR` | *(unset)* | Force local DB mirror on (`1`) / off (`0`), overriding the per-node setting. Only meaningful with `DATABASE_URL`. |
+| `CLUSTER_ENABLED` | `false` | Set truthy to join this node to a cluster. Requires `CLUSTER_SECRET` + shared `DATABASE_URL`. |
+| `CLUSTER_SECRET` | *(unset)* | Shared bearer token for node-to-node calls (`X-Cluster-Secret`). Identical on every node. |
+| `CLUSTER_ADVERTISE_URL` | *(unset)* | How peers reach this node's UI/API - hostname/IP routable from other hosts (e.g. `http://srv1:5000`). |
+| `MODEL_LOAD_TIMEOUT` | `300` | Seconds to wait for a model to become healthy. Raise for very large models. |
+| `LLAMAMAN_PDF_MAX_CONCURRENT` | `4` | Max concurrent PDF rasterizations process-wide (each raster spawns poppler + transient RAM). |
 
 ## OpenWebUI Integration
 
-Point OpenWebUI at the Ollama-compatible proxy:
-
-```yaml
-open-webui:
-  environment:
-    - OLLAMA_BASE_URL=http://llamaman:42069
-```
-
-llamaMan auto-launches models on demand:
-
-1. OpenWebUI calls `/api/tags` and gets the available models.
-2. A request to `/api/chat` or `/api/generate` starts the selected model automatically using saved presets or defaults.
-3. When `LLAMAMAN_MAX_MODELS` is reached, the proxy evicts the least-recently-used **Ollama-managed** chat model first.
-
-Supported Ollama endpoints: `/api/tags`, `/api/chat`, `/api/generate`, `/api/show`, `/api/version`, `/api/ps`
-
-Also supports OpenAI-compatible auto-start endpoints: `/v1/models`, `/v1/chat/completions`
-
-**Model names:** each model is listed under its GGUF filename stem by default. Set a per-model **Display Name** in the Launch form to have OpenWebUI show and accept a friendly name instead. In a cluster, live shared-queue group aliases are also advertised as selectable models, so a client can pick the load-balanced alias directly.
-
-### With authentication enabled (default)
-
-Create an API key in the llamaMan UI, then configure OpenWebUI:
+Point OpenWebUI at the Ollama proxy (with an API key when `require_auth` is on, which it is by default):
 
 ```yaml
 open-webui:
@@ -280,119 +157,51 @@ open-webui:
     - OPENAI_API_KEYS=llm-your-api-key-here
 ```
 
-### Model eviction policy
+Models are listed by GGUF filename stem; set a per-model **Display Name** to have OpenWebUI show/accept a friendly name instead. In a cluster, live shared-queue group aliases are advertised as selectable models too, so a client can send the alias and have it routed to the least-loaded node.
 
-The `LLAMAMAN_MAX_MODELS` limit controls how many **chat** models the proxy keeps loaded simultaneously.
+## Persistent State
 
-| Launcher | Eviction behavior | Cannot evict |
-|---|---|---|
-| **Admin UI** | Evicts Ollama-managed models first (LRU), then admin-launched models if needed | - |
-| **Ollama API** (`/api/chat`, `/api/generate`) | Evicts Ollama-managed models (LRU) | Admin-launched models by default |
-| **OpenAI API** (`/v1/chat/completions`) | Does not evict; only starts a model if a slot is free | Everything |
+**JSON (default):** zero-config, stored in `/data`. Fine for single-node.
 
-Two settings under **Settings >> App Settings** control this behavior:
-
-- **Enforce `LLAMAMAN_MAX_MODELS` for admin UI launches** - when on, the admin UI evicts the LRU model before launching. When off (default), the UI prompts before exceeding the cap.
-- **Allow Ollama API to evict admin-launched models** - when on, the Ollama API may evict admin-launched models as a fallback. Off by default. This does not affect the OpenAI API, which never evicts.
-
-Other details:
-
-- All running chat instances count toward the limit, including admin-launched and proxy-managed instances.
-- Embedding models are excluded from the limit and are never evicted.
-- `LLAMAMAN_MAX_MODELS=0` disables eviction entirely.
-
-## MariaDB / MySQL Setup
-
-By default llamaMan uses JSON files. To use MariaDB/MySQL, create a database and dedicated user:
+**MariaDB / MySQL:** set `DATABASE_URL`. Tables auto-created on first connect.
 
 ```sql
 CREATE DATABASE llamaman CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER 'llamaman'@'%' IDENTIFIED BY 'yourpassword';
 GRANT ALL PRIVILEGES ON llamaman.* TO 'llamaman'@'%';
-FLUSH PRIVILEGES;
 ```
 
-Then set `DATABASE_URL` in your container environment:
+MariaDB unlocks two optional features:
 
-```
-DATABASE_URL=mysql+pymysql://llamaman:yourpassword@host:3306/llamaman
-```
-
-Tables are auto-created on first connection.
-
-Per-node model metadata (a file's source repo and content hash) lives in a node-scoped `model_files` table keyed `(node_id, model_path)`, created on each node's boot, so nodes holding different files at the same path don't collide. Its composite key is 3056 of InnoDB's 3072 index bytes under utf8mb4, so the table is created with `ROW_FORMAT=DYNAMIC`.
-
-### Surviving a database outage (local mirror)
-
-*Optional, off by default.*
-
-With `DATABASE_URL` set, the database sits on the critical path of every request, so an outage stops the node serving - and a container restart mid-outage cannot boot at all.
-
-Enable **Settings → App settings → "Keep a local mirror of the database"** (or set `LLAMAMAN_DB_MIRROR=1`) to keep a write-through copy in `DATA_DIR/db_mirror/`. If the database goes away, the node keeps serving inference and still lets you launch models, create and edit presets, create or revoke API keys, change settings, and manage Hugging Face tokens; those changes are journalled and replayed in order when the database returns (probed every 10s). Only first-user setup (`/setup`) is blocked, which only matters on a brand-new install.
-
-Caveats worth knowing before enabling:
-
-- `DATA_DIR` must be a persistent volume, and **each node needs its own** - the mirror directory is stamped with its owning node id.
-- Settings are mirrored verbatim, so **Hugging Face tokens land on local disk in plaintext**.
-- Cross-node balancing stops during an outage (peer liveness lives in the database), and an API key revoked offline stays valid on other nodes until reconnect.
-- Request-log records are dropped rather than buffered while offline.
-
-## Clustering
-
-*Optional, off by default - single-node installs are completely unaffected.*
-
-Clustering lets several llamaMan deployments act as **one logical cluster**: a single dashboard that aggregates every node's GPUs, instances, and downloads, with cross-node launches/pulls/downloads and multi-node shared-queue load balancing. Nodes discover each other automatically through the shared storage backend.
-
-**Requirements:**
-
-- **A shared storage backend** - every node must point at the **same** `DATABASE_URL` (MariaDB/MySQL). The JSON backend is per-host and cannot be shared.
-- **A unique `LLAMAMAN_NODE_NAME` per node** - each node's identity in the cluster (required for every install regardless).
-- **The same `CLUSTER_SECRET` on every node** - the bearer token for all node-to-node HTTP.
-- **`CLUSTER_ADVERTISE_URL` per node** for cross-node *actions* - how peers reach this node (a hostname/IP routable from the other hosts, e.g. `http://srv1:5000`). A node without one appears in the dashboard but is view-only and skipped as an inference target.
-
-Set on **each** node (only `LLAMAMAN_NODE_NAME` and `CLUSTER_ADVERTISE_URL` differ between them):
-
-```yaml
-environment:
-  - LLAMAMAN_NODE_NAME=srv1                 # unique per node
-  - DATABASE_URL=mysql+pymysql://llamaman:pass@db-host:3306/llamaman   # identical on all nodes
-  - CLUSTER_ENABLED=true
-  - CLUSTER_SECRET=a-long-shared-random-secret   # identical on all nodes
-  - CLUSTER_ADVERTISE_URL=http://srv1:5000  # this node's address, routable from peers
-```
-
-Each node heartbeats every ~5s; a node silent past `CLUSTER_NODE_ONLINE_WINDOW_S` (default 45s) is shown offline. Inspect and manage the cluster under **Settings >> Cluster**. A few settings are scoped per node because they're host-specific (tracked Docker images and the two model-cap eviction toggles); everything else is shared cluster-wide via the database.
-
-Live shared-queue group aliases are advertised as selectable models in `/api/tags` and `/v1/models` (deduped cluster-wide), so a client can send the alias and have it routed to the least-loaded node serving it.
-
-> **Security:** the cluster secret lets any peer drive actions on this node. Run node-to-node traffic over a trusted network or behind TLS.
+- **Local DB mirror** - write-through copy in `DATA_DIR/db_mirror/` keeps the node serving through a DB outage (inference, launches, presets, API keys, settings; only first-user `/setup` is blocked). Offline writes are journalled and replayed on reconnect. Off by default; needs a persistent `DATA_DIR` per node. **Hugging Face tokens land on local disk in plaintext** if mirroring is on.
+- **Multi-node clustering** - multiple llamaMan deployments share the DB and act as one logical cluster: aggregated dashboard, cross-node launch/pull/download, shared-queue load balancing. Requires `CLUSTER_ENABLED=true`, the same `CLUSTER_SECRET` on every node, and a per-node `CLUSTER_ADVERTISE_URL` for cross-node actions (a node without one is view-only).
 
 ## Per-Instance Proxy
 
-When **Idle Timeout**, **Max Concurrent**, or **Proxy Sampling Overrides** are enabled for an instance, llamaMan places a proxy in front of that instance's port. The proxy handles auth, concurrency gating, wake-on-request, and model name validation.
+When **Idle Timeout**, **Max Concurrent**, or **Proxy Sampling Overrides** are on for an instance, llamaMan puts a proxy in front of that instance's port. It handles auth, concurrency gating, wake-on-request, and model-name validation - requests with a `"model"` field are checked against the loaded model's filename stem (prefix match accepted; mismatch → 404, no wake for sleeping instances).
 
-Saving a preset propagates idle-timeout, queue, and proxy-sampling fields to running instances live. If the instance was launched with all three of the above off, no proxy was spawned, so toggling **Proxy Sampling Overrides** on live applies only to requests via the app's Ollama/OpenAI compat endpoints; direct hits to the public port require a relaunch.
+## Model Eviction
 
-On inference endpoints, if the request body includes a `"model"` field, the proxy validates it against the loaded model's filename stem. A prefix match is accepted (e.g. `"qwen2.5-0.5b-instruct-q2"` matches `"qwen2.5-0.5b-instruct-q2_k"`). A mismatch returns HTTP 404. Requests without a `"model"` field are forwarded unconditionally.
+`LLAMAMAN_MAX_MODELS` caps concurrent **chat** models via the proxy. Embedding-flagged instances are excluded and never evicted; sleeping instances still count.
 
-For sleeping instances, a mismatched model name returns 404 without waking the instance.
+| Launcher | Evicts | Cannot evict |
+|---|---|---|
+| **Admin UI** | Ollama-managed first, then admin-launched | - |
+| **Ollama API** | Ollama-managed (LRU) | Admin-launched (by default) |
+| **OpenAI API** | Nothing (by default; 503 when full) | Everything (by default) |
+
+Three toggles under **Settings → App Settings** relax these defaults ("Enforce cap for admin UI launches", "Allow Ollama API to evict admin-launched", "Allow OpenAI API to evict admin-launched").
 
 ## Requirements
 
 - Docker with access to `/var/run/docker.sock`
-- GPU support (one of):
-  - **NVIDIA**: [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) installed (`docker run --gpus all` must work)
-  - **AMD**: [ROCm-compatible setup](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/)
-  - **Intel Arc**: `/dev/dri` accessible, user in `video`/`render` groups
-  - **CPU only**: no GPU required
+- One of: [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html), a [ROCm-compatible setup](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/), Intel Arc with `/dev/dri` access, or CPU-only
 
 ## Links
 
-- **Source**: [GitHub](https://github.com/nullata/llamaman)
+- **Source & full docs**: [github.com/nullata/llamaman](https://github.com/nullata/llamaman)
+- **llama.cpp server flags**: [server README](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
 
 ## License
 
-llamaMan is licensed under the [Elastic License 2.0](https://github.com/nullata/llamaman/blob/main/LICENSE). You may use, copy, distribute, and modify the software, subject to the following limitations:
-
-- You may not provide the software to third parties as a hosted or managed service where the service gives users access to a substantial set of its features or functionality.
-- You may not remove or obscure any licensing, copyright, or other notices of the licensor.
+[Elastic License 2.0](https://github.com/nullata/llamaman/blob/main/LICENSE). No hosting as a managed service; no removing license notices.
