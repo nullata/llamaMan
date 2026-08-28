@@ -27,6 +27,14 @@ from core.helpers import (
     model_name_from_path,
     request_local_worker,
 )
+from core.loop_detect import (
+    SSETextExtractor as _LoopDetectSSEExtractor,
+    attach as _loop_detect_attach,
+    detach as _loop_detect_detach,
+    feed as _loop_detect_feed,
+    make_ollama_terminator as _loop_detect_ollama_terminator,
+    make_openai_sse_terminator as _loop_detect_openai_terminator,
+)
 from core.proxy_sampling import apply_proxy_sampling_overrides
 from core.spec_decoding import DEFAULT_SPEC_TYPE
 from core.request_log import record_request, finalize_async, SSEAccumulator
@@ -815,6 +823,20 @@ def _stream_llamaman(host: str, port: int, openai_body: dict, model_name: str,
     final_usage: dict | None = None
     final_status = 200
 
+    # Loop-detection: attach a TurnBuffer if the instance's preset opted in.
+    # The output-visible text (content + reasoning) is fed each iteration;
+    # on detection we emit an Ollama-format terminator and stop. All calls
+    # wrapped defensively - a detector fault can never break the stream.
+    _loop_buf = None
+    try:
+        if inst_id:
+            with instances_lock:
+                _inst = instances.get(inst_id)
+                _cfg = (_inst.get("config", {}) if _inst else {}) or {}
+            _loop_buf = _loop_detect_attach(inst_id, _cfg)
+    except Exception as e:
+        logger.warning("loop_detect: attach in _stream_llamaman failed: %s", e)
+
     def _content_field(token: str, thinking: str = ""):
         if mode == "chat":
             msg = {"role": "assistant", "content": token}
@@ -907,6 +929,28 @@ def _stream_llamaman(host: str, port: int, openai_body: dict, model_name: str,
                 }
                 yield json.dumps(chunk_obj, ensure_ascii=False) + "\n"
 
+                # Loop-detection fork: feed the CONTENT + THINKING text into
+                # the rolling buffer. A thinking loop matters just as much
+                # as a content loop, so both go in. Wrapped defensively -
+                # any detector failure just lets the stream keep flowing.
+                if _loop_buf is not None:
+                    try:
+                        loop_text = (thinking or "") + (token or "")
+                        if loop_text and _loop_detect_feed(_loop_buf, loop_text):
+                            # Detected. Emit an Ollama-shaped terminator with
+                            # done_reason='loop_detected' and stop iterating.
+                            # The finally: block closes upstream, which halts
+                            # llama-server's generation.
+                            try:
+                                yield _loop_detect_ollama_terminator(model_name, mode)
+                            except Exception as e:
+                                logger.warning(
+                                    "loop_detect: ollama terminator emit failed: %s", e,
+                                )
+                            return
+                    except Exception as e:
+                        logger.warning("loop_detect: fork in _stream_llamaman failed: %s", e)
+
                 if finish:
                     final_usage = chunk.get("usage", {}) or None
                     yield json.dumps(_done_obj(finish, chunk.get("usage", {})), ensure_ascii=False) + "\n"
@@ -926,6 +970,7 @@ def _stream_llamaman(host: str, port: int, openai_body: dict, model_name: str,
     finally:
         if resp is not None:
             resp.close()
+        _loop_detect_detach(_loop_buf)
         tps = ttft = None
         if completion_tokens > 0:
             elapsed = time.monotonic() - t_start
@@ -1357,6 +1402,13 @@ def llamaman_v1_chat():
             _report_local_worker_unreachable(inst_id, e)
             raise
         if stream:
+            # Loop-detection: attach OUTSIDE the generator so an attach
+            # failure surfaces immediately, and both the SSE extractor and
+            # the buffer live for the whole stream. See proxy/__init__.py's
+            # sidecar for the same pattern.
+            _loop_buf = _loop_detect_attach(inst_id, inst.get("config", {}))
+            _loop_extractor = _LoopDetectSSEExtractor() if _loop_buf is not None else None
+
             def _relay():
                 acc = SSEAccumulator() if handle else None
                 try:
@@ -1366,8 +1418,28 @@ def llamaman_v1_chat():
                         if handle and chunk:
                             handle.mark_first_token()
                         yield chunk
+                        # Loop-detection fork. Extract visible text from the
+                        # SSE bytes and feed the rolling buffer. On detection
+                        # emit an OpenAI-shaped terminator and stop relaying;
+                        # the finally: closes upstream and llama-server halts.
+                        if _loop_buf is not None and _loop_extractor is not None and chunk:
+                            try:
+                                new_text = _loop_extractor.extract(chunk)
+                                if new_text and _loop_detect_feed(_loop_buf, new_text):
+                                    try:
+                                        yield _loop_detect_openai_terminator(model_name)
+                                    except Exception as e:
+                                        logger.warning(
+                                            "loop_detect: openai terminator emit failed: %s", e,
+                                        )
+                                    break
+                            except Exception as e:
+                                logger.warning(
+                                    "loop_detect: fork in v1_chat failed: %s", e,
+                                )
                 finally:
                     resp.close()
+                    _loop_detect_detach(_loop_buf)
                     if gate:
                         gate.release()
                     # Can't extract token counts from a consumed stream,
@@ -1522,6 +1594,10 @@ def _proxy_passthrough(upstream_path: str, endpoint_label: str):
             _report_local_worker_unreachable(inst_id, e)
             raise
         if stream:
+            # Loop-detection: same pattern as /v1/chat/completions above.
+            _loop_buf = _loop_detect_attach(inst_id, inst.get("config", {}))
+            _loop_extractor = _LoopDetectSSEExtractor() if _loop_buf is not None else None
+
             def _relay():
                 acc = SSEAccumulator() if handle else None
                 try:
@@ -1531,8 +1607,24 @@ def _proxy_passthrough(upstream_path: str, endpoint_label: str):
                         if handle and chunk:
                             handle.mark_first_token()
                         yield chunk
+                        if _loop_buf is not None and _loop_extractor is not None and chunk:
+                            try:
+                                new_text = _loop_extractor.extract(chunk)
+                                if new_text and _loop_detect_feed(_loop_buf, new_text):
+                                    try:
+                                        yield _loop_detect_openai_terminator(model_name)
+                                    except Exception as e:
+                                        logger.warning(
+                                            "loop_detect: openai terminator emit failed: %s", e,
+                                        )
+                                    break
+                            except Exception as e:
+                                logger.warning(
+                                    "loop_detect: fork in v1_completions failed: %s", e,
+                                )
                 finally:
                     resp.close()
+                    _loop_detect_detach(_loop_buf)
                     if gate:
                         gate.release()
                     _touch_instance(inst_id)

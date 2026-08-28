@@ -41,6 +41,13 @@ _DB_MIRROR_SYNC_INTERVAL = 86400
 # Opt-in model update scan; its interval comes from settings, not a constant.
 _last_update_scan_at: float = 0.0
 
+# Loop-detection worker: fixed 5s cadence at the poller level; per-buffer
+# scan_interval_s is enforced inside worker_tick. The tick is a cheap no-op
+# when the registry is empty (dict-emptiness check), so this costs nothing
+# when no instance has loop detection enabled.
+_last_loop_detect_tick_at: float = 0.0
+_LOOP_DETECT_TICK_INTERVAL = 5
+
 
 def _run_cleanup() -> None:
     from storage import get_storage
@@ -380,10 +387,23 @@ def _maybe_auto_restart(inst_id: str) -> None:
 def _background_poller():
     global _last_cleanup_at, _last_orphan_scan_at, _last_stale_cleanup_at, _last_image_check_at
     global _last_request_log_prune_at, _last_update_scan_at, _last_db_mirror_sync_at
+    global _last_loop_detect_tick_at
     while True:
         time.sleep(5)
 
         now = time.time()
+
+        # --- Loop-detection fallback scan ---
+        # Inline scans (in the streaming path) handle 99% of cases; this
+        # tick is a fallback for streams that emit tokens too slowly to hit
+        # the inline threshold. Cheap no-op when no buffers are registered.
+        if now - _last_loop_detect_tick_at >= _LOOP_DETECT_TICK_INTERVAL:
+            _last_loop_detect_tick_at = now
+            try:
+                from core.loop_detect import worker_tick
+                worker_tick()
+            except Exception as e:
+                logger.warning("Loop-detect tick error: %s", e)
 
         # --- Periodic cleanup ---
         if now - _last_cleanup_at >= _CLEANUP_INTERVAL:

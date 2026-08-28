@@ -499,6 +499,23 @@ header span {
   color: var(--text);
 }
 
+/* Anti-Loop section carries TWO independent sub-toggles (DRY sampler + Output
+   Loop Detection), each rendered as a nested section-header with an h4 and a
+   toggle-switch. Give the h4 the same reset as the h3 above so it stops
+   inheriting the browser's default h4 margins (which would push the toggle
+   off-line and add erratic top-spacing), and space the two sub-sections apart
+   with a top margin instead of inline styles. The FIRST subheader still needs
+   a small gap below the section's intro paragraph. */
+.launch-settings-section-header.anti-loop-subheader {
+  margin-top: 10px;
+}
+.launch-settings-section-header.anti-loop-subheader h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
 .launch-inline-settings-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, max-content));

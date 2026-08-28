@@ -115,12 +115,29 @@ if (downloadNodeSel) downloadNodeSel.addEventListener('change', refreshDownloadD
 // viewport, switch to anchoring it on the icon's right (or left) edge. The
 // half-width has to match the CSS max-width in style.css - .info-tip::after
 // is 240px (halfMax 120), .info-tip-wide bumps that to 360px (halfMax 180).
+//
+// The left bound isn't the viewport edge - it's the right edge of any
+// left-side layout column that visually holds content the tooltip would
+// otherwise overlap. On this page that's `.sidebar` (the model library),
+// which is a 260px flex column, so a tooltip on a leftmost field extends
+// into the sidebar area and sits on top of model rows there. We resolve
+// this once per invocation (getBoundingClientRect is fast and the layout
+// might have shifted between opens - sidebar can collapse, etc).
 function updateInfoTipClipping(tip) {
   const rect = tip.getBoundingClientRect();
   const center = rect.left + rect.width / 2;
   const halfMax = tip.classList.contains('info-tip-wide') ? 180 : 120;
+  let leftBound = 0;
+  const sidebar = document.querySelector('.sidebar');
+  if (sidebar) {
+    const sr = sidebar.getBoundingClientRect();
+    // Only treat the sidebar as an obstacle when the tip itself is to the
+    // right of it - a tip that's inside the sidebar (there shouldn't be any,
+    // but be defensive) shouldn't get force-anchored based on its own container.
+    if (sr.right > leftBound && rect.left >= sr.right) leftBound = sr.right;
+  }
   const overflowsRight = center + halfMax > window.innerWidth;
-  const overflowsLeft = center - halfMax < 0;
+  const overflowsLeft = center - halfMax < leftBound;
   tip.classList.toggle('clip-right', overflowsRight);
   tip.classList.toggle('clip-left', !overflowsRight && overflowsLeft);
 }

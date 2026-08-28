@@ -10,6 +10,13 @@ from werkzeug.wrappers import Request as WerkzeugRequest
 
 from config import REQUEST_TIMEOUT, logger
 from core.helpers import model_name_from_path, request_local_worker
+from core.loop_detect import (
+    SSETextExtractor as _LoopDetectSSEExtractor,
+    attach as _loop_detect_attach,
+    detach as _loop_detect_detach,
+    feed as _loop_detect_feed,
+    make_openai_sse_terminator as _loop_detect_openai_terminator,
+)
 from core.proxy_sampling import PROXY_SAMPLING_PATHS, apply_proxy_sampling_overrides
 from core.request_log import record_request, SSEAccumulator
 from core.state import instances, instances_lock
@@ -555,6 +562,35 @@ def make_proxy_app(inst_id: str, internal_port: int, proxy_port: int):
             content_type = (resp.headers.get("Content-Type") or "").lower()
             is_sse = "text/event-stream" in content_type
 
+            # Attach a loop-detection buffer if the preset opted in AND this
+            # is an SSE (streaming) response - non-streaming replies produce
+            # one JSON blob, so there's nothing to interrupt mid-generation.
+            # attach() returns None when the feature is off; downstream calls
+            # short-circuit on None so the hot path is unchanged for the
+            # common case.
+            #
+            # SEPARATE from SSEAccumulator (which feeds request_log) - kept
+            # separate so a detector bug can't corrupt the request log and
+            # vice-versa. Both parse the same SSE bytes; the cost is small
+            # (each does its own line-buffering) and the isolation is worth
+            # more than the perf.
+            loop_buf = None
+            loop_extractor = None
+            loop_client_is_openai = False
+            if is_sse:
+                inst_config = effective_inst.get("config", {}) if effective_inst else {}
+                loop_buf = _loop_detect_attach(effective_id, inst_config)
+                if loop_buf is not None:
+                    loop_extractor = _LoopDetectSSEExtractor()
+                    # The path here is the DOWNSTREAM request path (what the
+                    # client sent). OpenAI vs llama.cpp-native decides the
+                    # shape of the synthetic terminator we emit on detection.
+                    _p = req.path
+                    loop_client_is_openai = (
+                        "/v1/chat/completions" in _p
+                        or "/v1/completions" in _p
+                    )
+
             def _relay_and_close():
                 acc = SSEAccumulator() if (handle and is_sse) else None
                 # Non-SSE capture: buffer up to a cap so we don't bloat memory
@@ -571,8 +607,40 @@ def make_proxy_app(inst_id: str, internal_port: int, proxy_port: int):
                         elif buf is not None and len(buf) < BUF_CAP:
                             buf.extend(chunk[: BUF_CAP - len(buf)])
                         yield chunk
+                        # Loop-detection fork: feed text extracted from this
+                        # chunk into the rolling buffer. On detection, emit a
+                        # synthetic terminator and break - the finally: block
+                        # closes the upstream socket, which stops llama-server's
+                        # generation. All wrapped in try/except so a scan bug
+                        # can never break the stream.
+                        if loop_buf is not None and loop_extractor is not None and chunk:
+                            try:
+                                new_text = loop_extractor.extract(chunk)
+                                if new_text and _loop_detect_feed(loop_buf, new_text):
+                                    # Detected. Synthesize terminator and stop
+                                    # relaying.
+                                    if loop_client_is_openai:
+                                        try:
+                                            model_name_hint = (
+                                                effective_inst.get("model_name", "")
+                                                if effective_inst else ""
+                                            )
+                                            yield _loop_detect_openai_terminator(model_name_hint)
+                                        except Exception as e:
+                                            logger.warning(
+                                                "loop_detect: openai terminator emit failed: %s", e,
+                                            )
+                                    # For llama.cpp-native /completion SSE we
+                                    # can't synthesize a strictly conformant
+                                    # terminator - the format varies. Closing
+                                    # the connection is enough; the client sees
+                                    # a truncated stream, which is honest.
+                                    break
+                            except Exception as e:
+                                logger.warning("loop_detect: fork failed: %s", e)
                 finally:
                     resp.close()
+                    _loop_detect_detach(loop_buf)
                     if gate:
                         gate.release()
                     if handle:

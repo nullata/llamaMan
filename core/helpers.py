@@ -194,6 +194,42 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
     reasoning_format = (config.get("reasoning_format") or "").strip().lower()
     if reasoning_format in _ALLOWED_REASONING_FORMATS:
         cmd += ["--reasoning-format", reasoning_format]
+    # DRY (Don't Repeat Yourself) sampler. Only emit when the user's toggle is
+    # on AND multiplier > 0 - llama.cpp treats multiplier=0 as disabled, so
+    # emitting the flags with a zero multiplier would be noisy no-ops.
+    # Companion flags (--dry-base / --dry-allowed-length / --dry-penalty-last-n)
+    # only ride along when the main flag is emitted; skipping them individually
+    # falls back to llama.cpp's own defaults so we don't hard-code numbers that
+    # may drift across versions. See core/dry_sampling.py for the value contract.
+    from core.dry_sampling import dry_enabled
+    if dry_enabled(config):
+        try:
+            cmd += ["--dry-multiplier", f"{float(config['dry_multiplier']):g}"]
+        except (TypeError, ValueError, KeyError):
+            pass
+        base = config.get("dry_base")
+        if base not in (None, ""):
+            try:
+                cmd += ["--dry-base", f"{float(base):g}"]
+            except (TypeError, ValueError):
+                pass
+        allowed_length = config.get("dry_allowed_length")
+        if allowed_length not in (None, ""):
+            try:
+                cmd += ["--dry-allowed-length", str(int(allowed_length))]
+            except (TypeError, ValueError):
+                pass
+        penalty_last_n = config.get("dry_penalty_last_n")
+        if penalty_last_n not in (None, ""):
+            try:
+                v = int(penalty_last_n)
+                # Guard against negative slipping through from a corrupt
+                # preset - llama.cpp's CLI throws on those, so the container
+                # would die at startup with an opaque error otherwise.
+                if v >= 0:
+                    cmd += ["--dry-penalty-last-n", str(v)]
+            except (TypeError, ValueError):
+                pass
     _ALLOWED_CACHE_TYPES = {"f32", "f16", "bf16", "q8_0", "q4_0", "q4_1",
                             "iq4_nl", "q5_0", "q5_1"}
     cache_type_k = (config.get("cache_type_k") or "").strip().lower()

@@ -37,6 +37,8 @@ from core.helpers import (
     public_dict, read_log_file, resolve_llama_endpoint, stop_container,
     stream_log_file,
 )
+from core.dry_sampling import DRY_SAMPLER_KEYS, parse_dry_config
+from core.loop_detect import LOOP_DETECT_KEYS, parse_loop_detect_config
 from core.proxy_sampling import parse_proxy_sampling_config
 from core.spec_decoding import DEFAULT_SPEC_TYPE, parse_spec_config
 from core.multimodal import parse_mmproj_config
@@ -126,6 +128,17 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
             "proxy_sampling_top_p",
             "proxy_sampling_presence_penalty",
             "proxy_sampling_repeat_penalty",
+            # DRY sampler is baked into the container at launch (a sampler
+            # flag, not something the proxy can retro-apply), so live-merging
+            # it here only affects the NEXT relaunch. But it still has to be
+            # in the whitelist so a restart picks up the current preset.
+            *DRY_SAMPLER_KEYS,
+            # Loop detection lives entirely proxy-side and is re-read from
+            # inst["config"] on every request, so merging here IS effectively
+            # live for the next request. In-flight streams keep their
+            # TurnBuffer's snapshotted thresholds (safe: min_chunk / min_reps
+            # captured at attach time).
+            *LOOP_DETECT_KEYS,
         ):
             if key in preset:
                 merged[key] = preset[key]
@@ -506,7 +519,18 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
                     proxy_sampling_top_k=40,
                     proxy_sampling_top_p=0.95,
                     proxy_sampling_presence_penalty=0.0,
-                    proxy_sampling_repeat_penalty=0.0):
+                    proxy_sampling_repeat_penalty=0.0,
+                    dry_enabled=False,
+                    dry_multiplier=0.0,
+                    dry_base=1.75,
+                    dry_allowed_length=2,
+                    dry_penalty_last_n=None,
+                    loop_detect_enabled=False,
+                    loop_detect_min_chunk_chars=200,
+                    loop_detect_min_repetitions=3,
+                    loop_detect_max_buffer_chars=8192,
+                    loop_detect_scan_interval_s=10,
+                    loop_detect_scan_every_n_tokens=64):
     with instances_lock:
         used_ports = {i["port"] for i in instances.values() if i["status"] not in ("stopped",)}
     if port in used_ports:
@@ -602,6 +626,26 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
         "proxy_sampling_top_p": proxy_sampling_top_p,
         "proxy_sampling_presence_penalty": proxy_sampling_presence_penalty,
         "proxy_sampling_repeat_penalty": proxy_sampling_repeat_penalty,
+        # DRY sampler - llama-server's sampling-time anti-repeat. The zero
+        # values match llama.cpp's own defaults (multiplier=0 == DRY off), so
+        # a config from before this feature produces the identical CLI.
+        "dry_enabled": bool(dry_enabled),
+        "dry_multiplier": float(dry_multiplier) if dry_multiplier is not None else 0.0,
+        "dry_base": float(dry_base) if dry_base is not None else 1.75,
+        "dry_allowed_length": int(dry_allowed_length) if dry_allowed_length is not None else 2,
+        "dry_penalty_last_n": dry_penalty_last_n,
+        # Auto model output loop detection - lives proxy-side (no llama-server
+        # flag). The streaming fork in proxy/__init__.py + api/llamaman.py
+        # reads these from inst["config"] per request, so a preset edit is
+        # effectively live for the next request. Off by default: the
+        # detection thresholds have to be tuned per model class to avoid
+        # false positives on code / poetry / tables at the sub-minute scale.
+        "loop_detect_enabled": bool(loop_detect_enabled),
+        "loop_detect_min_chunk_chars": int(loop_detect_min_chunk_chars),
+        "loop_detect_min_repetitions": int(loop_detect_min_repetitions),
+        "loop_detect_max_buffer_chars": int(loop_detect_max_buffer_chars),
+        "loop_detect_scan_interval_s": int(loop_detect_scan_interval_s),
+        "loop_detect_scan_every_n_tokens": int(loop_detect_scan_every_n_tokens),
     }
 
     inst_id = str(uuid.uuid4())
@@ -873,6 +917,12 @@ def api_instances_create():
     mmproj_config, mmproj_err = parse_mmproj_config(body)
     if mmproj_err:
         return jsonify({"error": mmproj_err}), 400
+    dry_config, dry_err = parse_dry_config(body)
+    if dry_err:
+        return jsonify({"error": dry_err}), 400
+    loop_detect_config, loop_detect_err = parse_loop_detect_config(body)
+    if loop_detect_err:
+        return jsonify({"error": loop_detect_err}), 400
 
     incoming_embedding_model = bool(body.get("embedding_model", False))
     confirm_overcommit = bool(body.get("confirm_overcommit", False))
@@ -915,6 +965,8 @@ def api_instances_create():
         **spec_config,
         **mmproj_config,
         **proxy_sampling_config,
+        **dry_config,
+        **loop_detect_config,
     )
     if err:
         code = 409 if "already in use" in err else 500
@@ -1022,6 +1074,17 @@ def api_instances_restart(inst_id):
         proxy_sampling_top_p=float(config.get("proxy_sampling_top_p", 0.95)),
         proxy_sampling_presence_penalty=float(config.get("proxy_sampling_presence_penalty", 0.0)),
         proxy_sampling_repeat_penalty=float(config.get("proxy_sampling_repeat_penalty", 0.0)),
+        dry_enabled=bool(config.get("dry_enabled", False)),
+        dry_multiplier=float(config.get("dry_multiplier", 0.0)),
+        dry_base=float(config.get("dry_base", 1.75)),
+        dry_allowed_length=int(config.get("dry_allowed_length", 2)),
+        dry_penalty_last_n=config.get("dry_penalty_last_n"),
+        loop_detect_enabled=bool(config.get("loop_detect_enabled", False)),
+        loop_detect_min_chunk_chars=int(config.get("loop_detect_min_chunk_chars", 200)),
+        loop_detect_min_repetitions=int(config.get("loop_detect_min_repetitions", 3)),
+        loop_detect_max_buffer_chars=int(config.get("loop_detect_max_buffer_chars", 8192)),
+        loop_detect_scan_interval_s=int(config.get("loop_detect_scan_interval_s", 10)),
+        loop_detect_scan_every_n_tokens=int(config.get("loop_detect_scan_every_n_tokens", 64)),
     )
     if err:
         _restore_restarted_instance(old)

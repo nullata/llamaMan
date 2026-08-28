@@ -2,7 +2,9 @@
 
 from flask import Blueprint, jsonify, request
 
+from core.dry_sampling import parse_dry_config
 from core.helpers import normalize_flash_attn, normalize_reasoning_format
+from core.loop_detect import LOOP_DETECT_KEYS, parse_loop_detect_config
 from core.model_alias import PRETTY_NAME_KEY, existing_aliases
 from core.model_alias import invalidate as invalidate_alias_cache
 from core.model_alias import _normalize as _normalize_alias
@@ -146,6 +148,12 @@ def api_preset_save(model_path):
     mmproj_config, mmproj_err = parse_mmproj_config(body)
     if mmproj_err:
         return jsonify({"error": mmproj_err}), 400
+    dry_config, dry_err = parse_dry_config(body)
+    if dry_err:
+        return jsonify({"error": dry_err}), 400
+    loop_detect_config, loop_detect_err = parse_loop_detect_config(body)
+    if loop_detect_err:
+        return jsonify({"error": loop_detect_err}), 400
     # Preserve existing meta fields (favorite, note) that aren't part of the launch form
     existing = get_storage().get_preset(model_path) or {}
     if not isinstance(existing, dict):
@@ -198,6 +206,14 @@ def api_preset_save(model_path):
         **spec_config,
         **mmproj_config,
         **proxy_sampling_config,
+        # DRY sampler is a shared behavior knob (not per-node hardware) - same
+        # tier as flash_attn / cache types / reasoning_format. Values are
+        # already normalized by parse_dry_config at the boundary above.
+        **dry_config,
+        # Loop detection is also a shared behavior knob (its thresholds are
+        # about the model's output characteristics, not the node's hardware).
+        # Same tier as DRY.
+        **loop_detect_config,
     }
 
     # Cluster: when a target node is named, the form's hardware fields are that
@@ -225,6 +241,11 @@ _LIVE_PROXY_SAMPLING_FIELDS = (
     "proxy_sampling_top_p",
     "proxy_sampling_presence_penalty",
     "proxy_sampling_repeat_penalty",
+    # Loop detection lives entirely proxy-side and is read from inst["config"]
+    # on every incoming request (attach() reads the config fresh at request
+    # start; in-flight streams keep the thresholds captured at attach time).
+    # So live-merging is safe: the next request sees the new thresholds.
+    *LOOP_DETECT_KEYS,
 )
 
 

@@ -516,6 +516,32 @@ async function selectModel(model, el) {
         if (!['auto', 'none', 'deepseek', 'deepseek-legacy'].includes(rf)) rf = 'auto';
         rfEl.value = rf;
       }
+      // Anti-Loop: DRY sampler + output loop detection. Both shared behavior
+      // knobs; a preset saved before this feature has no keys, so we fall
+      // back to disabled + llama.cpp/detector defaults exactly.
+      const dryEnEl = document.getElementById('f-dry-enabled');
+      if (dryEnEl) dryEnEl.checked = !!p.dry_enabled;
+      const dryMulEl = document.getElementById('f-dry-multiplier');
+      if (dryMulEl) dryMulEl.value = p.dry_multiplier ?? 0.8;
+      const dryBaseEl = document.getElementById('f-dry-base');
+      if (dryBaseEl) dryBaseEl.value = p.dry_base ?? 1.75;
+      const dryAlEl = document.getElementById('f-dry-allowed-length');
+      if (dryAlEl) dryAlEl.value = p.dry_allowed_length ?? 2;
+      const dryPnEl = document.getElementById('f-dry-penalty-last-n');
+      if (dryPnEl) dryPnEl.value = (p.dry_penalty_last_n == null) ? '' : p.dry_penalty_last_n;
+      const ldEnEl = document.getElementById('f-loop-detect-enabled');
+      if (ldEnEl) ldEnEl.checked = !!p.loop_detect_enabled;
+      const ldChunkEl = document.getElementById('f-loop-detect-min-chunk-chars');
+      if (ldChunkEl) ldChunkEl.value = p.loop_detect_min_chunk_chars ?? 200;
+      const ldRepEl = document.getElementById('f-loop-detect-min-repetitions');
+      if (ldRepEl) ldRepEl.value = p.loop_detect_min_repetitions ?? 3;
+      const ldBufEl = document.getElementById('f-loop-detect-max-buffer-chars');
+      if (ldBufEl) ldBufEl.value = p.loop_detect_max_buffer_chars ?? 8192;
+      const ldTokEl = document.getElementById('f-loop-detect-scan-every-n-tokens');
+      if (ldTokEl) ldTokEl.value = p.loop_detect_scan_every_n_tokens ?? 64;
+      const ldIntEl = document.getElementById('f-loop-detect-scan-interval-s');
+      if (ldIntEl) ldIntEl.value = p.loop_detect_scan_interval_s ?? 10;
+      if (typeof updateAntiLoopState === 'function') updateAntiLoopState();
       document.getElementById('f-note').value = p.note || '';
       // Per-node hardware (base, overlaid with the selected node's override)
       applyPresetHardwareForNode(p, _launchNode());

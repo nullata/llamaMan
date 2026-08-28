@@ -387,6 +387,116 @@
                     </div>
                   </div>
                 </div>
+                <!-- Anti-Loop: unlike Proxy-Side Sampling and Speculative
+                     Decoding, this section has TWO independent sub-toggles
+                     inside (DRY sampler + Output Loop Detection), so the
+                     outer container is NOT a .launch-settings-reveal.
+                     Wrapping the always-visible outer content in
+                     .launch-settings-reveal-inner would leave it stuck with
+                     overflow: hidden (no .reveal-expanded parent to lift the
+                     clip), which cuts off every info-tip tooltip in the
+                     section. Use plain divs for the outer content; only the
+                     two sub-toggle bodies keep the reveal wrappers. -->
+                <div class="form-group full launch-settings-section">
+                  <div class="launch-settings-section-header">
+                    <h3>Anti-Loop</h3>
+                    <span class="text-meta">Two-tier defense against output loops</span>
+                  </div>
+                  <p class="hint-text">Two independent controls. <strong>DRY sampler</strong> is a soft, sampling-time deterrent baked into llama-server &mdash; it discourages token sequences that would extend a recent n-gram. <strong>Output Loop Detection</strong> is a hard, post-hoc kill: llamaman's proxy watches the model's output text and, if it sees the same large chunk repeat, ends the turn and tells the client. DRY prevents most loops from forming; Loop Detection is the safety net when DRY isn't enough.</p>
+
+                  <div class="launch-settings-section-header anti-loop-subheader">
+                    <h4>DRY sampler</h4>
+                    <label class="toggle-switch" for="f-dry-enabled" aria-label="Enable DRY sampler">
+                      <input id="f-dry-enabled" type="checkbox" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                  <div class="launch-settings-reveal" id="dry-sampler-reveal">
+                    <div class="launch-settings-reveal-inner">
+                      <p class="hint-text">Maps to llama-server <code>--dry-multiplier</code> / <code>--dry-base</code> / <code>--dry-allowed-length</code> / <code>--dry-penalty-last-n</code>. Baked in at launch &mdash; changes require a relaunch.</p>
+                      <div class="launch-inline-settings-grid">
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-dry-multiplier">Multiplier</label>
+                            <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="DRY Multiplier help" data-tip="Maps to --dry-multiplier. Strength of the penalty on tokens that would extend a recently-seen n-gram. 0 disables DRY entirely (llama.cpp's own default). Typical values are 0.5-1.0; 0.8 is a common starting point. Higher values suppress repetition more aggressively but can also flatten legitimately-varied text."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-dry-multiplier" class="launch-settings-input" type="number" value="0.8" min="0" max="10" step="0.01" />
+                        </div>
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-dry-base">Base</label>
+                            <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="DRY Base help" data-tip="Maps to --dry-base. Exponential base for the penalty growth as n-gram length increases. Must be &gt;= 1.0 (llama.cpp silently ignores lower values). llama.cpp's default is 1.75; higher values ramp the penalty faster."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-dry-base" class="launch-settings-input" type="number" value="1.75" min="1" step="0.01" />
+                        </div>
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-dry-allowed-length">Allowed Length</label>
+                            <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="DRY Allowed Length help" data-tip="Maps to --dry-allowed-length. N-grams up to this length are exempt from the penalty (so common short phrases aren't blocked). Default 2."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-dry-allowed-length" class="launch-settings-input" type="number" value="2" min="0" step="1" />
+                        </div>
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-dry-penalty-last-n">Penalty Last N</label>
+                            <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="DRY Penalty Last N help" data-tip="Maps to --dry-penalty-last-n. How many recent tokens to look back for n-gram matches. 0 disables the history window explicitly. Blank omits the flag entirely so llama.cpp uses its own default (typically the full context size). llama-server rejects negative values."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-dry-penalty-last-n" class="launch-settings-input" type="number" min="0" step="1" placeholder="(auto)" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="launch-settings-section-header anti-loop-subheader">
+                    <h4>Output Loop Detection</h4>
+                    <label class="toggle-switch" for="f-loop-detect-enabled" aria-label="Enable output loop detection">
+                      <input id="f-loop-detect-enabled" type="checkbox" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                  <div class="launch-settings-reveal" id="loop-detect-reveal">
+                    <div class="launch-settings-reveal-inner">
+                      <p class="hint-text">llamaman's proxy watches the model's streamed output; if a large chunk of text repeats often enough, it closes the upstream connection and tells the client the turn was ended for a detected loop. Applies to Ollama / OpenAI compat routes (<code>:42069</code>) always, and to per-instance ports only when a sidecar proxy is already present for the instance (i.e. Idle Timeout, Max Concurrent, or Proxy Sampling Overrides is also on). Live-updated from preset &mdash; next request picks up new thresholds.</p>
+                      <div class="launch-inline-settings-grid">
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-loop-detect-min-chunk-chars">Min chunk chars</label>
+                            <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Min chunk chars help" data-tip="Minimum length of the candidate repeating text to look for. Lower = catches shorter loops but false-positives on repetitive-but-legitimate content (numbered lists, poetry choruses, markdown tables). 60-4096; default 200 is a good starting point for prose."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-loop-detect-min-chunk-chars" class="launch-settings-input" type="number" value="200" min="60" max="4096" step="1" />
+                        </div>
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-loop-detect-min-repetitions">Min repetitions</label>
+                            <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Min repetitions help" data-tip="How many exact copies of the chunk must appear before we flag. 2 is aggressive (fires on any doubled chunk), 3-5 balances responsiveness against false positives. Range 2-20."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-loop-detect-min-repetitions" class="launch-settings-input" type="number" value="3" min="2" max="20" step="1" />
+                        </div>
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-loop-detect-max-buffer-chars">Buffer size (chars)</label>
+                            <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Buffer size help" data-tip="Rolling window of the most-recent characters kept per active request. Must be at least min_chunk * min_repetitions. Higher = catches slower-emerging loops but uses more memory per in-flight request. Range 512-65536; default 8192."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-loop-detect-max-buffer-chars" class="launch-settings-input" type="number" value="8192" min="512" max="65536" step="1" />
+                        </div>
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-loop-detect-scan-every-n-tokens">Scan every N chunks</label>
+                            <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Scan interval help" data-tip="Inline scan cadence. Every N upstream chunks (roughly N generated tokens), the detector runs a scan. Lower = faster kill but more CPU per stream. Range 8-4096; default 64 catches most loops within one second at typical generation speeds."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-loop-detect-scan-every-n-tokens" class="launch-settings-input" type="number" value="64" min="8" max="4096" step="1" />
+                        </div>
+                        <div class="form-group">
+                          <span class="label-row">
+                            <label for="f-loop-detect-scan-interval-s">Fallback scan (seconds)</label>
+                            <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Fallback scan help" data-tip="A background worker also scans buffers this often, catching streams that emit tokens too slowly to hit the inline threshold. Range 1-600s; default 10 is fine."><i class="fa-solid fa-circle-info"></i></span>
+                          </span>
+                          <input id="f-loop-detect-scan-interval-s" class="launch-settings-input" type="number" value="10" min="1" max="600" step="1" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
                 <div class="form-group full launch-settings-section">
                   <div class="launch-settings-section-header">
                     <h3>Speculative Decoding</h3>

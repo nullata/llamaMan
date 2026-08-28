@@ -450,6 +450,32 @@ function toggleLaunchSectionReveal(reveal, open) {
   reveal.addEventListener('transitionend', onEnd);
 }
 
+// Anti-Loop section: two independent sub-toggles (DRY sampler + Output Loop
+// Detection) each reveal their own settings. Disabled sub-inputs stay in
+// the DOM so preset restore works cleanly - we only toggle the reveal + the
+// disabled attribute.
+function updateAntiLoopState() {
+  const dryOn = !!document.getElementById('f-dry-enabled')?.checked;
+  toggleLaunchSectionReveal(document.getElementById('dry-sampler-reveal'), dryOn);
+  ['f-dry-multiplier', 'f-dry-base', 'f-dry-allowed-length', 'f-dry-penalty-last-n']
+    .forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = !dryOn;
+    });
+  const ldOn = !!document.getElementById('f-loop-detect-enabled')?.checked;
+  toggleLaunchSectionReveal(document.getElementById('loop-detect-reveal'), ldOn);
+  [
+    'f-loop-detect-min-chunk-chars',
+    'f-loop-detect-min-repetitions',
+    'f-loop-detect-max-buffer-chars',
+    'f-loop-detect-scan-every-n-tokens',
+    'f-loop-detect-scan-interval-s',
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !ldOn;
+  });
+}
+
 function updateProxySamplingOverrideState() {
   const enabled = !!document.getElementById('f-proxy-sampling-override-enabled')?.checked;
   toggleLaunchSectionReveal(document.getElementById('proxy-sampling-reveal'), enabled);
@@ -748,6 +774,18 @@ function readLaunchForm() {
     proxy_sampling_top_p: parseFloat(document.getElementById('f-proxy-sampling-top-p').value),
     proxy_sampling_presence_penalty: parseFloat(document.getElementById('f-proxy-sampling-presence-penalty').value),
     proxy_sampling_repeat_penalty: parseFloat(document.getElementById('f-proxy-sampling-repeat-penalty').value),
+    // Anti-Loop section. DRY = sampling-time (baked at launch); Loop
+    // Detection = proxy-side (re-read per request). Both off by default.
+    dry_enabled: document.getElementById('f-dry-enabled')?.checked || false,
+    dry_multiplier: parseFloat(document.getElementById('f-dry-multiplier')?.value) || 0.0,
+    dry_base: parseFloat(document.getElementById('f-dry-base')?.value) || 1.75,
+    dry_allowed_length: parseInt(document.getElementById('f-dry-allowed-length')?.value, 10) || 2,
+    loop_detect_enabled: document.getElementById('f-loop-detect-enabled')?.checked || false,
+    loop_detect_min_chunk_chars: parseInt(document.getElementById('f-loop-detect-min-chunk-chars')?.value, 10) || 200,
+    loop_detect_min_repetitions: parseInt(document.getElementById('f-loop-detect-min-repetitions')?.value, 10) || 3,
+    loop_detect_max_buffer_chars: parseInt(document.getElementById('f-loop-detect-max-buffer-chars')?.value, 10) || 8192,
+    loop_detect_scan_every_n_tokens: parseInt(document.getElementById('f-loop-detect-scan-every-n-tokens')?.value, 10) || 64,
+    loop_detect_scan_interval_s: parseInt(document.getElementById('f-loop-detect-scan-interval-s')?.value, 10) || 10,
   };
   if (!Number.isFinite(body.proxy_sampling_temperature) || body.proxy_sampling_temperature < 0 || body.proxy_sampling_temperature > 2) {
     throw new Error('Proxy-side temperature must be between 0 and 2');
@@ -793,6 +831,11 @@ function readLaunchForm() {
   // server's parse_spec_config leaves it as None and build_llama_cmd omits
   // the flag - llama-server falls back to its own default. Same "empty means
   // auto" contract that Tensor Split uses.
+  // DRY penalty_last_n: blank => omit the flag entirely so llama.cpp uses
+  // its own default (typically ctx size). Same "empty = auto" contract as
+  // Tensor Split and the advanced spec-decoding knobs.
+  const dryPenaltyLastN = document.getElementById('f-dry-penalty-last-n')?.value.trim();
+  if (dryPenaltyLastN) body.dry_penalty_last_n = parseInt(dryPenaltyLastN, 10);
   const specNMin = document.getElementById('f-spec-draft-n-min')?.value.trim();
   if (specNMin) body.spec_draft_n_min = parseInt(specNMin, 10);
   const specPSplit = document.getElementById('f-spec-draft-p-split')?.value.trim();
@@ -972,6 +1015,14 @@ if (typeof updateGpuSettingsState === 'function') updateGpuSettingsState();
 const flashAttnSelect = document.getElementById('f-flash-attn');
 if (flashAttnSelect) flashAttnSelect.addEventListener('change', updateModelSettingsState);
 if (typeof updateModelSettingsState === 'function') updateModelSettingsState();
+
+// Anti-Loop: DRY sampler + Output Loop Detection sub-toggles. Each expands
+// its own reveal and enables/disables its inputs.
+const dryEnableToggle = document.getElementById('f-dry-enabled');
+if (dryEnableToggle) dryEnableToggle.addEventListener('change', updateAntiLoopState);
+const loopDetectEnableToggle = document.getElementById('f-loop-detect-enabled');
+if (loopDetectEnableToggle) loopDetectEnableToggle.addEventListener('change', updateAntiLoopState);
+if (typeof updateAntiLoopState === 'function') updateAntiLoopState();
 
 // A model can also be set by typing a path, not just by clicking the library.
 const quickLaunchModelField = document.getElementById('f-model-path');

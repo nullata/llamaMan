@@ -12,7 +12,7 @@ Browser UI for launching, monitoring, and managing multiple [llama.cpp](https://
 
 - [Features](#features) · [How It Works](#how-it-works) · [Quick Start](#quick-start)
 - [Authentication](#authentication) · [Models](#models) · [Launching Instances](#launching-instances) · [Launch settings reference](#launch-settings-reference)
-- [Image & PDF Input](#image--pdf-input) · [Per-Instance Proxy](#per-instance-proxy) · [Idle Timeout](#idle-timeout) · [GPU Stats](#gpu-stats)
+- [Image & PDF Input](#image--pdf-input) · [Anti-Loop](#anti-loop) · [Per-Instance Proxy](#per-instance-proxy) · [Idle Timeout](#idle-timeout) · [GPU Stats](#gpu-stats)
 - [Request Recording & Stats](#request-recording--stats) · [Model Eviction](#model-eviction) · [OpenWebUI](#openwebui-integration)
 - [Storage & DB Outage Mirror](#storage-backends) · [Clustering](#clustering)
 - [Environment Variables](#environment-variables) · [REST API](#rest-api) · [Troubleshooting](#troubleshooting)
@@ -25,6 +25,7 @@ Browser UI for launching, monitoring, and managing multiple [llama.cpp](https://
 - **One-click launch + presets** - per-model launch settings with **live updates** for fields that don't need a relaunch (idle-timeout, gates, sampling overrides)
 - **Speculative decoding** - all five draft-model families (`draft-simple/-mtp/-dflash/-dspark/-eagle3`) with advanced knobs (`n-max/n-min/p-split/p-min`)
 - **Flash Attention + KV cache quant + reasoning format** - `--flash-attn`, `--cache-type-k/v`, `--reasoning-format` all exposed; UI enforces the quantized-V-requires-FA-On constraint
+- **Anti-Loop** - two-tier defense against stuck models: DRY sampler (soft, sampling-time) plus proxy-side output loop detection that watches the streamed text and hard-kills the turn when a large chunk repeats often enough; both off by default, tuned per preset
 - **Image & PDF input** - `--mmproj` for vision models; PDFs rasterized page-by-page (or inlined as text via the born-digital shortcut); OpenAI `image_url`/`file` and Ollama `images[]` both supported
 - **Instance management + monitoring** - stop/restart/logs; per-GPU VRAM, container CPU% + RAM, and per-instance throughput / TTFT / latency rolled up from the request log
 - **Ollama + OpenAI proxy on `:42069`** - Open WebUI drops in; auto-starts models on demand; LRU-evicts once `LLAMAMAN_MAX_MODELS` is hit
@@ -226,12 +227,35 @@ Behavior notes below are terse; hover the field's info-tip in the UI for the ful
 
 **Image & PDF Input** *(toggle)* - see [Image & PDF Input](#image--pdf-input) below.
 
+**Anti-Loop** — two independent sub-toggles (both off by default). See [Anti-Loop](#anti-loop) below.
+
+*DRY Sampler* (baked in at launch — requires relaunch):
+
+| Setting | Default | Flag | Notes |
+|---|---|---|---|
+| Multiplier | `0.8` (UI value; `0` disables) | `--dry-multiplier` | Penalty strength; llama.cpp treats `0` as disabled |
+| Base | `1.75` | `--dry-base` | Exponential base ≥ 1.0 |
+| Allowed Length | `2` | `--dry-allowed-length` | N-grams up to this length are exempt |
+| Penalty Last N | *(auto)* | `--dry-penalty-last-n` | Lookback window. Blank omits the flag |
+
+*Output Loop Detection* (proxy-side; live-updated from preset — next request picks up new thresholds):
+
+| Setting | Default | Notes |
+|---|---|---|
+| Min chunk chars | `200` | Range 60-4096. Lower catches shorter loops but false-positives on repetitive-but-legitimate content |
+| Min repetitions | `3` | Range 2-20 |
+| Buffer size (chars) | `8192` | Rolling window per in-flight request. Range 512-65536 |
+| Scan every N chunks | `64` | Inline scan cadence |
+| Fallback scan (seconds) | `10` | Background worker for streams that emit tokens too slowly to hit the inline threshold |
+
+Applies to Ollama / OpenAI compat routes (`:42069`) always, and to per-instance ports only when a sidecar proxy is already present (Idle Timeout, Max Concurrent, or Proxy Sampling Overrides also on). On detection, llamaman closes the upstream connection (which stops llama-server generating) and injects a terminator into the client stream — OpenAI clients see a `finish_reason=stop` chunk with a `[llamaman: output loop detected, ending turn]` marker; Ollama clients see `done_reason: "loop_detected"`.
+
 ### Live preset updates
 
 Saving a preset updates already-running instances of that model in place where possible:
 
-- **Live (no relaunch):** `idle_timeout_min`, `max_concurrent`, `max_queue_depth`, `share_queue`, all six proxy-sampling fields
-- **Require relaunch:** everything baked into the container at launch (gpu layers, ctx size, threads, threads-batch, cache types, flash-attn, reasoning-format, spec-decoding fields, embedding flag, mmproj/PDF fields, extra args, memory limit)
+- **Live (no relaunch):** `idle_timeout_min`, `max_concurrent`, `max_queue_depth`, `share_queue`, all six proxy-sampling fields, all five loop-detection fields (next request picks them up)
+- **Require relaunch:** everything baked into the container at launch (gpu layers, ctx size, threads, threads-batch, cache types, flash-attn, reasoning-format, DRY sampler, spec-decoding fields, embedding flag, mmproj/PDF fields, extra args, memory limit)
 
 **Proxy-sampling caveat:** if the instance was launched with all of `idle_timeout=0`, `max_concurrent=0`, and `override_enabled=false`, no sidecar proxy was spawned. Live-toggling `override_enabled=true` then still applies overrides on requests routed through the app's compat endpoints, but direct hits to the public port bypass it. Relaunch to spawn the proxy in that case.
 
@@ -255,6 +279,34 @@ Enable the **Image & PDF Input** toggle to load a vision model's multimodal proj
 **Per-request caps:** `PDF DPI` (72-600, default 200) and `Max PDF Pages` (1-200, default 20). Over-cap PDFs return HTTP 400 rather than being truncated.
 
 **Rasterization concurrency:** PDF rendering is CPU- and RAM-heavy and runs in the gunicorn worker thread before any per-instance gate. A process-wide semaphore caps concurrent rasters; tune via `LLAMAMAN_PDF_MAX_CONCURRENT` (default 4).
+
+## Anti-Loop
+
+Two independent controls in the **Anti-Loop** section of the launch form, both off by default. They target the same problem (models getting stuck in stable output loops) at two different points in the pipeline; use them together for the best coverage.
+
+**DRY sampler (soft, sampling-time)**. Maps to llama-server's `--dry-multiplier` / `--dry-base` / `--dry-allowed-length` / `--dry-penalty-last-n`. Every token that would extend a recently-seen n-gram gets a probability penalty at sampling time, so the model is nudged away from repeating itself before it ever emits a duplicate span. This is the *soft* line of defense — usually enough on its own for prose. Baked in at container launch; a preset edit requires a relaunch. Multiplier = 0 disables entirely (llama.cpp's own default).
+
+**Output loop detection (hard, post-hoc)**. When DRY isn't enough — the model still gets stuck in a stable attractor — llamaman's proxy watches the assistant-visible output text (content + reasoning) as it streams to the client. Every scan cadence (default: inline every 64 chunks, plus a 10s worker fallback), the last `min_chunk_chars` of the buffer are checked for repetition. If they appear ≥ `min_repetitions` times, the turn is terminated:
+
+- **The upstream connection to llama-server is closed** — llama-server's stop-on-client-disconnect halts generation, freeing the model for the next request.
+- **A synthetic terminator is injected into the client's stream** — OpenAI clients see one final delta with `finish_reason=stop` and content `[llamaman: output loop detected, ending turn]`; Ollama clients see `done_reason: "loop_detected"` on a `done: true` line.
+
+**Where it watches:**
+- **Compat routes on `:42069`** (Ollama `/api/chat`, `/api/generate`; OpenAI `/v1/chat/completions`, `/v1/completions`) — always, whenever the toggle is on for the target instance's preset.
+- **Per-instance ports (`8000-8020`)** — only when a sidecar proxy is already present for that instance (i.e. Idle Timeout, Max Concurrent, or Proxy Sampling Overrides also on). Loop detection does not, by itself, spawn a sidecar proxy — enable one of the other three to also watch direct hits.
+
+**Tuning:**
+- `min_chunk_chars` (60-4096, default 200) — the smallest repeating period that will trigger. Lower values catch shorter loops but risk false positives on repetitive-but-legitimate content (numbered lists, poetry choruses, markdown tables). 60-100 is aggressive; 200 is the balanced default for prose; 400+ only triggers on paragraph-scale loops.
+- `min_repetitions` (2-20, default 3) — how many exact copies of the chunk must appear before terminating. 2 fires on any doubled chunk (aggressive); 3-5 balances responsiveness against false positives.
+- `max_buffer_chars` (512-65536, default 8192) — rolling window kept per active request. Must be at least `min_chunk_chars × min_repetitions`.
+- `scan_every_n_tokens` (8-4096, default 64) — inline scan cadence. Lower = faster kill, more CPU.
+- `scan_interval_s` (1-600, default 10) — how often the background worker rescans buffers that didn't hit the inline threshold.
+
+Changes to the loop-detection thresholds take effect on the *next* request (in-flight streams keep the thresholds captured at attach time). DRY changes require a relaunch since the flags are baked into the container.
+
+**Detection algorithm** (v1): take the last `min_chunk_chars` of the buffer as the target; count exact occurrences; flag when ≥ `min_repetitions`. Doesn't catch drifting near-repeats ("The answer is: The answer is: The answer is:" with slight punctuation drift between reps) — those get caught by DRY's sampling-time defenses. Deliberately simple and cheap.
+
+**Defensive invariant:** every hook in the streaming path is wrapped in `try/except Exception` that logs and falls through — a detector bug can never break a real user's stream.
 
 ## Per-Instance Proxy
 
