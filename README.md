@@ -24,7 +24,7 @@ Browser UI for launching, monitoring, and managing multiple [llama.cpp](https://
 - **Model library + downloader** - scans for GGUF, pulls from HuggingFace with speed limits, resume, auto-retry, and republish detection with atomic re-pull
 - **One-click launch + presets** - per-model launch settings with **live updates** for fields that don't need a relaunch (idle-timeout, gates, sampling overrides)
 - **Speculative decoding** - all five draft-model families (`draft-simple/-mtp/-dflash/-dspark/-eagle3`) with advanced knobs (`n-max/n-min/p-split/p-min`)
-- **Flash Attention + KV cache quant + reasoning format** - `--flash-attn`, `--cache-type-k/v`, `--reasoning-format` all exposed; UI enforces the quantized-V-requires-FA-On constraint
+- **Flash Attention + KV cache quant + reasoning format + load mode** - `--flash-attn`, `--cache-type-k/v`, `--reasoning-format`, `--load-mode` (mmap/mlock/dio) all exposed; UI enforces the quantized-V-requires-FA-On constraint
 - **Anti-Loop** - two-tier defense against stuck models: DRY sampler (soft, sampling-time) plus proxy-side output loop detection that watches the streamed text and hard-kills the turn when a large chunk repeats often enough; both off by default, tuned per preset
 - **Image & PDF input** - `--mmproj` for vision models; PDFs rasterized page-by-page (or inlined as text via the born-digital shortcut); OpenAI `image_url`/`file` and Ollama `images[]` both supported
 - **Instance management + monitoring** - stop/restart/logs; per-GPU VRAM, container CPU% + RAM, and per-instance throughput / TTFT / latency rolled up from the request log
@@ -180,6 +180,7 @@ Behavior notes below are terse; hover the field's info-tip in the UI for the ful
 | **V Cache Type** | `f16` | `--cache-type-v` | Same values. Any quantized value **requires Flash Attention = On** - the UI greys the dropdown and auto-snaps V back to `f16` when FA leaves On |
 | **Flash Attention** | `auto` | `--flash-attn on\|off\|auto` | `auto` omits the flag (llama.cpp's own default); `on` forces it (fails if backend can't); `off` disables |
 | **Reasoning Format** | `auto` | `--reasoning-format` | `none` / `auto` / `deepseek` / `deepseek-legacy`. Controls how thinking tags are parsed out (routed to `reasoning_content` vs left inline). `auto` omits the flag |
+| **Load Mode** | `auto` | `--load-mode` | `auto` / `none` / `mmap` / `mlock` / `mmap+mlock` / `dio`. How model weights are loaded into memory (successor to deprecated `--mlock`/`--mmap`/`--direct-io`). `auto` = mmap unless unsupported, matches llama.cpp's default and omits the flag |
 
 **Container & Proxy Settings**
 
@@ -255,7 +256,7 @@ Applies to Ollama / OpenAI compat routes (`:42069`) always, and to per-instance 
 Saving a preset updates already-running instances of that model in place where possible:
 
 - **Live (no relaunch):** `idle_timeout_min`, `max_concurrent`, `max_queue_depth`, `share_queue`, all six proxy-sampling fields, all five loop-detection fields (next request picks them up)
-- **Require relaunch:** everything baked into the container at launch (gpu layers, ctx size, threads, threads-batch, cache types, flash-attn, reasoning-format, DRY sampler, spec-decoding fields, embedding flag, mmproj/PDF fields, extra args, memory limit)
+- **Require relaunch:** everything baked into the container at launch (gpu layers, ctx size, threads, threads-batch, cache types, flash-attn, reasoning-format, load-mode, DRY sampler, spec-decoding fields, embedding flag, mmproj/PDF fields, extra args, memory limit)
 
 **Proxy-sampling caveat:** if the instance was launched with all of `idle_timeout=0`, `max_concurrent=0`, and `override_enabled=false`, no sidecar proxy was spawned. Live-toggling `override_enabled=true` then still applies overrides on requests routed through the app's compat endpoints, but direct hits to the public port bypass it. Relaunch to spawn the proxy in that case.
 
