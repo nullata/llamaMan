@@ -200,6 +200,8 @@ function renderInstances() {
   const count = document.getElementById('instance-count');
 
   const all = Object.values(instances);
+  // "stopping" is transient but still holds resources - group it with active so
+  // the card doesn't jump to the bottom mid-transition.
   const active = all.filter(i => i.status !== 'stopped' && i.status !== 'sleeping');
   if (count) {
     count.textContent = `${active.length} instance${active.length !== 1 ? 's' : ''}`;
@@ -238,8 +240,13 @@ function renderInstances() {
       container.appendChild(card);
     }
 
+    // Transient "stopping" (async stop in progress) reads as "Stopping…" and
+    // gets no action buttons - the state machine only accepts new transitions
+    // once it lands in "stopped".
     const uptime = (inst.status === 'stopped' || inst.status === 'sleeping')
-      ? (inst.status === 'sleeping' ? 'Sleeping' : 'Down') : `Up ${formatUptime(inst.started_at)}`;
+      ? (inst.status === 'sleeping' ? 'Sleeping' : 'Down')
+      : inst.status === 'stopping' ? 'Stopping…'
+      : `Up ${formatUptime(inst.started_at)}`;
     const statusClass = `status-${inst.status}`;
 
     const s = inst.stats || {};
@@ -295,7 +302,7 @@ function renderInstances() {
       : `<div class="inst-actions">
       <button class="btn btn-secondary btn-logs" data-id="${inst.id}"${nodeAttr}><i class="fa-solid fa-terminal"></i> Logs</button>
       <button class="btn btn-secondary btn-stats" data-id="${inst.id}"${nodeAttr} data-model="${escHtml(inst.model_name)}"><i class="fa-solid fa-chart-line"></i> Stats</button>
-      ${inst.status !== 'stopped' && inst.status !== 'sleeping' ? `<button class="btn btn-danger btn-stop" data-id="${inst.id}"${nodeAttr}><i class="fa-solid fa-stop"></i> Stop</button>` : ''}
+      ${inst.status !== 'stopped' && inst.status !== 'sleeping' && inst.status !== 'stopping' ? `<button class="btn btn-danger btn-stop" data-id="${inst.id}"${nodeAttr}><i class="fa-solid fa-stop"></i> Stop</button>` : ''}
       ${inst.status === 'sleeping' ? `<button class="btn btn-danger btn-stop" data-id="${inst.id}"${nodeAttr}><i class="fa-solid fa-stop"></i> Stop</button>` : ''}
       ${inst.status === 'stopped' || inst.status === 'sleeping' ? `<button class="btn btn-primary btn-restart" data-id="${inst.id}"${nodeAttr}><i class="fa-solid fa-rotate-right"></i> Restart</button>` : ''}
       ${inst.status === 'stopped' ? `<button class="btn btn-danger btn-remove" data-id="${inst.id}"${nodeAttr} title="Remove from list"><i class="fa-solid fa-trash"></i></button>` : ''}
@@ -355,11 +362,26 @@ function nodeLabel(nodeId) {
   return (typeof nodeSuffix === 'function') ? nodeSuffix(nodeId) : '';
 }
 
+// Peer actions land in the owning node's heartbeat snapshot, which A polls
+// on a 5s tick - so a successful action would otherwise take up to ~10s to be
+// visible on this node's UI. The owning node now publishes a fresh heartbeat
+// inline as part of the state transition (see _publish_cluster_heartbeat_safe
+// in api/instances.py); calling loadClusterNodes() here pulls that fresh
+// snapshot into clusterState immediately, and the next pollInstances tick
+// renders it. No-op cost for local actions (no cluster tab wiring).
+function refreshAfterPeerAction(nodeId) {
+  if (!nodeId) return;
+  if (typeof loadClusterNodes === 'function') loadClusterNodes();
+}
+
 async function stopInstance(id, nodeId) {
   try {
     const res = await nodeFetchOr(nodeId, `/api/instances/${id}`, { method: 'DELETE' });
+    // 202 is the new normal (async stop scheduled); 200 kept for compat with
+    // any old peer still running the sync path.
     if (res.ok) {
-      toast('Instance stopped' + nodeLabel(nodeId), 'info');
+      toast('Instance stopping' + nodeLabel(nodeId), 'info');
+      refreshAfterPeerAction(nodeId);
       await pollInstances();
       await updatePortSuggestion();
     } else {
@@ -396,6 +418,7 @@ async function restartInstance(id, nodeId) {
         ? `Instance restarted: public ${data.port}, llama-server ${data.internal_port}`
         : `Instance restarted on port ${data.port}`;
       toast(msg + nodeLabel(nodeId), 'success');
+      refreshAfterPeerAction(nodeId);
       await pollInstances();
       await updatePortSuggestion();
     } else {
@@ -411,6 +434,7 @@ async function removeInstance(id, nodeId) {
     const res = await nodeFetchOr(nodeId, `/api/instances/${id}/remove`, { method: 'DELETE' });
     if (res.ok) {
       toast('Instance removed' + nodeLabel(nodeId), 'info');
+      refreshAfterPeerAction(nodeId);
       await pollInstances();
     } else {
       const data = await res.json();
@@ -905,6 +929,7 @@ async function submitLaunchForm(btn, status) {
         : `Instance launched on port ${data.port}`;
       toast(msg, 'success');
       updatePortSuggestion();
+      refreshAfterPeerAction(getLaunchNode());
       await pollInstances();
     } else {
       toast(`Launch failed: ${data.error}`, 'error');

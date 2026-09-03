@@ -39,6 +39,7 @@ from core.helpers import (
 )
 from core.dry_sampling import DRY_SAMPLER_KEYS, parse_dry_config
 from core.loop_detect import LOOP_DETECT_KEYS, parse_loop_detect_config
+from core.perf import phase
 from core.proxy_sampling import parse_proxy_sampling_config
 from core.spec_decoding import DEFAULT_SPEC_TYPE, parse_spec_config
 from core.multimodal import parse_mmproj_config
@@ -715,22 +716,129 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
             logger.warning("record_group_overrides failed: %s", e)
 
     save_state()
+    # Peers otherwise learn about the new "starting" instance on the owning
+    # node's next 5s heartbeat tick, which for a UI action feels like the card
+    # is missing for several seconds after a successful launch. Piggybacking
+    # here cuts that to one round-trip. No-op when clustering is off.
+    _publish_cluster_heartbeat_safe()
     return instance, None
 
 
 def stop_instance_by_id(inst_id: str) -> bool:
+    """Synchronously stop an instance: mark stopped, tear down the container,
+    release its proxy/gate, persist. Blocks the caller for the docker SIGTERM
+    grace (up to ~10s).
+
+    This is the legacy path and it is still what callers that MUST have the
+    container gone before continuing (eviction → immediate launch on the same
+    GPU) use. User-triggered stops go through stop_instance_async instead so
+    the DELETE request doesn't hold a request thread through the grace.
+
+    Phase timings (LLAMAMAN_PERF_LOG=1) run inline in the caller's thread.
+    """
+    with phase("stop_instance", inst=inst_id[:12]):
+        with instances_lock:
+            inst = instances.get(inst_id)
+            if inst is None:
+                return False
+            container_id = inst.get("container_id")
+            inst["status"] = "stopped"
+            inst["container_id"] = None
+        if container_id:
+            with phase("stop_instance.stop_container", inst=inst_id[:12], cid=container_id[:12]):
+                stop_container(container_id)
+        with phase("stop_instance.release_reservations", inst=inst_id[:12]):
+            release_instance_reservations(inst_id)
+        with phase("stop_instance.save_state", inst=inst_id[:12]):
+            save_state()
+    _publish_cluster_heartbeat_safe()
+    return True
+
+
+def stop_instance_async(inst_id: str) -> bool:
+    """Kick off a non-blocking stop and return immediately.
+
+    Marks the instance status="stopping" in memory, persists that transient
+    state, publishes a fresh cluster heartbeat so peers see the transition
+    without waiting for the next 5s tick, and spawns a daemon thread that runs
+    the actual docker stop + resource release + terminal transition to
+    "stopped". State machine:
+
+        healthy / starting / sleeping  -->  stopping  -->  stopped
+
+    Returns True if the async stop was scheduled (or the instance was already
+    in a terminal-ish state and needs nothing done). Returns False only when
+    inst_id is unknown. Idempotent: a second call while status is already
+    "stopping" or "stopped" is a no-op that returns True, so a double-click
+    on Stop cannot spawn two workers.
+
+    Callers that need the container gone before continuing (eviction followed
+    by launch on the same GPU) MUST use stop_instance_by_id instead.
+    """
+    with phase("stop_instance.schedule_async", inst=inst_id[:12]):
+        with instances_lock:
+            inst = instances.get(inst_id)
+            if inst is None:
+                return False
+            if inst["status"] in ("stopping", "stopped"):
+                return True
+            container_id = inst.get("container_id")
+            inst["status"] = "stopping"
+        save_state()
+    _publish_cluster_heartbeat_safe()
+
+    if container_id is None:
+        # Nothing for docker to do; finish the transition inline.
+        _finalize_stop(inst_id)
+        return True
+
+    threading.Thread(
+        target=_finalize_stop_async, args=(inst_id, container_id),
+        name=f"stop-{inst_id[:12]}", daemon=True,
+    ).start()
+    return True
+
+
+def _finalize_stop_async(inst_id: str, container_id: str) -> None:
+    """Background worker for stop_instance_async: runs the docker stop then the
+    common finalize step. try/finally ensures we always land in "stopped" even
+    if the docker call itself raises (stop_container already swallows Docker
+    errors internally, so this is belt-and-braces)."""
+    try:
+        with phase("stop_instance.async_stop_container",
+                   inst=inst_id[:12], cid=container_id[:12]):
+            stop_container(container_id)
+    finally:
+        _finalize_stop(inst_id)
+
+
+def _finalize_stop(inst_id: str) -> None:
+    """Terminal step for both async paths: flip status to stopped, release
+    proxy/gate resources, persist, publish a fresh heartbeat so peers observe
+    the terminal transition immediately."""
     with instances_lock:
         inst = instances.get(inst_id)
-        if inst is None:
-            return False
-        container_id = inst.get("container_id")
-        inst["status"] = "stopped"
-        inst["container_id"] = None
-    if container_id:
-        stop_container(container_id)
-    release_instance_reservations(inst_id)
-    save_state()
-    return True
+        if inst is not None:
+            inst["status"] = "stopped"
+            inst["container_id"] = None
+    with phase("stop_instance.async_release_reservations", inst=inst_id[:12]):
+        release_instance_reservations(inst_id)
+    with phase("stop_instance.async_save_state", inst=inst_id[:12]):
+        save_state()
+    _publish_cluster_heartbeat_safe()
+
+
+def _publish_cluster_heartbeat_safe() -> None:
+    """Fire-and-forget cluster heartbeat piggyback used after a state
+    transition (async stop start / finish, launch success). Cheap when
+    clustering is off (publish_cluster_heartbeat short-circuits) and best
+    effort when the shared DB is degraded (already swallowed internally).
+    Wrapped once here so callers don't have to know about the import cycle."""
+    try:
+        from api.cluster import publish_cluster_heartbeat
+        publish_cluster_heartbeat()
+    except Exception as e:  # never let observability break the state transition
+        logger.warning("piggyback cluster heartbeat failed: %s", e)
 
 
 def sleep_instance_by_id(inst_id: str) -> bool:
@@ -799,7 +907,8 @@ def api_container_stats():
     # GPU info - query once, map per instance
     from core.gpu import get_vendor, query_gpus
     vendor = get_vendor()
-    all_gpus = query_gpus() or []  # [{index, name, ...}]
+    with phase("container_stats.query_gpus"):
+        all_gpus = query_gpus() or []  # [{index, name, ...}]
     gpu_map = {g["index"]: g["name"] for g in all_gpus}
 
     def _gpu_labels(inst_id: str) -> list[str]:
@@ -862,12 +971,13 @@ def api_container_stats():
             return inst_id, None
 
     results = {}
-    with ThreadPoolExecutor(max_workers=min(len(targets), 8)) as ex:
-        futures = {ex.submit(_fetch, iid, cid): iid for iid, cid in targets.items()}
-        for f in as_completed(futures):
-            inst_id, stat = f.result()
-            if stat is not None:
-                results[inst_id] = stat
+    with phase("container_stats.docker_stats", n=len(targets)):
+        with ThreadPoolExecutor(max_workers=min(len(targets), 8)) as ex:
+            futures = {ex.submit(_fetch, iid, cid): iid for iid, cid in targets.items()}
+            for f in as_completed(futures):
+                inst_id, stat = f.result()
+                if stat is not None:
+                    results[inst_id] = stat
 
     # Attach GPU labels and CPU quota (derived from config, no container inspection needed)
     for inst_id in targets:
@@ -976,9 +1086,14 @@ def api_instances_create():
 
 @bp.route("/api/instances/<inst_id>", methods=["DELETE"])
 def api_instances_delete(inst_id):
-    if not stop_instance_by_id(inst_id):
+    """Non-blocking stop: mark stopping, publish heartbeat, run docker stop on
+    a background thread. Returns 202 with the transient status so the UI can
+    react immediately instead of waiting through the SIGTERM grace. See
+    stop_instance_async for the state machine and why user-triggered stops go
+    this route while eviction still uses the sync one."""
+    if not stop_instance_async(inst_id):
         return jsonify({"error": "Not found"}), 404
-    return jsonify({"status": "stopped"})
+    return jsonify({"status": "stopping"}), 202
 
 
 @bp.route("/api/instances/<inst_id>/restart", methods=["POST"])

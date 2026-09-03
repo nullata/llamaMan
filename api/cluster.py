@@ -18,6 +18,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from config import REQUEST_TIMEOUT, logger
 from core import cluster as cl
+from core.perf import phase
 from core.helpers import model_name_from_path
 from core.proxy_sampling import PROXY_SAMPLING_OVERRIDE_KEYS
 from core.spec_decoding import SPEC_CONFIG_KEYS
@@ -74,12 +75,17 @@ def build_local_snapshot() -> dict:
     from core.helpers import public_dict
     from core.state import instances, instances_lock, downloads, downloads_lock
 
+    # Phase-timed (LLAMAMAN_PERF_LOG=1): runs on the 5s heartbeat thread.
+    # Models are cached 30s but system/GPU collection is not — measure whether
+    # they dominate the heartbeat.
     try:
-        system = collect_system_info()
+        with phase("heartbeat.collect_system_info"):
+            system = collect_system_info()
     except Exception:
         system = {}
     try:
-        gpus = collect_gpu_info().get("gpus", [])
+        with phase("heartbeat.collect_gpu_info"):
+            gpus = collect_gpu_info().get("gpus", [])
     except Exception:
         gpus = []
 
@@ -109,7 +115,8 @@ def publish_cluster_heartbeat() -> None:
     except Exception as e:
         logger.warning("cluster snapshot build failed: %s", e)
     try:
-        get_storage().register_node(cl.local_node_descriptor(), snapshot=snapshot)
+        with phase("heartbeat.register_node"):
+            get_storage().register_node(cl.local_node_descriptor(), snapshot=snapshot)
     except Exception as e:
         logger.warning("cluster heartbeat failed: %s", e)
 
@@ -163,7 +170,9 @@ def probe_peer_reachable(node: dict) -> tuple[bool, str]:
             return (c[1], c[2])
     ok, err = False, ""
     try:
-        resp = cl.cluster_request(node, "GET", "/api/cluster/local-load", timeout=2)
+        # Cache-miss path: a live probe, up to 2s on the request thread.
+        with phase("cluster_nodes.probe", node=nid):
+            resp = cl.cluster_request(node, "GET", "/api/cluster/local-load", timeout=2)
         ok = resp.status_code == 200
         if not ok:
             err = f"HTTP {resp.status_code}"
@@ -188,7 +197,11 @@ def api_cluster_nodes():
         return jsonify({"enabled": False, "self_id": self_id, "nodes": []})
 
     storage = get_storage()
-    nodes = storage.list_nodes()
+    # Phase-timed (LLAMAMAN_PERF_LOG=1): this endpoint is polled by every node's
+    # UI every 5s and runs a (cached) reachability probe per peer inline — the
+    # cache-miss path costs up to 2s per peer on the request thread.
+    with phase("cluster_nodes.list", self=self_id):
+        nodes = storage.list_nodes()
     # Ensure self appears immediately, even before the first poller tick.
     if not any(n.get("node_id") == self_id for n in nodes):
         publish_cluster_heartbeat()
@@ -239,7 +252,8 @@ def api_cluster_proxy(node_id, subpath):
     """
     if not cl.is_cluster_enabled():
         return jsonify({"error": "clustering is not enabled"}), 400
-    node = get_storage().get_node(node_id)
+    with phase("cluster_proxy.get_node", node=node_id):
+        node = get_storage().get_node(node_id)
     if not node:
         return jsonify({"error": "unknown cluster node"}), 404
 
@@ -262,10 +276,12 @@ def api_cluster_proxy(node_id, subpath):
         # 3s is far more than a LAN/tunnel peer needs to complete a TCP
         # handshake; the 60s read budget is untouched, so slow-but-alive control
         # ops (image pulls) still get their minute.
-        resp = cl.cluster_request(
-            node, request.method, target_path,
-            data=request.get_data(), headers=headers, timeout=(3, 60),
-        )
+        with phase("cluster_proxy.forward", node=node_id, method=request.method,
+                   path=target_path.split("?")[0][:60]):
+            resp = cl.cluster_request(
+                node, request.method, target_path,
+                data=request.get_data(), headers=headers, timeout=(3, 60),
+            )
     except Exception as e:
         return jsonify({"error": f"peer node '{node.get('node_name') or node_id}' unreachable: {e}"}), 502
 
@@ -358,7 +374,9 @@ def cluster_group_models() -> list[dict]:
 
     groups: dict[str, dict] = {}
     for alias, status, local_path in seen:
-        if status == "stopped":
+        # "stopping" is transient - the docker stop is already in flight, so
+        # dispatch should treat it as gone (matches the proxy's 503 branch).
+        if status in ("stopped", "stopping"):
             continue
         key = alias.lower()
         entry = groups.setdefault(key, {"name": alias, "path": None})
@@ -470,7 +488,7 @@ def _local_group_load(model_name: str):
         items = list(instances.values())
     for inst in items:
         cfg = inst.get("config") or {}
-        if not cfg.get("share_queue") or inst.get("status") == "stopped":
+        if not cfg.get("share_queue") or inst.get("status") in ("stopped", "stopping"):
             continue
         if not _inst_matches_request(inst, model_name):
             continue
@@ -740,7 +758,7 @@ def local_load_by_model() -> dict:
                 for i in instances.values()]
     out: dict = {}
     for inst_id, model_path, cfg, status in snap:
-        if not cfg.get("share_queue") or status == "stopped":
+        if not cfg.get("share_queue") or status in ("stopped", "stopping"):
             continue
         gate = get_gate(inst_id)
         if gate:

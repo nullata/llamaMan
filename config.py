@@ -59,6 +59,11 @@ HEALTH_CHECK_TIMEOUT = int(os.environ.get("HEALTH_CHECK_TIMEOUT", 3))
 MODEL_LOAD_TIMEOUT = int(os.environ.get("MODEL_LOAD_TIMEOUT", 300))
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", 300))
 
+# Diagnostics: when on, core/perf.py logs per-phase timings for suspected slow
+# paths (remote instance stop, cluster forwarder, heartbeat snapshot, auth,
+# save_state). Off by default; the disabled path costs one boolean check.
+PERF_LOG = os.environ.get("LLAMAMAN_PERF_LOG", "").strip().lower() in ("1", "true", "yes", "on")
+
 STATE_FILE = os.path.join(DATA_DIR, "state.json")
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")

@@ -266,7 +266,9 @@ def _apply_live_preset_changes(model_path: str, preset: dict) -> None:
     touched = []
     with instances_lock:
         for inst in instances.values():
-            if inst.get("model_path") != model_path or inst.get("status") == "stopped":
+            # Skip stopping instances too: they are already on their way out,
+            # so mutating their config just adds noise to the audit trail.
+            if inst.get("model_path") != model_path or inst.get("status") in ("stopped", "stopping"):
                 continue
             config = inst.setdefault("config", {})
             config["idle_timeout_min"] = preset.get("idle_timeout_min", 0)

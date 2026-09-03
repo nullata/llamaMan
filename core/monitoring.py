@@ -165,7 +165,9 @@ def _run_stale_record_cleanup() -> None:
                 auto_restart = False
                 with instances_lock:
                     inst = instances.get(inst_id)
-                    if inst and inst["status"] not in ("stopped", "sleeping"):
+                    # A "stopping" instance is being torn down on purpose - the
+                    # container disappearing here is expected, not a crash.
+                    if inst and inst["status"] not in ("stopped", "sleeping", "stopping"):
                         if container_id:
                             stop_container(container_id)
                         inst["container_id"] = None
@@ -496,7 +498,13 @@ def _background_poller():
         for inst_id in inst_ids:
             with instances_lock:
                 inst = instances.get(inst_id)
-                if inst is None or inst["status"] in ("stopped", "sleeping"):
+                # "stopping" is a transient state driven by the async-stop worker
+                # (see stop_instance_async in api/instances.py). The container may
+                # or may not exist during the SIGTERM grace, and the worker will
+                # flip it to "stopped" itself. Skip health-checks and death
+                # detection so we don't race the worker or spuriously bump the
+                # crash counter.
+                if inst is None or inst["status"] in ("stopped", "sleeping", "stopping"):
                     continue
                 container_id = inst.get("container_id")
                 server_host = inst.get("_server_host", "localhost")
@@ -509,7 +517,7 @@ def _background_poller():
                 auto_restart = False
                 with instances_lock:
                     inst = instances.get(inst_id)
-                    if inst and inst["status"] not in ("stopped", "sleeping"):
+                    if inst and inst["status"] not in ("stopped", "sleeping", "stopping"):
                         if container_id:
                             stop_container(container_id)
                         inst["container_id"] = None
@@ -581,15 +589,18 @@ def _background_poller():
                     has_proxy = inst_id in idle_proxies
                 is_llamaman = inst.get("_llamaman_managed", False)
 
-            from api.instances import stop_instance_by_id, sleep_instance_by_id
+            from api.instances import stop_instance_async, sleep_instance_by_id
 
             if has_proxy or is_llamaman:
                 sleep_instance_by_id(inst_id)
                 logger.info("Idle reaper: %s slept after %d min idle",
                             inst_id, int(idle_secs / 60))
             else:
-                stop_instance_by_id(inst_id)
-                logger.info("Idle reaper: %s stopped after %d min idle",
+                # Async: don't hold the 5s poller tick through docker's SIGTERM
+                # grace. The transition to "stopped" will be picked up on a
+                # subsequent tick (or via the piggyback heartbeat this triggers).
+                stop_instance_async(inst_id)
+                logger.info("Idle reaper: %s scheduled stop after %d min idle",
                             inst_id, int(idle_secs / 60))
 
         # --- Download process monitoring ---

@@ -41,7 +41,14 @@ def save_state():
     from storage import get_storage
     storage = get_storage()
 
-    with _save_lock:
+    # Phase-timed (LLAMAMAN_PERF_LOG=1): "wait" is time blocked behind another
+    # in-flight save, "write" is the backend write itself (a full delete+insert
+    # of every row on MariaDB). One line for the whole save at the end.
+    from core.perf import phase
+    with phase("save_state.total"):
+      t_wait0 = time.monotonic()
+      with _save_lock:
+        t_wait = time.monotonic() - t_wait0
         inst_list = []
         with instances_lock:
             for inst in instances.values():
@@ -83,11 +90,19 @@ def save_state():
                     "update_sha256": dl.get("update_sha256", ""),
                 })
 
+        t_write0 = time.monotonic()
         try:
             from core.cluster import get_node_id
             storage.save_state(inst_list, dl_list, node_id=get_node_id())
         except Exception as e:
             logger.warning("Failed to save state: %s", e)
+        finally:
+            from config import PERF_LOG
+            if PERF_LOG:
+                logger.info(
+                    "perf save_state.write %.0fms  wait=%.0fms  insts=%d dls=%d",
+                    (time.monotonic() - t_write0) * 1000.0, t_wait * 1000.0,
+                    len(inst_list), len(dl_list))
 
 
 def adopt_orphans() -> int:
@@ -229,10 +244,15 @@ def load_state():
             or config.get("proxy_sampling_override_enabled", False)
         )
 
-        if saved_status == "stopped":
-            # User explicitly stopped it - if container somehow still exists, kill it
+        if saved_status in ("stopped", "stopping"):
+            # User explicitly stopped it (or crashed mid async-stop grace). If a
+            # container somehow still exists, kill it - "stopping" persisted
+            # means the docker stop never got to complete, so treat exactly like
+            # "stopped" on restore and let the orphan reaper mop up whatever the
+            # SIGTERM grace didn't reach.
             if saved_container_id and is_container_running(saved_container_id):
-                logger.info("Stopping orphaned stopped instance container %s", saved_container_id[:12])
+                logger.info("Stopping orphaned %s instance container %s",
+                            saved_status, saved_container_id[:12])
                 stop_container(saved_container_id)
             restored_status = "stopped"
             saved_container_id = ""

@@ -440,6 +440,16 @@ def make_proxy_app(inst_id: str, internal_port: int, proxy_port: int):
 
         wake_id = inst_id
 
+        if status == "stopping":
+            # Async stop is in flight - the docker SIGTERM grace is running in a
+            # background thread and the container will be gone shortly. Don't
+            # wake, don't proxy: report the honest transient state so callers can
+            # retry against whatever comes next (a peer, or the same instance
+            # after it lands in "stopped" and gets restarted).
+            start_response("503 Service Unavailable",
+                           [("Content-Type", "application/json")])
+            return [json.dumps({"error": "instance is stopping"}).encode()]
+
         if status in ("sleeping", "stopped"):
             # If the request specifies a model, verify it matches before waking
             if requested_model and inst:
@@ -699,7 +709,15 @@ def stop_idle_proxy(inst_id: str):
         proxy = idle_proxies.pop(inst_id, None)
     if proxy:
         try:
-            proxy["server"].shutdown()
+            # Phase-timed (LLAMAMAN_PERF_LOG=1) to settle whether shutdown()
+            # ever blocks meaningfully on in-flight streams. werkzeug's
+            # BaseServer.shutdown() signals the serve_forever loop and joins
+            # only that loop thread (bounded by poll_interval), not the daemon
+            # handler threads serving open streams — so this is expected to be
+            # sub-second. Measure rather than assume.
+            from core.perf import phase
+            with phase("proxy.stop_idle_proxy.shutdown", inst=inst_id[:12]):
+                proxy["server"].shutdown()
         except Exception:
             pass
         logger.info("Idle proxy stopped for instance %s", inst_id)

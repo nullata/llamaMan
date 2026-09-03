@@ -383,24 +383,36 @@ def get_docker_client():
 
 
 def stop_container(container_id: str, timeout: int = 10) -> None:
-    """Stop and remove a container by ID. Best-effort; ignores not-found errors."""
+    """Stop and remove a container by ID. Best-effort; ignores not-found errors.
+
+    Phase-timed (LLAMAMAN_PERF_LOG=1): `get` / `stop` / `remove` are three
+    separate Docker SDK round-trips on the caller's thread; `stop` waits out
+    the SIGTERM grace period, so it dominates whenever the daemon or the
+    process inside is slow to die.
+    """
     import docker
-    try:
-        c = get_docker_client().containers.get(container_id)
-    except docker.errors.NotFound:
-        return
-    except Exception:
-        return
-    try:
-        c.stop(timeout=timeout)
-    except Exception:
-        pass
-    try:
-        c.remove(force=True)
-    except docker.errors.NotFound:
-        pass
-    except Exception:
-        pass
+
+    from core.perf import phase
+    with phase("docker.stop_container", cid=container_id[:12]):
+        try:
+            with phase("docker.get", cid=container_id[:12]):
+                c = get_docker_client().containers.get(container_id)
+        except docker.errors.NotFound:
+            return
+        except Exception:
+            return
+        try:
+            with phase("docker.stop", cid=container_id[:12], grace=timeout):
+                c.stop(timeout=timeout)
+        except Exception:
+            pass
+        try:
+            with phase("docker.remove", cid=container_id[:12]):
+                c.remove(force=True)
+        except docker.errors.NotFound:
+            pass
+        except Exception:
+            pass
 
 
 def is_container_running(container_id: str) -> bool:

@@ -3,6 +3,7 @@
 from flask import Blueprint, jsonify, make_response, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from config import logger
 from storage import get_storage
 
 bp = Blueprint("auth", __name__)
@@ -71,6 +72,22 @@ def init_auth(app):
 
     @app.before_request
     def require_login():
+        # Phase-timed (LLAMAMAN_PERF_LOG=1): runs on EVERY request and can do
+        # one or two shared-DB round-trips (get_settings / verify_api_key).
+        import time as _t
+        _t0 = _t.monotonic()
+        try:
+            return _require_login_inner()
+        finally:
+            from config import PERF_LOG
+            if PERF_LOG:
+                ms = (_t.monotonic() - _t0) * 1000.0
+                # Only log notable ones: this fires on every request incl. static.
+                if ms >= 25:
+                    logger.info("perf auth.before_request %.0fms  ep=%s",
+                                ms, request.endpoint)
+
+    def _require_login_inner():
         # Always allow auth pages, health check, and static assets
         if request.endpoint in ("auth.login", "auth.setup", "health", "static", None):
             return

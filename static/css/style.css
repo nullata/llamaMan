@@ -919,6 +919,14 @@ select option {
   color: var(--yellow);
 }
 
+/* Transient state during an async stop: docker SIGTERM grace is running in a
+   background thread; the instance is on its way out but not gone yet. Orange,
+   to read as "winding down" and stay distinct from yellow "starting". */
+.status-stopping {
+  background: rgba(249, 115, 22, 0.15);
+  color: #f97316;
+}
+
 .status-healthy {
   background: rgba(16, 185, 129, 0.15);
   color: var(--green);
