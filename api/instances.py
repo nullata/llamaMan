@@ -33,7 +33,8 @@ from core.gpu import get_vendor
 from core.helpers import (
     build_llama_cmd, ensure_docker_network, find_available_port,
     get_docker_client, is_container_running, is_port_available,
-    kill_instance_process, normalize_flash_attn, normalize_reasoning_format,
+    kill_instance_process, normalize_flash_attn, normalize_load_mode,
+    normalize_reasoning_format,
     public_dict, read_log_file, resolve_llama_endpoint, stop_container,
     stream_log_file,
 )
@@ -97,6 +98,7 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
             "extra_args",
             "flash_attn",
             "reasoning_format",
+            "load_mode",
             "cache_type_k",
             "cache_type_v",
             "spec_enabled",
@@ -507,6 +509,7 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
                     pdf_dpi=200, pdf_max_pages=20,
                     gpu_devices=None, split_mode="", tensor_split="",
                     flash_attn="auto", reasoning_format="auto",
+                    load_mode="auto",
                     cache_type_k="", cache_type_v="",
                     idle_timeout_min=0,
                     max_concurrent=0, max_queue_depth=200,
@@ -607,6 +610,11 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
         # whitespace drift from hand-crafted requests. Unknown / missing
         # values fold to 'auto' to match llama.cpp's own default.
         "reasoning_format": normalize_reasoning_format(reasoning_format),
+        # Load mode is llama.cpp's --load-mode six-value knob (auto|none|mmap|
+        # mlock|mmap+mlock|dio, default auto), successor to the deprecated
+        # --mlock/--mmap/--direct-io flags. Same boundary-normalize contract
+        # as reasoning_format; unknown / missing fold to 'auto'.
+        "load_mode": normalize_load_mode(load_mode),
         "cache_type_k": (cache_type_k or "").strip().lower(),
         "cache_type_v": (cache_type_v or "").strip().lower(),
         "idle_timeout_min": idle_timeout_min,
@@ -1061,6 +1069,7 @@ def api_instances_create():
         tensor_split=body.get("tensor_split", "").strip(),
         flash_attn=body.get("flash_attn", "auto"),
         reasoning_format=body.get("reasoning_format", "auto"),
+        load_mode=body.get("load_mode", "auto"),
         cache_type_k=body.get("cache_type_k", "").strip(),
         cache_type_v=body.get("cache_type_v", "").strip(),
         idle_timeout_min=int(body.get("idle_timeout_min", 0)),
@@ -1173,6 +1182,7 @@ def api_instances_restart(inst_id):
         tensor_split=config.get("tensor_split", ""),
         flash_attn=config.get("flash_attn", "auto"),
         reasoning_format=config.get("reasoning_format", "auto"),
+        load_mode=config.get("load_mode", "auto"),
         cache_type_k=config.get("cache_type_k", ""),
         cache_type_v=config.get("cache_type_v", ""),
         idle_timeout_min=config.get("idle_timeout_min", 0),

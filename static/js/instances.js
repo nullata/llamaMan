@@ -773,6 +773,7 @@ function readLaunchForm() {
     tensor_split: document.getElementById('f-tensor-split').value.trim(),
     flash_attn: document.getElementById('f-flash-attn').value,
     reasoning_format: document.getElementById('f-reasoning-format')?.value || 'auto',
+    load_mode: document.getElementById('f-load-mode')?.value || 'auto',
     cache_type_k: document.getElementById('f-cache-type-k').value.trim(),
     cache_type_v: document.getElementById('f-cache-type-v').value.trim(),
     idle_timeout_min: parseInt(document.getElementById('f-idle-timeout').value) || 0,

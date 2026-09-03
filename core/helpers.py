@@ -57,6 +57,26 @@ def normalize_reasoning_format(value) -> str:
     return "auto"
 
 
+_LOAD_MODE_VALUES = ("auto", "none", "mmap", "mlock", "mmap+mlock", "dio")
+
+
+def normalize_load_mode(value) -> str:
+    """Coerce any --load-mode input to the exact string llama-server accepts
+    (auto|none|mmap|mlock|mmap+mlock|dio).
+
+    Anything unknown / missing / non-string falls back to 'auto' - that's
+    llama.cpp's own default when the flag is absent, so a corrupt or legacy
+    preset value cannot make the server refuse to start (its arg parser
+    throws on invalid values). Case- and whitespace-tolerant, same contract
+    as normalize_reasoning_format.
+    """
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in _LOAD_MODE_VALUES:
+            return s
+    return "auto"
+
+
 def request_local_worker(url, *, method="POST", json=None, data=None,
                          headers=None, stream=False):
     """Send an HTTP request to a local llama-server with bounded connect
@@ -238,6 +258,19 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
     cache_type_v = (config.get("cache_type_v") or "").strip().lower()
     if cache_type_v and cache_type_v != "f16" and cache_type_v in _ALLOWED_CACHE_TYPES:
         cmd += ["--cache-type-v", cache_type_v]
+    # Model loading mode. Maps to llama-server --load-mode
+    # (auto|none|mmap|mlock|mmap+mlock|dio, default auto) — the successor to
+    # the now-deprecated --mlock / --mmap / --no-mmap / --direct-io flags.
+    # 'auto' matches llama.cpp's own default when the flag is absent, so omit
+    # it for the common case to keep the command line quiet. Only emit values
+    # from the whitelist llama-server accepts - its arg parser throws on
+    # invalid values, so a corrupt preset would otherwise kill the container
+    # at startup with an opaque error. NB: normalize_load_mode is applied at
+    # the API boundary too; re-normalizing here defends against configs that
+    # predate the field or were hand-crafted into storage.
+    load_mode = normalize_load_mode(config.get("load_mode"))
+    if load_mode != "auto":
+        cmd += ["--load-mode", load_mode]
     # When this instance opts into a queue-group alias, also tell llama-server
     # to advertise itself under that name (--alias). Two effects: clients
     # hitting THIS instance's port directly see the group name in /v1/models

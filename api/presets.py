@@ -3,7 +3,7 @@
 from flask import Blueprint, jsonify, request
 
 from core.dry_sampling import parse_dry_config
-from core.helpers import normalize_flash_attn, normalize_reasoning_format
+from core.helpers import normalize_flash_attn, normalize_load_mode, normalize_reasoning_format
 from core.loop_detect import LOOP_DETECT_KEYS, parse_loop_detect_config
 from core.model_alias import PRETTY_NAME_KEY, existing_aliases
 from core.model_alias import invalidate as invalidate_alias_cache
@@ -185,6 +185,9 @@ def api_preset_save(model_path):
         # same tier as flash_attn / cache types - it describes how model
         # output is parsed, which doesn't vary by node.
         "reasoning_format": normalize_reasoning_format(body.get("reasoning_format")),
+        # Load mode is a shared behavior knob like flash_attn / reasoning_format
+        # (it describes how the model is loaded, not the node's topology).
+        "load_mode": normalize_load_mode(body.get("load_mode")),
         "cache_type_k": (body.get("cache_type_k") or "").strip().lower(),
         "cache_type_v": (body.get("cache_type_v") or "").strip().lower(),
         "idle_timeout_min": body.get("idle_timeout_min", 0),

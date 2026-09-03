@@ -516,6 +516,15 @@ async function selectModel(model, el) {
         if (!['auto', 'none', 'deepseek', 'deepseek-legacy'].includes(rf)) rf = 'auto';
         rfEl.value = rf;
       }
+      // Load mode is a shared behavior knob (same tier as flash_attn /
+      // reasoning_format). Coerce unknown / missing to 'auto' so a preset
+      // saved before this field existed lands on llama.cpp's own default.
+      const lmEl = document.getElementById('f-load-mode');
+      if (lmEl) {
+        let lm = (typeof p.load_mode === 'string') ? p.load_mode.trim().toLowerCase() : '';
+        if (!['auto', 'none', 'mmap', 'mlock', 'mmap+mlock', 'dio'].includes(lm)) lm = 'auto';
+        lmEl.value = lm;
+      }
       // Anti-Loop: DRY sampler + output loop detection. Both shared behavior
       // knobs; a preset saved before this feature has no keys, so we fall
       // back to disabled + llama.cpp/detector defaults exactly.
