@@ -540,6 +540,7 @@ Optional. `LLAMAMAN_NODE_NAME` (under Core) doubles as the cluster identity and 
 | `CLUSTER_SECRET` | *(unset)* | Shared bearer token (`X-Cluster-Secret`) for all node-to-node HTTP. Identical on every node. Use a long random value over a trusted network or behind TLS |
 | `CLUSTER_ADVERTISE_URL` | *(unset)* | How peers reach **this** node's UI/API - hostname/IP routable from the other hosts (not `localhost`). Without it the node is view-only |
 | `CLUSTER_NODE_ONLINE_WINDOW_S` | `45` | Seconds since last heartbeat before a node shows offline. Raise if nodes flap under load or clock skew |
+| `LLAMAMAN_PERF_LOG` | *(off)* | Diagnostics. Set truthy to log per-phase timings (`perf <name> <ms>`) for suspected slow paths: remote instance stop, cluster proxy forwards, reachability probes, heartbeat snapshot, auth checks, `save_state`, container stats. Off by default; negligible overhead when off |
 
 ## REST API
 
