@@ -235,6 +235,9 @@ def _finish_model_update(dl: dict) -> str | None:
     from core.model_sources import record_model_sha
     from core.model_updates import swap_in_update
 
+    # swap_in_update lands staged files by basename - safe because this
+    # staging dir holds exactly one download's targets (one file or one
+    # multipart group). Staging anything else here would collide silently.
     moved, err = swap_in_update(temp_dir, os.path.dirname(model_path))
     if err:
         logger.error("Model update failed for %s: %s", model_path, err)

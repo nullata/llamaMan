@@ -34,6 +34,18 @@ from config import logger
 
 HF_API = "https://huggingface.co"
 
+
+class RemoteFileNotFound(RuntimeError):
+    """The exact repo path asked for does not exist (HF answered 404).
+
+    A distinct type so check_model_update can tell "you asked for the wrong
+    path inside the repo" apart from every other failure: nested files
+    (unsloth keeps every quant family in its own subfolder) 404 when probed at
+    the repo root even though they exist, so the check retries once through
+    the file listing before giving up. Auth errors and 5xx must NOT take that
+    path - only a real 404 does.
+    """
+
 # Nested inside the model's directory so the swap is a same-filesystem rename.
 # Dot-prefixed so discover_models' rglob doesn't surface a half-downloaded GGUF
 # as a real model while the update is in flight.
@@ -65,7 +77,7 @@ def remote_file_info(repo_id: str, filename: str, token: str | None = None) -> d
     if resp.status_code in (401, 403):
         raise RuntimeError(f"Authentication failed ({resp.status_code}). Check your HF token.")
     if resp.status_code == 404:
-        raise RuntimeError(f"File not found in repo: {repo_id}/{filename}")
+        raise RemoteFileNotFound(f"File not found in repo: {repo_id}/{filename}")
     if resp.status_code >= 400:
         resp.raise_for_status()
 
@@ -80,6 +92,38 @@ def remote_file_info(repo_id: str, filename: str, token: str | None = None) -> d
         "size": size,
         "commit": (resp.headers.get("x-repo-commit") or "").strip(),
     }
+
+
+def _resolve_repo_filename(repo_id: str, filename: str, token: str | None,
+                           exc: RemoteFileNotFound) -> str:
+    """Map a bare basename to its repo-relative path via the repo listing.
+
+    The local filesystem only ever holds basenames, but repos nest: unsloth
+    keeps every quant family in its own subfolder, so
+    `resolve/main/<basename>` 404s for a file that plainly exists at
+    `<subfolder>/<basename>`. Resolution goes through the downloader's
+    resolve_filename - the same helper the download and apply-update paths
+    use - so all three agree on what a basename means in a given repo.
+    Re-raised unchanged when the listing can't find it either, so a genuinely
+    deleted file still reports the same "File not found in repo" message.
+    """
+    from core.downloader import list_repo_files, resolve_filename
+    try:
+        files = list_repo_files(repo_id, token)
+    except Exception:
+        # Couldn't even list the repo; the original 404 was never more
+        # informative than this, so surface the listing failure instead.
+        raise
+    try:
+        targets = resolve_filename(filename, files, rid=repo_id)
+    except RuntimeError:
+        raise exc from None
+    # resolve_filename expands multipart groups; pick back out the shard
+    # that corresponds to the file we were asked about.
+    for t in targets:
+        if os.path.basename(t["name"]) == filename:
+            return t["name"]
+    raise exc from None
 
 
 def check_model_update(model_path: str, repo_id: str, token: str | None = None) -> dict:
@@ -97,6 +141,15 @@ def check_model_update(model_path: str, repo_id: str, token: str | None = None) 
     filename = os.path.basename(model_path)
     try:
         remote = remote_file_info(repo_id, filename, token)
+    except RemoteFileNotFound as e:
+        # A 404 on the bare basename doesn't prove absence - the file may be
+        # nested in a repo subfolder while the local copy only kept the
+        # basename (downloaders flatten). Retry against the real repo path.
+        try:
+            filename = _resolve_repo_filename(repo_id, filename, token, e)
+            remote = remote_file_info(repo_id, filename, token)
+        except Exception as e2:
+            return {"status": STATUS_UNKNOWN, "detail": str(e2)}
     except Exception as e:
         return {"status": STATUS_UNKNOWN, "detail": str(e)}
 
@@ -366,6 +419,17 @@ def swap_in_update(temp_dir: str, dest_dir: str) -> tuple[list[str], str | None]
     models therefore swap shard by shard: a failure partway leaves some shards
     new and some old, which is logged loudly because the model is then
     inconsistent and needs the update re-run.
+
+    Paths are flattened to basenames because `dest_dir` is anchored at the
+    LIVE file's own directory - `os.path.dirname(model_path)` - and the
+    downloader preserves repo subfolders on disk, so a live nested model
+    already sits in `.../UD-Q4_K_XL/`. The staging dir reproduces the repo
+    layout beneath that (`.llamaman-update/UD-Q4_K_XL/x.gguf`), so joining
+    the relative path back on would double-nest the swap
+    (`UD-Q4_K_XL/UD-Q4_K_XL/x.gguf`) and leave the live file untouched.
+    Basenames are unique within a staging dir in practice: each download
+    stages one file or one multipart group, and no repo holds two shards
+    with the same name.
     """
     if not os.path.isdir(temp_dir):
         return [], "no downloaded files found to swap in"
@@ -382,7 +446,7 @@ def swap_in_update(temp_dir: str, dest_dir: str) -> tuple[list[str], str | None]
 
     moved: list[str] = []
     for rel, src in staged:
-        dst = os.path.join(dest_dir, rel)
+        dst = os.path.join(dest_dir, os.path.basename(rel))
         try:
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             os.replace(src, dst)
