@@ -309,13 +309,32 @@ def load_state():
             inst["_internal_port"] = internal_port
         instances[inst["id"]] = inst
 
-        if restored_status == "sleeping" and internal_port:
+        # Rebuild in-memory-only pieces that die with the previous llamaman
+        # process. Both apply to reattached-running ("starting") and restored
+        # sleeping instances - previously this block only handled "sleeping",
+        # so a healthy instance whose container survived a llamaman restart
+        # would come back with its sidecar port unbound (the werkzeug server
+        # for the public 8000-8020 lived in the old process and died with it)
+        # and without its RequestGate - which meant `_public_instance` dropped
+        # the `queue` field, the "Queue N/M active · K queued" indicator
+        # disappeared from the UI, and the compat proxy at :42069 stopped
+        # enforcing max_concurrent for hits routed to this instance.
+        #  - restore_proxies drives app.py's post-boot start_idle_proxy loop,
+        #    which rebinds the public port and installs the wake-on-request /
+        #    forward-to-internal-port WSGI app. `has_proxy` gates it: only
+        #    instances that were launched with a sidecar (idle_timeout,
+        #    max_concurrent, or proxy sampling overrides) had one to restore.
+        #  - create_gate rebuilds the RequestGate. Gated on max_concurrent > 0
+        #    to match the launch path in api/instances.py; create_gate itself
+        #    also short-circuits at max_concurrent <= 0 so this is defense in
+        #    depth.
+        if restored_status in ("starting", "sleeping") and has_proxy:
             restore_proxies.append((inst["id"], inst["port"], internal_port))
-            if max_concurrent > 0:
-                create_gate(inst["id"], max_concurrent,
-                            config.get("max_queue_depth", 200),
-                            model_path=inst["model_path"],
-                            share_queue=config.get("share_queue", False))
+        if restored_status in ("starting", "sleeping") and max_concurrent > 0:
+            create_gate(inst["id"], max_concurrent,
+                        config.get("max_queue_depth", 200),
+                        model_path=inst["model_path"],
+                        share_queue=config.get("share_queue", False))
 
     for entry in saved_downloads:
         status = entry.get("status", "failed")
