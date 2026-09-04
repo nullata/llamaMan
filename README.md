@@ -270,6 +270,8 @@ When **Max Concurrent** > 0, llamaMan places a FIFO gate in front of the instanc
 
 Enable the **Image & PDF Input** toggle to load a vision model's multimodal projector (`--mmproj`) alongside its main GGUF. The **MMPROJ Model** field takes the projector GGUF (typical filename: `mmproj-<model>-<precision>.gguf`).
 
+**Offload mmproj to GPU** (on by default): llama.cpp keeps the projector on the GPU unless it gets `--no-mmproj-offload`, so *on* omits the flag entirely (byte-identical CLI to before this option existed) and *off* passes `--no-mmproj-offload` to run the vision encoder on CPU — useful on tight-VRAM setups, where the encoder pins a few GB.
+
 **PDFs** are supported by rasterizing each page to a PNG **before** forwarding to llama-server (which has no native PDF support). Enable **Accept PDF uploads** to turn this on for an instance. Recognized in both:
 
 - **OpenAI**: `image_url` with a `data:application/pdf;base64,...` URL, or the newer `file` block

@@ -478,6 +478,26 @@ header span {
   padding-left: 36px;
 }
 
+/* Image & PDF Input splits its toggles into two adjacent .launch-toggle-tables
+   (Offload alone, then Accept PDF + Try text layer) so the hint <p>s can flow
+   at the full container width between them instead of blowing up max-content
+   grid columns from inside. Each grid then computes its own max-content col 1
+   in isolation, and "Offload mmproj to GPU" is longer than "Accept PDF
+   uploads" — so without this the two switches don't line up vertically the
+   way Share queue / Embedding Model do (they're one grid, so alignment is
+   automatic). Pin col 1 (and col 3 for symmetry) to a shared min that clears
+   the widest label with a bit of breathing room, and the toggles land at the
+   same X in both tables. Gated to >480px because the phone breakpoint below
+   collapses .launch-toggle-table to a single 1fr 40px column, and this
+   .launch-toggle-table.mmproj-toggle-table selector has higher specificity
+   than that plain-class rule — without the min-width guard the 4-column
+   ~400px template would win on phones and overflow the viewport. */
+@media (min-width: 481px) {
+  .launch-toggle-table.mmproj-toggle-table {
+    grid-template-columns: minmax(160px, max-content) 40px minmax(160px, max-content) 40px;
+  }
+}
+
 .launch-settings-section {
   border: 1px solid var(--border);
   border-radius: var(--radius);

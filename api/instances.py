@@ -110,6 +110,7 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
             "spec_draft_p_min",
             "mmproj_enabled",
             "mmproj_path",
+            "mmproj_offload",
             "pdf_input_enabled",
             "pdf_extract_text_first",
             "pdf_dpi",
@@ -505,6 +506,7 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
                     spec_draft_n_min=None, spec_draft_p_split=None,
                     spec_draft_p_min=None,
                     mmproj_enabled=False, mmproj_path="",
+                    mmproj_offload=True,
                     pdf_input_enabled=False, pdf_extract_text_first=False,
                     pdf_dpi=200, pdf_max_pages=20,
                     gpu_devices=None, split_mode="", tensor_split="",
@@ -585,6 +587,10 @@ def launch_instance(model_path, port, n_gpu_layers=-1, ctx_size=4096,
         "spec_draft_p_min": spec_draft_p_min,
         "mmproj_enabled": mmproj_enabled,
         "mmproj_path": mmproj_path,
+        # llama.cpp defaults projector offload to enabled; True default so a
+        # caller/config without the key keeps upstream behavior (see
+        # core/multimodal.parse_mmproj_config).
+        "mmproj_offload": mmproj_offload,
         "pdf_input_enabled": pdf_input_enabled,
         "pdf_extract_text_first": pdf_extract_text_first,
         "pdf_dpi": pdf_dpi,
@@ -1173,6 +1179,10 @@ def api_instances_restart(inst_id):
         spec_draft_p_min=config.get("spec_draft_p_min"),
         mmproj_enabled=config.get("mmproj_enabled", False),
         mmproj_path=config.get("mmproj_path") or "",
+        # NOTE the True default here, unlike the False-defaulted siblings:
+        # llama.cpp offloads the projector unless told otherwise, so a config
+        # predating this field must restart with offload still on.
+        mmproj_offload=config.get("mmproj_offload", True),
         pdf_input_enabled=config.get("pdf_input_enabled", False),
         pdf_extract_text_first=config.get("pdf_extract_text_first", False),
         pdf_dpi=int(config.get("pdf_dpi") or 200),

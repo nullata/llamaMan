@@ -323,6 +323,19 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
         mmproj_path = (config.get("mmproj_path") or "").strip()
         if mmproj_path:
             cmd += ["--mmproj", mmproj_path]
+            # Projector GPU offload. llama.cpp's default is enabled
+            # (--mmproj-offload / --no-mmproj-offload boolean pair, no
+            # values), so emit NOTHING when true - byte-identical CLI for
+            # every existing config - and only pass --no-mmproj-offload when
+            # the operator explicitly turned it off (tight-VRAM setups; the
+            # vision encoder otherwise pins its weights to the GPU).
+            # Deliberately inside the mmproj_enabled gate: with no projector
+            # loaded the flag is a harmless no-op upstream, but a dead flag
+            # in the CLI the operator reads is confusing noise.
+            # If --mmproj-device is ever surfaced, it wins over this bool:
+            # device set => emit --mmproj-device and skip this line.
+            if config.get("mmproj_offload", True) is False:
+                cmd += ["--no-mmproj-offload"]
     if config.get("extra_args"):
         cmd += shlex.split(config["extra_args"])
     return cmd

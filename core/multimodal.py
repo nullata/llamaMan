@@ -13,6 +13,7 @@
 MMPROJ_CONFIG_KEYS = (
     "mmproj_enabled",
     "mmproj_path",
+    "mmproj_offload",
     "pdf_input_enabled",
     "pdf_extract_text_first",
     "pdf_dpi",
@@ -31,6 +32,20 @@ def parse_mmproj_config(body: dict) -> tuple[dict, str | None]:
     if pdf_enabled and not enabled:
         # No vision model = the rasterized PDF pages have nowhere to go.
         return {}, "pdf_input_enabled requires mmproj_enabled"
+
+    # GPU offload for the projector. llama.cpp's default is ENABLED
+    # (--mmproj-offload / --no-mmproj-offload pair, default true), so the
+    # default here must be True too: a preset saved before this field
+    # existed, or a body that never mentions it, has to keep upstream's
+    # behavior, not silently disable offload. Unlike the toggles above,
+    # missing -> True, and an explicit JSON null is treated as "no opinion"
+    # (bool(None) would be False, which is the wrong direction here).
+    # Only an explicit false turns it off.
+    # precedence note: if a --mmproj-device control is ever added, the
+    # device wins over this bool (device set => emit --mmproj-device and
+    # ignore mmproj_offload), and that rule belongs in build_llama_cmd.
+    offload_raw = body.get("mmproj_offload")
+    mmproj_offload = True if offload_raw is None else bool(offload_raw)
 
     # dpi and max_pages are always parsed (even when the feature is off) so
     # a saved preset always has consistent shape. Bounds are conservative:
@@ -60,6 +75,7 @@ def parse_mmproj_config(body: dict) -> tuple[dict, str | None]:
     return {
         "mmproj_enabled": enabled,
         "mmproj_path": path,
+        "mmproj_offload": mmproj_offload,
         "pdf_input_enabled": pdf_enabled,
         "pdf_extract_text_first": bool(body.get("pdf_extract_text_first", False)),
         "pdf_dpi": dpi,

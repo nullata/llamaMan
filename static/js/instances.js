@@ -789,6 +789,7 @@ function readLaunchForm() {
     spec_draft_model: document.getElementById('f-spec-draft-model').value.trim(),
     mmproj_enabled: document.getElementById('f-mmproj-enabled').checked,
     mmproj_path: document.getElementById('f-mmproj-path').value.trim(),
+    mmproj_offload: document.getElementById('f-mmproj-offload')?.checked !== false,
     pdf_input_enabled: document.getElementById('f-pdf-input-enabled')?.checked || false,
     pdf_extract_text_first: document.getElementById('f-pdf-extract-text-first')?.checked || false,
     pdf_dpi: parseInt(document.getElementById('f-pdf-dpi')?.value, 10) || 200,

@@ -464,6 +464,12 @@ async function selectModel(model, el) {
       if (pMinEl) pMinEl.value = p.spec_draft_p_min ?? '';
       document.getElementById('f-mmproj-enabled').checked = !!p.mmproj_enabled;
       document.getElementById('f-mmproj-path').value = p.mmproj_path || '';
+      // Offload defaults TRUE (llama.cpp's default): only an explicit
+      // false unchecks it. undefined/null/missing (presets saved before
+      // this field) must land checked, or the next save would write
+      // mmproj_offload:false and silently disable GPU offload.
+      const moEl = document.getElementById('f-mmproj-offload');
+      if (moEl) moEl.checked = p.mmproj_offload !== false;
       const pdfIn = document.getElementById('f-pdf-input-enabled');
       if (pdfIn) pdfIn.checked = !!p.pdf_input_enabled;
       const pdfText = document.getElementById('f-pdf-extract-text-first');

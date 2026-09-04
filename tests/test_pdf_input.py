@@ -217,6 +217,9 @@ class MMProjConfigTests(unittest.TestCase):
         self.assertEqual(cfg, {
             "mmproj_enabled": False,
             "mmproj_path": "",
+            # default TRUE: llama.cpp offloads the projector unless told
+            # otherwise; see tests/test_mmproj_offload.py for the contract.
+            "mmproj_offload": True,
             "pdf_input_enabled": False,
             "pdf_extract_text_first": False,
             "pdf_dpi": 200,

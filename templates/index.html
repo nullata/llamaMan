@@ -605,7 +605,31 @@
                         <input id="f-mmproj-path" type="text" list="mmproj-model-options" placeholder="/models/Qwen2-VL-7B-Instruct/mmproj-Qwen2-VL-7B-Instruct-f16.gguf" />
                         <datalist id="mmproj-model-options"></datalist>
                       </div>
-                      <div class="form-group full launch-toggle-table">
+                      <!-- Two small toggle-tables with hints between them, not
+                           one big grid: earlier this was a single 4-column
+                           launch-toggle-table where the hint <p>s spanned all
+                           columns via grid-column:1/-1. In a max-content grid,
+                           a spanning item's max-content (the paragraph on one
+                           unbroken line) pushes the tracks out to fit it, so
+                           the "table" grew to almost the full container width
+                           on desktop and overflowed horizontally on tablets
+                           where the phone-only 1fr media query doesn't apply.
+                           Splitting the grids and letting the hints flow as
+                           normal block siblings keeps each grid sized only to
+                           its labels+toggles (like Share queue / Auto Restart
+                           / Embedding below) while the hints wrap at the full
+                           reveal-inner width. -->
+                      <div class="launch-toggle-table mmproj-toggle-table">
+                        <div class="launch-toggle-pair">
+                          <label for="f-mmproj-offload">Offload mmproj to GPU</label>
+                          <label class="toggle-switch" for="f-mmproj-offload" aria-label="Offload mmproj to GPU">
+                            <input id="f-mmproj-offload" type="checkbox" checked />
+                            <span class="toggle-slider"></span>
+                          </label>
+                        </div>
+                      </div>
+                      <p class="hint-text">Offload: off passes <code>--no-mmproj-offload</code> and runs the projector on CPU — useful when VRAM is tight (the encoder pins a few GB on big vision models) or when a backend's vision kernels are slow. On (llama.cpp default) omits the flag entirely.</p>
+                      <div class="launch-toggle-table mmproj-toggle-table">
                         <div class="launch-toggle-pair">
                           <label for="f-pdf-input-enabled">Accept PDF uploads</label>
                           <label class="toggle-switch" for="f-pdf-input-enabled" aria-label="Accept PDF uploads">
@@ -622,7 +646,10 @@
                         </div>
                       </div>
                       <p class="hint-text">Text-layer-first skips rasterization for born-digital PDFs (Word/LaTeX/browser print) and inlines their embedded text instead. Off by default: predictable behavior on every PDF, and layout information is preserved for the vision model. Scanned PDFs always fall through to rasterization.</p>
-                      <div class="form-row">
+                      <!-- Same grid as Model Settings' Context Size etc., so
+                           these two number inputs get the identical compact
+                           column width instead of stacking full-width. -->
+                      <div class="launch-section-grid">
                         <div class="form-group">
                           <span class="label-row">
                             <label for="f-pdf-dpi">PDF DPI</label>
