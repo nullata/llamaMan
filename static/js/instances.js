@@ -562,6 +562,19 @@ function updateMmprojState() {
   toggleLaunchSectionReveal(document.getElementById('mmproj-reveal'), enabled);
   const input = document.getElementById('f-mmproj-path');
   if (input) input.disabled = !enabled;
+  // The master toggle IS the gate for the whole group (mmproj load + PDF
+  // endpoint). Clear the PDF sub-toggles on toggle-off so a checked
+  // "Accept PDF uploads" can't hide inside the collapsed reveal and trip
+  // the pdf_input_enabled-requires-mmproj_enabled guard on save - same
+  // reveal-and-clear contract as updateShareQueueClusterRow for Share
+  // queue. pdf_dpi / pdf_max_pages keep their values: they're inert
+  // without the toggles and re-enabling restores the operator's tuning.
+  if (!enabled) {
+    const pdfIn = document.getElementById('f-pdf-input-enabled');
+    if (pdfIn) pdfIn.checked = false;
+    const pdfText = document.getElementById('f-pdf-extract-text-first');
+    if (pdfText) pdfText.checked = false;
+  }
 }
 
 // -------------------------------------------------------------------------
