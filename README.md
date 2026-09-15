@@ -338,7 +338,7 @@ Enable the **Image & PDF Input** toggle to load a vision model's multimodal proj
 
 **Offload mmproj to GPU** (on by default): llama.cpp keeps the projector on the GPU unless it gets `--no-mmproj-offload`, so *on* omits the flag entirely (byte-identical CLI to before this option existed) and *off* passes `--no-mmproj-offload` to run the vision encoder on CPU — useful on tight-VRAM setups, where the encoder pins a few GB.
 
-**PDFs** are supported by rasterizing each page to a PNG **before** forwarding to llama-server (which has no native PDF support). Enable **Accept PDF uploads** to turn this on for an instance. Recognized in both:
+**PDFs** are supported by rasterizing each page to a PNG **before** forwarding to llama-server (which has no native PDF support). Enable **Accept PDF uploads** (inside the Image & PDF Input group) to turn this on for an instance; the master **Image & PDF Input** toggle gates the whole group — turning it off also clears the PDF sub-toggles, since rasterized pages have no vision model to reach without the projector. Recognized in both:
 
 - **OpenAI**: `image_url` with a `data:application/pdf;base64,...` URL, or the newer `file` block
 - **Ollama**: base64 PDF bytes mixed into `images[]` - llamaMan sniffs `%PDF-` and expands PDFs; ordinary images keep their existing path
