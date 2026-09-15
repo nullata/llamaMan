@@ -73,7 +73,7 @@ loadApiKeys();
 loadImages();
 if (typeof populateLaunchImageSelect === 'function') populateLaunchImageSelect();
 
-// Cluster grouping fields (alias + fallback) under "Share queue with same model".
+// Cluster grouping fields (alias + fallback) under "Queue sharing".
 // Only meaningful when share-queue is on; revealed AND cleared on the toggle so
 // the launch form stays uncluttered AND a stale alias typed before the toggle
 // was flipped off can't sneak through on submit. The backend re-enforces this

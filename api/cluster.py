@@ -293,7 +293,7 @@ def api_cluster_proxy(node_id, subpath):
 # ---------------------------------------------------------------------------
 # Shared inference queue: cross-node least-load dispatch
 # ---------------------------------------------------------------------------
-# When a model runs with "Share queue with same model" on across several nodes,
+# When a model runs with "Queue sharing" on across several nodes,
 # those nodes form a group. An inference request for that model is routed to the
 # group node with the fewest in-flight requests; the chosen node runs its own
 # gate / sampling / recording. A loop guard header stops re-dispatch on the hop.

@@ -458,7 +458,7 @@ header span {
    label+toggle become DIRECT grid items and share the table's columns across
    rows - so the left-column toggles line up vertically (same trick as the App
    Settings toggles). Layout: [label][toggle]  [label][toggle], left-column
-   pairs stack (Share queue over Embedding), the right column holds Auto Restart. */
+   pairs stack (Queue sharing over Embedding), the right column holds Auto Restart. */
 .launch-toggle-table {
   display: grid;
   grid-template-columns: max-content 40px max-content 40px;
@@ -484,7 +484,7 @@ header span {
    grid columns from inside. Each grid then computes its own max-content col 1
    in isolation, and "Offload mmproj to GPU" is longer than "Accept PDF
    uploads" — so without this the two switches don't line up vertically the
-   way Share queue / Embedding Model do (they're one grid, so alignment is
+   way Queue sharing / Embedding Model do (they're one grid, so alignment is
    automatic). Pin col 1 (and col 3 for symmetry) to a shared min that clears
    the widest label with a bit of breathing room, and the toggles land at the
    same X in both tables. Gated to >480px because the phone breakpoint below
@@ -2622,7 +2622,7 @@ body.login-page {
     flex: 1;
   }
 
-  /* Launch toggle pairs (Share queue / Auto Restart / Embedding) collapse from
+  /* Launch toggle pairs (Queue sharing / Auto Restart / Embedding) collapse from
      the desktop two-column table to a single label|toggle column. The 4-column
      max-content grid never wrapped, so the right column (Auto Restart) ran off
      the viewport on phones. */
