@@ -1,6 +1,6 @@
 # Copyright (c) llamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
-from flask import Blueprint, jsonify, make_response, redirect, render_template, request, session, url_for
+from flask import Blueprint, g, jsonify, make_response, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from config import logger
@@ -101,6 +101,49 @@ def init_auth(app):
         # Llamaman blueprint: when require_auth is on, demand a valid token
         bp_name = request.blueprints[0] if request.blueprints else None
         if bp_name == "llamaman":
+            if not is_require_auth_enabled():
+                return
+            error = verify_bearer_token(
+                request.headers.get("Authorization", ""), strict=True)
+            if error:
+                return jsonify({"error": error}), 401
+            return
+
+        # MCP endpoint (kb-mcp blueprint): see docs/kb-mcp-plan.md §6.2/§7.
+        if bp_name == "kb-mcp":
+            # When the MCP server is off, ALLOW through: the blueprint handler
+            # 404s uniformly. Demanding a bearer here while off would return
+            # 401 in per_key mode vs 404 in global mode — a route-existence
+            # oracle that contradicts the feature contract (§2: 404 for every
+            # request when disabled).
+            settings = get_storage().get_settings()
+            if not settings.get("kb_mcp_enabled", False):
+                return
+            # CORS preflight never carries Authorization; the after_request on
+            # the blueprint answers it, and the real request re-authenticates.
+            if request.method == "OPTIONS":
+                return
+            # per_key: every tool is scoped to the caller's own topics (plus
+            # the shared pool), so a key is required even when Require
+            # Authentication is off — without one there is nobody to scope
+            # to. The key's id goes on g for the handler.
+            # NOTE (intentional, do not "fix"): a cluster peer with a valid
+            # X-Cluster-Secret already returned above. It carries no key, so
+            # in per_key mode the handler refuses it rather than showing it
+            # everything.
+            if settings.get("kb_mcp_access", "global") == "per_key":
+                header = request.headers.get("Authorization", "")
+                key_id = None
+                if header.startswith("Bearer "):
+                    key_id = get_storage().get_api_key_id(header[7:])
+                if not key_id:
+                    return jsonify({"error": "Invalid API key"
+                                    if header.startswith("Bearer ")
+                                    else "API key required"}), 401
+                g.kb_key_id = key_id
+                return
+            # global: one shared KB. Follows Require Authentication like the
+            # rest of the app — off means open, on means any valid key.
             if not is_require_auth_enabled():
                 return
             error = verify_bearer_token(

@@ -157,6 +157,21 @@ def _normalize_settings_patch(settings: dict) -> dict:
             normalized.get("cluster_hide_offline_monitoring"),
             default=DEFAULT_CLUSTER_HIDE_OFFLINE_MONITORING,
         )
+    # Knowledge base (docs/kb-mcp-plan.md §6.3). Coercion only — enabling on
+    # an unsupported backend is rejected by POST /api/kb/settings, not here:
+    # this generic path must tolerate the keys without behavior of its own.
+    for _kb_bool in ("kb_enabled", "kb_mcp_enabled", "kb_mcp_ingest", "kb_mcp_delete"):
+        if _kb_bool in normalized:
+            normalized[_kb_bool] = _coerce_bool(normalized[_kb_bool])
+    if "kb_mcp_access" in normalized:
+        v = normalized["kb_mcp_access"]
+        normalized["kb_mcp_access"] = v if v in ("per_key", "global") else "global"
+    if "kb_embedding_instance" in normalized:
+        v = normalized["kb_embedding_instance"]
+        normalized["kb_embedding_instance"] = v if isinstance(v, str) else ""
+    if "kb_embedding_model" in normalized:
+        v = normalized["kb_embedding_model"]
+        normalized["kb_embedding_model"] = v if isinstance(v, str) else ""
     return normalized
 
 
@@ -188,6 +203,18 @@ def _apply_settings_defaults(settings: dict) -> dict:
         normalized.get("cluster_hide_offline_monitoring"),
         default=DEFAULT_CLUSTER_HIDE_OFFLINE_MONITORING,
     )
+    # Knowledge base display defaults (read-path only — never written back):
+    # an existing settings blob gains no kb_* keys on disk until toggled.
+    normalized["kb_enabled"] = _coerce_bool(normalized.get("kb_enabled"), default=False)
+    normalized["kb_mcp_enabled"] = _coerce_bool(normalized.get("kb_mcp_enabled"), default=False)
+    access = normalized.get("kb_mcp_access")
+    normalized["kb_mcp_access"] = access if access in ("per_key", "global") else "global"
+    normalized["kb_mcp_ingest"] = _coerce_bool(normalized.get("kb_mcp_ingest"), default=False)
+    normalized["kb_mcp_delete"] = _coerce_bool(normalized.get("kb_mcp_delete"), default=False)
+    inst = normalized.get("kb_embedding_instance")
+    normalized["kb_embedding_instance"] = inst if isinstance(inst, str) else ""
+    model = normalized.get("kb_embedding_model")
+    normalized["kb_embedding_model"] = model if isinstance(model, str) else ""
     return normalized
 
 

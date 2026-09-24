@@ -13,11 +13,13 @@ from sqlalchemy import (
     BigInteger, SmallInteger, DateTime, text, case,
 )
 from sqlalchemy.dialects.mysql import DATETIME as MYSQL_DATETIME, MEDIUMTEXT
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import declarative_base, scoped_session, sessionmaker
 
 from core.timeutil import now_utc, to_iso, parse_iso
-from storage.base import StorageBackend
+from storage.base import (
+    KBNotSupportedError, KBUnavailableError, StorageBackend,
+)
 
 logger = logging.getLogger("llamaman")
 
@@ -162,6 +164,9 @@ class MariaDBBackend(StorageBackend):
         )
         Base.metadata.create_all(self._engine)
         self._session_factory = scoped_session(sessionmaker(bind=self._engine))
+        # Knowledge base state (see kb_* methods at the bottom of this class).
+        self._kb_ready = False           # ensure_kb_tables() succeeded
+        self._kb_version = None          # cached (major, minor); None = unknown
         logger.info("MariaDB backend connected: %s (pool=%d+%d)",
                     database_url.split("@")[-1], pool_size, max_overflow)
 
@@ -601,10 +606,14 @@ class MariaDBBackend(StorageBackend):
             self._session_factory.remove()
 
     def verify_api_key(self, raw_key: str) -> bool:
+        return self.get_api_key_id(raw_key) is not None
+
+    def get_api_key_id(self, raw_key: str) -> str | None:
         hashed = self._hash_key(raw_key)
         session = self._session()
         try:
-            return session.query(ApiKeyRow).filter_by(key_hash=hashed).first() is not None
+            row = session.query(ApiKeyRow).filter_by(key_hash=hashed).first()
+            return row.id if row is not None else None
         finally:
             self._session_factory.remove()
 
@@ -987,3 +996,433 @@ class MariaDBBackend(StorageBackend):
             return 0
         finally:
             self._session_factory.remove()
+
+    # ------------------------------------------------------------------
+    # Knowledge base (MCP feature). Cluster-wide tables, deliberately NOT
+    # node-scoped (like the cluster registry). Raw DDL only: these tables
+    # must NEVER be SQLAlchemy models on Base, or the create_all() above
+    # would create them on every install regardless of server version or
+    # feature enablement (docs/kb-mcp-plan.md §4).
+    # ------------------------------------------------------------------
+
+    KB_MIN_SERVER_VERSION = (11, 8)
+
+    _KB_BASE_DDL = (
+        """
+        CREATE TABLE IF NOT EXISTS kb_topics (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(190) NOT NULL,
+          owner_key_id VARCHAR(32) NOT NULL DEFAULT '',
+          description VARCHAR(500) NOT NULL DEFAULT '',
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT NOW(3) ON UPDATE NOW(3),
+          UNIQUE KEY kb_topics_owner_name (owner_key_id, name)
+        )
+        """,
+        # Tables created before per-key ownership: add the owner column and
+        # move uniqueness from name alone to (owner, name) so two keys can
+        # each have a private topic with the same name. Idempotent.
+        "ALTER TABLE kb_topics ADD COLUMN IF NOT EXISTS "
+        "owner_key_id VARCHAR(32) NOT NULL DEFAULT '' AFTER name",
+        "ALTER TABLE kb_topics DROP INDEX IF EXISTS name",
+        "ALTER TABLE kb_topics ADD UNIQUE INDEX IF NOT EXISTS "
+        "kb_topics_owner_name (owner_key_id, name)",
+        """
+        CREATE TABLE IF NOT EXISTS kb_documents (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          topic_id BIGINT NOT NULL,
+          title VARCHAR(300) NOT NULL,
+          content LONGTEXT NOT NULL,
+          sha256 CHAR(64) NOT NULL,
+          source VARCHAR(300) NOT NULL DEFAULT '',
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT NOW(3) ON UPDATE NOW(3),
+          INDEX kb_documents_topic (topic_id),
+          CONSTRAINT kb_documents_topic_fk FOREIGN KEY (topic_id)
+            REFERENCES kb_topics(id) ON DELETE CASCADE
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS kb_meta (
+          `key` VARCHAR(64) PRIMARY KEY,
+          `value` TEXT NOT NULL
+        )
+        """,
+    )
+
+    _KB_MISSING_TABLE_CODES = (1146, 1051)  # table doesn't exist / bad table
+
+    def kb_server_version(self) -> tuple[int, int] | None:
+        """(major, minor) of the backing MariaDB, cached. Never raises.
+
+        dialect.server_version_info is only populated after a first connect,
+        so force one before reading it.
+        """
+        if self._kb_version is not None:
+            return self._kb_version
+        try:
+            with self._engine.connect() as conn:
+                pass  # forces the dialect handshake
+            info = self._engine.dialect.server_version_info
+            if info:
+                self._kb_version = (int(info[0]), int(info[1]))
+        except Exception as e:
+            logger.warning("kb: server version probe failed: %s", e)
+        return self._kb_version
+
+    def kb_available(self) -> bool:
+        ver = self.kb_server_version()
+        return ver is not None and ver >= self.KB_MIN_SERVER_VERSION
+
+    def _kb_gate(self) -> None:
+        if not self.kb_available():
+            ver = ".".join(str(p) for p in (self.kb_server_version() or (0, 0)))
+            raise KBUnavailableError(
+                f"knowledge base requires MariaDB "
+                f"{'.'.join(map(str, self.KB_MIN_SERVER_VERSION))}+ "
+                f"(current: {ver})")
+
+    def ensure_kb_tables(self) -> None:
+        """Idempotent CREATE TABLE IF NOT EXISTS for the non-dims tables.
+
+        Guarded by _kb_ready so steady-state reads pay no DDL round-trip;
+        invalidated only on a caught table-missing error, so an in-place
+        MariaDB upgrade self-heals on the next KB action.
+        """
+        if self._kb_ready:
+            return
+        self._kb_gate()
+        with self._engine.begin() as conn:
+            for ddl in self._KB_BASE_DDL:
+                conn.execute(text(ddl))
+        self._kb_ready = True
+
+    def _kb_reset_ready_on_missing(self, exc: Exception) -> bool:
+        """If exc is a missing-table error, drop the ready flag (self-heal)
+        and return True so the caller can retry once."""
+        orig = getattr(exc, "orig", None)
+        code = getattr(orig, "args", (None,))[0] if orig is not None else None
+        if code in self._KB_MISSING_TABLE_CODES:
+            self._kb_ready = False
+            return True
+        return False
+
+    def _kb_exec(self, sql, params=None, retry=True):
+        """Run one raw KB statement, self-healing once on a missing table."""
+        try:
+            self.ensure_kb_tables()
+            with self._engine.begin() as conn:
+                return conn.execute(text(sql), params or {})
+        except DBAPIError as e:
+            if retry and self._kb_reset_ready_on_missing(e):
+                return self._kb_exec(sql, params, retry=False)
+            raise
+
+    @staticmethod
+    def _vec_text(vec: list[float]) -> str:
+        return "[" + ",".join(repr(float(x)) for x in vec) + "]"
+
+    # -- topics --
+
+    def kb_create_topic(self, name: str, description: str = "",
+                        owner_key_id: str = "") -> dict:
+        res = self._kb_exec(
+            "INSERT INTO kb_topics (name, owner_key_id, description) "
+            "VALUES (:n, :o, :d)",
+            {"n": name, "o": owner_key_id or "", "d": description})
+        return self._kb_topic_row(res.lastrowid)
+
+    def _kb_topic_row(self, topic_id: int) -> dict | None:
+        row = self._kb_exec(
+            "SELECT id, name, owner_key_id, description, created_at, updated_at "
+            "FROM kb_topics WHERE id = :i", {"i": topic_id}).mappings().first()
+        if row is None:
+            return None
+        d = dict(row)
+        d["created_at"] = to_iso(d["created_at"])
+        d["updated_at"] = to_iso(d["updated_at"])
+        return d
+
+    def kb_list_topics(self, visible_to: str | None = None) -> list[dict]:
+        sql = ("SELECT t.id, t.name, t.owner_key_id, t.description, "
+               "  t.created_at, t.updated_at, "
+               "  (SELECT COUNT(*) FROM kb_documents d WHERE d.topic_id = t.id) "
+               "    AS document_count "
+               "FROM kb_topics t")
+        params: dict = {}
+        if visible_to is not None:
+            # A key sees its own topics plus the shared ('' owner) pool.
+            sql += " WHERE t.owner_key_id IN ('', :o)"
+            params["o"] = visible_to
+        rows = self._kb_exec(sql + " ORDER BY t.name", params).mappings().all()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["created_at"] = to_iso(d["created_at"])
+            d["updated_at"] = to_iso(d["updated_at"])
+            out.append(d)
+        return out
+
+    def kb_update_topic(self, topic_id: int, name: str | None = None,
+                        description: str | None = None) -> dict:
+        sets, params = [], {"i": topic_id}
+        if name is not None:
+            sets.append("name = :n"); params["n"] = name
+        if description is not None:
+            sets.append("description = :d"); params["d"] = description
+        if sets:
+            self._kb_exec(
+                f"UPDATE kb_topics SET {', '.join(sets)} WHERE id = :i", params)
+        row = self._kb_topic_row(topic_id)
+        if row is None:
+            raise LookupError(f"topic {topic_id} not found")
+        return row
+
+    def kb_delete_topic(self, topic_id: int) -> None:
+        # Cascades to documents and (via their FK) chunks.
+        self._kb_exec("DELETE FROM kb_topics WHERE id = :i", {"i": topic_id})
+
+    # -- documents --
+
+    def kb_upsert_document(self, topic_id: int, title: str, content: str,
+                           source: str = "") -> dict:
+        import hashlib
+        sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        self.ensure_kb_tables()
+        existing = self._kb_exec(
+            "SELECT id, sha256 FROM kb_documents WHERE topic_id = :t AND title = :ti",
+            {"t": topic_id, "ti": title}).mappings().first()
+        # Same content is only "unchanged" if it was actually embedded. The
+        # sha is written before the embed runs, so a failed embed (model
+        # down, dims mismatch, timeout) leaves the new sha with zero chunks
+        # — without this check every retry would be skipped as a no-op.
+        if existing is not None and existing["sha256"] == sha \
+                and not self._kb_doc_has_chunks(existing["id"]):
+            existing = dict(existing, sha256="")
+        with self._engine.begin() as conn:
+            if existing is None:
+                res = conn.execute(text(
+                    "INSERT INTO kb_documents (topic_id, title, content, sha256, source) "
+                    "VALUES (:t, :ti, :c, :s, :src)"),
+                    {"t": topic_id, "ti": title, "c": content, "s": sha,
+                     "src": source})
+                doc_id = res.lastrowid
+                changed = True
+            elif existing["sha256"] == sha:
+                doc_id = existing["id"]
+                changed = False
+            else:
+                conn.execute(text(
+                    "UPDATE kb_documents SET content = :c, sha256 = :s, source = :src "
+                    "WHERE id = :i"),
+                    {"c": content, "s": sha, "src": source, "i": existing["id"]})
+                doc_id = existing["id"]
+                changed = True
+        if changed:
+            # Content changed (or new doc): old chunks are stale. Replace
+            # semantics live here so callers can't forget them. Missing
+            # kb_chunks simply means no chunks to remove.
+            try:
+                with self._engine.begin() as conn:
+                    conn.execute(text(
+                        "DELETE FROM kb_chunks WHERE document_id = :i"),
+                        {"i": doc_id})
+            except DBAPIError as e:
+                if not self._kb_reset_ready_on_missing(e):
+                    raise
+        return {"id": doc_id, "unchanged": not changed}
+
+    def _kb_doc_has_chunks(self, document_id: int) -> bool:
+        try:
+            row = self._kb_exec(
+                "SELECT 1 FROM kb_chunks WHERE document_id = :i LIMIT 1",
+                {"i": document_id}).first()
+        except DBAPIError as e:
+            # kb_chunks absent = nothing embedded yet.
+            if not self._kb_reset_ready_on_missing(e):
+                raise
+            return False
+        return row is not None
+
+    def kb_get_document(self, document_id: int) -> dict | None:
+        row = self._kb_exec(
+            "SELECT d.id, d.topic_id, d.title, d.content, d.sha256, d.source, "
+            "  d.created_at, d.updated_at, t.name AS topic, t.owner_key_id "
+            "FROM kb_documents d JOIN kb_topics t ON t.id = d.topic_id "
+            "WHERE d.id = :i", {"i": document_id}).mappings().first()
+        if row is None:
+            return None
+        d = dict(row)
+        d["created_at"] = to_iso(d["created_at"])
+        d["updated_at"] = to_iso(d["updated_at"])
+        return d
+
+    def kb_list_documents(self, topic_id: int | None = None,
+                          visible_to: str | None = None) -> list[dict]:
+        sql = ("SELECT d.id, d.topic_id, d.title, d.sha256, d.source, "
+               "  d.created_at, d.updated_at, t.name AS topic, "
+               "  (SELECT COUNT(*) FROM kb_chunks c WHERE c.document_id = d.id) "
+               "    AS chunk_count, CHAR_LENGTH(d.content) AS content_length, "
+               "  t.owner_key_id "
+               "FROM kb_documents d JOIN kb_topics t ON t.id = d.topic_id")
+        params: dict = {}
+        where = []
+        if topic_id is not None:
+            where.append("d.topic_id = :t")
+            params["t"] = topic_id
+        if visible_to is not None:
+            where.append("t.owner_key_id IN ('', :o)")
+            params["o"] = visible_to
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY d.updated_at DESC"
+        try:
+            rows = self._kb_exec(sql, params).mappings().all()
+        except DBAPIError as e:
+            # kb_chunks absent just means nothing embedded yet; the count
+            # subquery failed against a missing table. Retry without it.
+            if not self._kb_reset_ready_on_missing(e):
+                raise
+            sql = sql.replace(
+                "  (SELECT COUNT(*) FROM kb_chunks c WHERE c.document_id = d.id) "
+                "    AS chunk_count,", "  0 AS chunk_count,")
+            rows = self._kb_exec(sql, params).mappings().all()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["created_at"] = to_iso(d["created_at"])
+            d["updated_at"] = to_iso(d["updated_at"])
+            out.append(d)
+        return out
+
+    def kb_delete_document(self, document_id: int) -> None:
+        self._kb_exec("DELETE FROM kb_documents WHERE id = :i", {"i": document_id})
+
+    # -- meta --
+
+    def kb_meta_get(self) -> dict:
+        rows = self._kb_exec("SELECT `key`, `value` FROM kb_meta").mappings().all()
+        return {r["key"]: r["value"] for r in rows}
+
+    def kb_meta_set(self, **kv) -> None:
+        for k, v in kv.items():
+            self._kb_exec(
+                "INSERT INTO kb_meta (`key`, `value`) VALUES (:k, :v) "
+                "ON DUPLICATE KEY UPDATE `value` = :v2",
+                {"k": k, "v": str(v), "v2": str(v)})
+
+    # -- chunks (dims-dependent table, created on first embed) --
+
+    def _kb_chunks_column_type(self) -> str | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(text(
+                "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kb_chunks' "
+                "AND COLUMN_NAME = 'embedding'")).first()
+        return row[0].lower() if row else None
+
+    def _kb_ensure_chunks_table(self, dims: int) -> None:
+        """Create kb_chunks with VECTOR(dims) if absent; drop/recreate if the
+        locked dims changed. The drop/recreate path is guarded by a cluster
+        advisory lock: two nodes re-embedding concurrently must not race the
+        recreate (docs/kb-mcp-plan.md §4)."""
+        current = self._kb_chunks_column_type()
+        want = f"vector({dims})"
+        if current == want:
+            return
+        with self._engine.connect() as conn:
+            got = conn.execute(text(
+                "SELECT GET_LOCK('llamaman_kb_reembed', 60)")).scalar()
+            try:
+                if not got:
+                    raise KBUnavailableError(
+                        "kb: another node is rebuilding the embedding table")
+                current = self._kb_chunks_column_type()
+                if current is not None and current != want:
+                    conn.execute(text("DROP TABLE kb_chunks"))
+                    current = None
+                if current is None:
+                    conn.execute(text(f"""
+                        CREATE TABLE kb_chunks (
+                          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                          document_id BIGINT NOT NULL,
+                          seq INT NOT NULL,
+                          chunk_text TEXT NOT NULL,
+                          embedding VECTOR({int(dims)}) NOT NULL,
+                          INDEX kb_chunks_doc (document_id),
+                          CONSTRAINT kb_chunks_doc_fk FOREIGN KEY (document_id)
+                            REFERENCES kb_documents(id) ON DELETE CASCADE,
+                          VECTOR INDEX (embedding) DISTANCE=cosine
+                        )"""))
+            finally:
+                if got:
+                    conn.execute(text("SELECT RELEASE_LOCK('llamaman_kb_reembed')"))
+
+    def kb_insert_chunks(self, document_id: int,
+                         chunks: list[tuple[int, str, list[float]]]) -> int:
+        if not chunks:
+            return 0
+        self.ensure_kb_tables()
+        dims = self.kb_meta_get().get("embedding_dims")
+        if not dims:
+            raise KBUnavailableError(
+                "kb: no embedding model locked yet (kb_meta.embedding_dims)")
+        self._kb_ensure_chunks_table(int(dims))
+        rows = [{"document_id": document_id, "seq": int(seq), "txt": text,
+                 "vec": self._vec_text(vec)} for seq, text, vec in chunks]
+        with self._engine.begin() as conn:
+            # Replace semantics: stale chunks for this document go first.
+            conn.execute(text("DELETE FROM kb_chunks WHERE document_id = :di"),
+                         {"di": document_id})
+            conn.execute(text(
+                "INSERT INTO kb_chunks (document_id, seq, chunk_text, embedding) "
+                "VALUES (:document_id, :seq, :txt, VEC_FROMTEXT(:vec))"), rows)
+        return len(rows)
+
+    def kb_search(self, query_vec: list[float], topic_id: int | None = None,
+                  limit: int = 8, visible_to: str | None = None) -> list[dict]:
+        self.ensure_kb_tables()
+        if self._kb_chunks_column_type() is None:
+            return []  # nothing embedded yet — an honest empty result
+        sql = ("SELECT c.id, c.document_id, c.seq, c.chunk_text, "
+               "  d.title, t.name AS topic, "
+               "  VEC_DISTANCE_COSINE(c.embedding, VEC_FROMTEXT(:qv)) AS dist "
+               "FROM kb_chunks c "
+               "  JOIN kb_documents d ON d.id = c.document_id "
+               "  JOIN kb_topics t ON t.id = d.topic_id")
+        params: dict = {"qv": self._vec_text(query_vec), "lim": int(limit)}
+        where = []
+        if topic_id is not None:
+            where.append("d.topic_id = :t")
+            params["t"] = topic_id
+        if visible_to is not None:
+            where.append("t.owner_key_id IN ('', :o)")
+            params["o"] = visible_to
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY dist ASC LIMIT :lim"
+        rows = self._kb_exec(sql, params).mappings().all()
+        return [{"chunk_id": r["id"], "document_id": r["document_id"],
+                 "seq": r["seq"], "text": r["chunk_text"], "title": r["title"],
+                 "topic": r["topic"], "distance": float(r["dist"])} for r in rows]
+
+    def kb_clear_chunks(self) -> None:
+        try:
+            with self._engine.begin() as conn:
+                conn.execute(text("DELETE FROM kb_chunks"))
+        except DBAPIError as e:
+            if not self._kb_reset_ready_on_missing(e):
+                raise
+
+    def kb_counts(self) -> dict:
+        self.ensure_kb_tables()
+        counts = {"topics": 0, "documents": 0, "chunks": 0}
+        with self._engine.connect() as conn:
+            counts["topics"] = conn.execute(
+                text("SELECT COUNT(*) FROM kb_topics")).scalar() or 0
+            counts["documents"] = conn.execute(
+                text("SELECT COUNT(*) FROM kb_documents")).scalar() or 0
+            if self._kb_chunks_column_type() is not None:
+                counts["chunks"] = conn.execute(
+                    text("SELECT COUNT(*) FROM kb_chunks")).scalar() or 0
+        return counts

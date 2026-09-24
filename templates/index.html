@@ -107,6 +107,8 @@
               Images</button>
             <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-cluster"
               aria-controls="settings-tab-cluster" aria-selected="false" tabindex="-1" data-tab="cluster">Cluster</button>
+            <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-knowledge"
+              aria-controls="settings-tab-knowledge" aria-selected="false" tabindex="-1" data-tab="knowledge">MCP</button>
             <span class="settings-tab-repo" id="f-repo-info" hidden></span>
             <button type="button" class="settings-tab-update" id="f-update-check"
               title="Check whether the source repo has republished this model" hidden>
@@ -1041,6 +1043,125 @@
             <div class="cluster-section-label" id="cluster-nodes-label" hidden>Cluster nodes</div>
             <div id="cluster-nodes-list"></div>
           </div>
+          <div class="tab-panel" id="settings-tab-knowledge" role="tabpanel"
+            aria-labelledby="settings-tab-btn-knowledge" data-tab-panel="knowledge" hidden>
+            <div id="kb-banner" class="list-empty-state" hidden></div>
+            <div id="kb-body" hidden>
+              <div class="form-group full launch-settings-section" style="margin-top: 12px;">
+                <div class="launch-settings-section-header">
+                  <h3>Knowledge base</h3>
+                  <label class="toggle-switch" for="kb-enabled" aria-label="Enable knowledge base">
+                    <input id="kb-enabled" type="checkbox" />
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                <div class="launch-settings-reveal" id="kb-enabled-reveal">
+                  <div class="launch-settings-reveal-inner">
+                    <p class="hint-text" style="margin-top: 12px;">Store documents grouped by topics; the KB chunks them and embeds via the selected instance. First embedding pins the vector dimensions in <code>kb_meta</code>; a different-dimension model requires <strong>Re-embed everything</strong>. Requires MariaDB 11.8+ (VECTOR).</p>
+                    <div class="form-group cleanup-toggle-grid" style="margin-top: 8px;">
+                      <span class="label-row">
+                        <label for="kb-mcp-enabled">Expose over MCP</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="MCP endpoint help"
+                          data-tip="Serves this knowledge base at POST /mcp/knowledge on this node's client-facing port (42069 by default). In Global access mode it follows Require Authentication (API Keys tab): on = API key required, off = open. In Per API key mode an API key is always required."><i
+                            class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <label class="toggle-switch" for="kb-mcp-enabled" aria-label="Expose over MCP">
+                        <input id="kb-mcp-enabled" type="checkbox" />
+                        <span class="toggle-slider"></span>
+                      </label>
+                    </div>
+                    <div class="form-group" id="kb-endpoint-row" hidden>
+                      <label>MCP endpoint</label>
+                      <code id="kb-endpoint-url" title="Click to copy" style="cursor: pointer;"></code>
+                    </div>
+                    <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+                      <div class="form-group">
+                        <span class="label-row">
+                          <label for="kb-mcp-access">MCP access</label>
+                          <span class="info-tip" tabindex="0" role="button" aria-label="MCP access help"
+                            data-tip="Global: every client works on the shared pool — sees it and (if ingest/delete are allowed) edits it; authentication follows Require Authentication. Per API key: every request needs an API key, even with Require Authentication off. Topics a key creates are private to it; each key also sees the shared pool (topics created in Global mode or here in the UI) read-only. Private topics stay private in both modes — Global never shows them. Switching modes never moves or deletes data."><i
+                              class="fa-solid fa-circle-info"></i></span>
+                        </span>
+                        <select id="kb-mcp-access" class="form-control">
+                          <option value="global">Global (shared knowledge base)</option>
+                          <option value="per_key">Per API key (private topics + shared pool)</option>
+                        </select>
+                      </div>
+                      <div class="form-group">
+                        <span class="label-row">
+                          <label for="kb-embedding-model">Embedding model</label>
+                          <span class="info-tip" tabindex="0" role="button" aria-label="Embedding model help"
+                            data-tip="Cluster-wide selection: any node with a running instance of this model handles embed calls (this node preferred; peers used if it isn't local). Populated from every embedding-marked instance across the cluster, deduplicated by filename. Change requires Re-embed everything if vector dimensions differ."><i
+                              class="fa-solid fa-circle-info"></i></span>
+                        </span>
+                        <select id="kb-embedding-model" class="form-control">
+                          <option value="">&mdash; none (start an instance with an embedding model) &mdash;</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+                      <div class="form-group cleanup-toggle-grid">
+                        <span class="label-row">
+                          <label for="kb-mcp-ingest">Allow ingest over MCP</label>
+                          <span class="info-tip" tabindex="0" role="button" aria-label="Ingest help"
+                            data-tip="Adds the kb_ingest_document tool so MCP clients can add documents (200 KB max per call, idempotent). Off by default: search-only access."><i
+                              class="fa-solid fa-circle-info"></i></span>
+                        </span>
+                        <label class="toggle-switch" for="kb-mcp-ingest" aria-label="Allow ingest over MCP">
+                          <input id="kb-mcp-ingest" type="checkbox" />
+                          <span class="toggle-slider"></span>
+                        </label>
+                      </div>
+                      <div class="form-group cleanup-toggle-grid">
+                        <span class="label-row">
+                          <label for="kb-mcp-delete">Allow delete over MCP</label>
+                          <span class="info-tip" tabindex="0" role="button" aria-label="Delete help"
+                            data-tip="Adds the kb_delete_document and kb_delete_topic tools so MCP clients can remove documents or entire topics (cascades to chunks — irreversible). Off by default."><i
+                              class="fa-solid fa-circle-info"></i></span>
+                        </span>
+                        <label class="toggle-switch" for="kb-mcp-delete" aria-label="Allow delete over MCP">
+                          <input id="kb-mcp-delete" type="checkbox" />
+                          <span class="toggle-slider"></span>
+                        </label>
+                      </div>
+                    </div>
+                    <div id="kb-meta-line" class="hint-text"></div>
+                    <div class="cluster-section-label" style="margin-top: 16px;">Topics</div>
+                    <div class="form-group">
+                      <span class="label-row">
+                        <label for="kb-topics-filter">Filter</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="Filter help"
+                          data-tip="Filters the topic list below by a case-insensitive substring match on the topic name. This is a client-side filter over the topics you already see; it does not search inside document contents."><i
+                            class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="kb-topics-filter" class="form-control" placeholder="Filter topics&hellip;" />
+                    </div>
+                    <div id="kb-topics-list" style="margin-top: 8px;"></div>
+                    <div id="kb-topics-pager" class="hint-text" style="margin-top: 6px; display: flex; gap: 8px; align-items: center;"></div>
+                    <div class="form-group" style="margin-top: 16px;">
+                      <span class="label-row">
+                        <label for="kb-search-query">Search</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="Search help"
+                          data-tip="Semantic search over document chunks: your query is embedded with the same model that indexed the KB, and the top matches (by cosine similarity, clamped to 0-1) come back with a preview. Requires the embedding instance to be running — the query has to be embedded on every search."><i
+                            class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <div style="display: flex; gap: 8px;">
+                        <input id="kb-search-query" class="form-control" placeholder="Ask the knowledge base..." />
+                        <button class="btn btn-secondary" id="kb-btn-search">Search</button>
+                      </div>
+                    </div>
+                    <div id="kb-search-results" style="margin-top: 8px;"></div>
+                    <div style="margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+                      <button class="btn btn-secondary" id="kb-btn-reembed">Re-embed everything</button>
+                      <span id="kb-reembed-status" class="hint-text"></span>
+                      <button class="btn btn-secondary" id="kb-btn-copy-config" style="margin-left: auto; display: none;"
+                        title="Copy an mcpServers config block for this endpoint"><i class="fa-solid fa-copy"></i> Copy config.json</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1216,6 +1337,7 @@
   <script src="{{ url_for('static', filename='js/downloads.js') }}"></script>
   <script src="{{ url_for('static', filename='js/system.js') }}"></script>
   <script src="{{ url_for('static', filename='js/cluster.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/kb.js') }}"></script>
   <script src="{{ url_for('static', filename='js/boot.js') }}"></script>
 </body>
 

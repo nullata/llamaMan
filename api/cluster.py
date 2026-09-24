@@ -94,12 +94,29 @@ def build_local_snapshot() -> dict:
     with downloads_lock:
         dl_list = [public_dict(d) for d in downloads.values()]
 
+    # Knowledge-base capability advertisement (docs/kb-mcp-plan.md §6.5). One
+    # settings read on the 5s heartbeat; consumers (UI + peer nodes) treat
+    # unknown snapshot keys as opaque, so mixed-version clusters are safe.
+    try:
+        from storage import get_storage
+        s = get_storage().get_settings()
+        kb_info = {
+            "enabled": bool(s.get("kb_enabled", False)),
+            "mcp": bool(s.get("kb_mcp_enabled", False)),
+            "access": s.get("kb_mcp_access", "global"),
+            "embedding_instance": s.get("kb_embedding_instance", "") or "",
+            "embedding_model": s.get("kb_embedding_model", "") or "",
+        }
+    except Exception:
+        kb_info = {"enabled": False, "mcp": False}
+
     return {
         "system": system,
         "gpus": gpus,
         "instances": inst_list,
         "downloads": dl_list,
         "models": _local_models_snapshot(),
+        "kb": kb_info,
         "updated_at": now_iso(),
     }
 

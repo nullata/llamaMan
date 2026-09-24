@@ -4,6 +4,18 @@ from abc import ABC, abstractmethod
 from copy import deepcopy
 
 
+class KBNotSupportedError(RuntimeError):
+    """The active backend cannot host the knowledge base (JSON backend, or a
+    MariaDB older than the VECTOR-capable minimum). Raised by the StorageBackend
+    kb_* defaults; core/kb.py re-exports it as its own signal."""
+
+
+class KBUnavailableError(RuntimeError):
+    """KB is supported but cannot serve right now (database offline/degraded,
+    no embedding model locked yet). Defined here so storage and core share one
+    exception type without a storage->core import."""
+
+
 class StorageBackend(ABC):
     """Abstract interface for persistent storage.
 
@@ -166,6 +178,12 @@ class StorageBackend(ABC):
         """Check if a raw bearer token matches any stored key hash."""
         ...
 
+    def get_api_key_id(self, raw_key: str) -> str | None:
+        """id of the stored key matching a raw bearer token, or None. Used
+        where the caller's identity matters (per-key KB ownership). The
+        default can't identify anyone, which callers treat as a denial."""
+        return None
+
     # -- Per-node model file metadata --
     #
     # Facts about the bytes of a model file on ONE node's disk: which repo it
@@ -287,6 +305,80 @@ class StorageBackend(ABC):
         (ISO or None). Token-rate fields are None when no turn carried them.
         """
         ...
+
+    # -- Knowledge base (MCP feature) --
+    #
+    # Cluster-wide, NOT node-scoped: the KB is deliberately shared knowledge,
+    # like the cluster registry (both documented exceptions to the node-scoping
+    # convention). Requires the MariaDB backend on server >= 11.8 (VECTOR type
+    # + VECTOR INDEX). The defaults here raise so the JSON backend needs no
+    # kb_* code at all — it IS the "unsupported" implementation — while
+    # MariaDBBackend overrides every method. kb_available() is the never-raising
+    # probe; callers use it (via core/kb.py) instead of try/except.
+
+    def kb_available(self) -> bool:
+        """True when this backend can host the KB. Never raises."""
+        return False
+
+    def kb_server_version(self) -> tuple[int, int] | None:
+        """(major, minor) of the backing database, or None when not applicable.
+        Never raises."""
+        return None
+
+    # Ownership: topics carry owner_key_id ('' = shared pool). The read
+    # methods take visible_to=<api key id> to limit results to that key's own
+    # topics plus the shared pool; None means unrestricted (admin/global).
+
+    def ensure_kb_tables(self) -> None:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_create_topic(self, name: str, description: str = "",
+                        owner_key_id: str = "") -> dict:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_list_topics(self, visible_to: str | None = None) -> list[dict]:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_update_topic(self, topic_id: int, name: str | None = None,
+                        description: str | None = None) -> dict:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_delete_topic(self, topic_id: int) -> None:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_upsert_document(self, topic_id: int, title: str, content: str,
+                           source: str = "") -> dict:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_get_document(self, document_id: int) -> dict | None:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_list_documents(self, topic_id: int | None = None,
+                          visible_to: str | None = None) -> list[dict]:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_delete_document(self, document_id: int) -> None:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_meta_get(self) -> dict:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_meta_set(self, **kv) -> None:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_insert_chunks(self, document_id: int,
+                         chunks: list[tuple[int, str, list[float]]]) -> int:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_search(self, query_vec: list[float], topic_id: int | None = None,
+                  limit: int = 8, visible_to: str | None = None) -> list[dict]:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_clear_chunks(self) -> None:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
+
+    def kb_counts(self) -> dict:
+        raise KBNotSupportedError("knowledge base requires the MariaDB backend")
 
     # -- Schema migrations --
 

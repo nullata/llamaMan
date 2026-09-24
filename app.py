@@ -25,6 +25,8 @@ import api.images as images
 import api.restore as restore
 import api.request_log as request_log
 import api.cluster as cluster
+import api.kb as kb
+import api.mcp as mcp_endpoint
 
 
 def create_app() -> Flask:
@@ -61,6 +63,8 @@ def create_app() -> Flask:
     application.register_blueprint(restore.bp)
     application.register_blueprint(request_log.bp)
     application.register_blueprint(cluster.bp)
+    application.register_blueprint(kb.bp)
+    application.register_blueprint(mcp_endpoint.bp)
 
     auth.init_auth(application)
 

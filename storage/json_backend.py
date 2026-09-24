@@ -360,11 +360,14 @@ class JsonBackend(StorageBackend):
         self._write_api_keys(keys)
 
     def verify_api_key(self, raw_key: str) -> bool:
+        return self.get_api_key_id(raw_key) is not None
+
+    def get_api_key_id(self, raw_key: str) -> str | None:
         hashed = self._hash_key(raw_key)
         for k in self._read_api_keys():
             if k.get("key_hash") == hashed:
-                return True
-        return False
+                return k.get("id")
+        return None
 
     # -- Cluster registry --
     #

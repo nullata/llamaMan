@@ -177,7 +177,10 @@ class SnapshotAndOnlineTests(unittest.TestCase):
                 instances.update(saved_i)
             with downloads_lock:
                 downloads.update(saved_d)
-        self.assertEqual(set(snap), {"system", "gpus", "instances", "downloads", "models", "updated_at"})
+        # "kb" added in 2.1 (docs/kb-mcp-plan.md §6.5): a capability
+        # advertisement every consumer treats as opaque (mixed-version safe).
+        self.assertEqual(set(snap), {"system", "gpus", "instances", "downloads",
+                                     "models", "kb", "updated_at"})
         self.assertEqual(snap["instances"], [])
         self.assertIsInstance(snap["gpus"], list)
         self.assertIsInstance(snap["models"], list)

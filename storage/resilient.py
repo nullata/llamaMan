@@ -45,7 +45,9 @@ import time
 from copy import deepcopy
 
 from core.timeutil import now_iso
-from storage.base import StorageBackend
+from storage.base import (
+    KBNotSupportedError, KBUnavailableError, StorageBackend,
+)
 from storage.json_backend import JsonBackend
 
 logger = logging.getLogger("llamaman")
@@ -804,6 +806,9 @@ class ResilientBackend(StorageBackend):
     def verify_api_key(self, raw_key: str) -> bool:
         return self._read("verify_api_key", raw_key)
 
+    def get_api_key_id(self, raw_key: str) -> str | None:
+        return self._read("get_api_key_id", raw_key)
+
     # -- Model files -------------------------------------------------------
 
     def get_model_files(self, node_id: str):
@@ -891,6 +896,96 @@ class ResilientBackend(StorageBackend):
                 "error_count": 0, "streamed_count": 0,
                 "first_seen_at": None, "last_seen_at": None,
             }
+
+    # -- Knowledge base ----------------------------------------------------
+    #
+    # Pass-through to the primary, NEVER mirrored or journalled: stale mirror
+    # knowledge served during an outage is worse than an honest error, and the
+    # dims-baked kb_chunks table must never fork between primary and mirror
+    # (docs/kb-mcp-plan.md §4). Connection failures surface as KBUnavailableError
+    # so the MCP layer can turn them into isError results rather than 500s.
+
+    def _kb_call(self, name: str, *args, **kwargs):
+        """KB calls go through the breaker (so they participate in failure
+        detection and fail fast while degraded instead of paying a connect
+        timeout per call) but NEVER mirror/journal: no fallback, only typed
+        errors. Re-raises everything as KBUnavailableError except the typed
+        KB errors, which pass through unchanged."""
+        try:
+            return self._primary_call(name, *args, **kwargs)
+        except KBNotSupportedError:
+            raise
+        except KBUnavailableError:
+            raise
+        except LookupError:
+            raise
+        except (_PrimaryDown, StorageDegradedError) as e:
+            raise KBUnavailableError(f"kb: {name} - database offline") from e
+        except Exception as e:
+            raise KBUnavailableError(f"kb: {name} - {e}") from e
+
+    def kb_available(self) -> bool:
+        # Never raises (mirrors the ABC contract).
+        try:
+            return self._kb_call("kb_available")
+        except KBUnavailableError:
+            return False
+
+    def kb_server_version(self):
+        try:
+            return self._kb_call("kb_server_version")
+        except KBUnavailableError:
+            return None
+
+    def ensure_kb_tables(self) -> None:
+        self._kb_call("ensure_kb_tables")
+
+    def kb_create_topic(self, name, description="", owner_key_id=""):
+        return self._kb_call("kb_create_topic", name, description,
+                             owner_key_id=owner_key_id)
+
+    def kb_list_topics(self, visible_to=None):
+        return self._kb_call("kb_list_topics", visible_to=visible_to)
+
+    def kb_update_topic(self, topic_id, name=None, description=None):
+        return self._kb_call("kb_update_topic", topic_id, name=name,
+                             description=description)
+
+    def kb_delete_topic(self, topic_id):
+        self._kb_call("kb_delete_topic", topic_id)
+
+    def kb_upsert_document(self, topic_id, title, content, source=""):
+        return self._kb_call("kb_upsert_document", topic_id, title, content,
+                             source)
+
+    def kb_get_document(self, document_id):
+        return self._kb_call("kb_get_document", document_id)
+
+    def kb_list_documents(self, topic_id=None, visible_to=None):
+        return self._kb_call("kb_list_documents", topic_id,
+                             visible_to=visible_to)
+
+    def kb_delete_document(self, document_id):
+        self._kb_call("kb_delete_document", document_id)
+
+    def kb_meta_get(self):
+        return self._kb_call("kb_meta_get")
+
+    def kb_meta_set(self, **kv):
+        self._kb_call("kb_meta_set", **kv)
+
+    def kb_insert_chunks(self, document_id, chunks):
+        return self._kb_call("kb_insert_chunks", document_id, chunks)
+
+    def kb_search(self, query_vec, topic_id=None, limit=8, visible_to=None):
+        return self._kb_call("kb_search", query_vec, topic_id=topic_id,
+                             limit=limit, visible_to=visible_to)
+
+    def kb_clear_chunks(self) -> None:
+        self._kb_call("kb_clear_chunks")
+
+    def kb_counts(self) -> dict:
+        return self._kb_call("kb_counts")
 
     # -- Migrations --------------------------------------------------------
 
