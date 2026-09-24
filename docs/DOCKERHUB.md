@@ -25,6 +25,7 @@ Full docs and source: **[github.com/nullata/llamaman](https://github.com/nullata
 - **Auth** - user accounts, API keys (bearer tokens), toggle for whether model endpoints require auth
 - **Persistent state, JSON or MariaDB** - MariaDB unlocks multi-node clustering (shared dashboard, cross-node launch/download, shared-queue load balancing) and an optional local write-through mirror that keeps the node serving through a DB outage
 - **Request recording + logging dashboard** - opt-in per-request or per-conversation recording with retention, plus a dedicated logging page
+- 🆕 **Knowledge base + MCP server** - opt-in (MariaDB 11.8+): store documents as topics, search them by meaning with your own embedding model, and serve them to MCP clients at `:42069/mcp/knowledge`, with an optional private knowledge base per API key. See the [Knowledge Base & MCP docs on GitHub](https://github.com/nullata/llamaman#knowledge-base--mcp)
 
 ## Tags
 
