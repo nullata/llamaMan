@@ -11,3 +11,5 @@ build/
 models/
 test-data/
 .vessel_*
+.vessel
+

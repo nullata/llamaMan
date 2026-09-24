@@ -19,3 +19,4 @@ docs/
 docker-image-build.sh
 scripts/
 .vessel_*
+.vessel/
