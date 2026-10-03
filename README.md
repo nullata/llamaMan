@@ -15,7 +15,7 @@
 - [Features](#features) · [Architecture](#architecture) · [Request Flow](#request-flow) · [Design Decisions](#design-decisions--trade-offs)
 - [Quick Start](#quick-start) · [Authentication](#authentication) · [Models](#models) · [Launching Instances](#launching-instances) · [Launch settings reference](#launch-settings-reference)
 - [Image & PDF Input](#image--pdf-input) · [Anti-Loop](#anti-loop) · [Per-Instance Proxy](#per-instance-proxy) · [Idle Timeout](#idle-timeout) · [GPU Stats](#gpu-stats)
-- [Request Recording & Stats](#request-recording--stats) · [Model Eviction](#model-eviction) · [OpenWebUI](#openwebui-integration)
+- [Request Recording & Stats](#request-recording--stats) · [Model Eviction](#model-eviction) · [Strata Engine](#strata-engine) · [OpenWebUI](#openwebui-integration)
 - [Storage & DB Outage Mirror](#storage-backends) · [Clustering](#clustering) · 🆕 [Knowledge Base & MCP](#knowledge-base--mcp)
 - [Environment Variables](#environment-variables) · [REST API](#rest-api) · [Troubleshooting](#troubleshooting)
 
@@ -38,6 +38,7 @@
 - **Request recording + logging dashboard** - opt-in per-request or per-conversation, with retention
 - **Per-model display names** - friendly name API clients (OpenWebUI) see and accept instead of the raw quant filename
 - **Docker image management** - pull any llama.cpp image by name; delete old local images from the UI
+- **Strata engine** *(opt-in, NVIDIA)* - launch [Strata](https://github.com/Niko1221/Strata) instances (Qwen3.8-Flash-Next MoE on consumer GPUs) next to llama.cpp, with first-run download progress and optional pre-download through llamaMan
 - 🆕 **Knowledge base + MCP server** *(opt-in, MariaDB backend)* - store documents as topics, search them by meaning with your own embedding model, and expose the whole thing to any MCP client (Claude Desktop, agents) over `POST /mcp/knowledge` — all local, nothing leaves your database
 
 ## Architecture
@@ -431,6 +432,41 @@ Other details:
 - **Embedding models are excluded** and never evicted.
 - `LLAMAMAN_MAX_MODELS=0` disables eviction entirely.
 
+## Strata Engine
+
+*(opt-in, NVIDIA only)* [Strata](https://github.com/Niko1221/Strata) runs the Qwen3.8-Flash-Next mixture-of-experts family (and its Coder, Swift 1.5 and Unsloth variants) on consumer NVIDIA GPUs plus system RAM. llamaMan can launch, monitor, proxy, sleep/wake and stop Strata instances next to llama.cpp ones. llama.cpp behaviour does not change: the engine layer (`core/engines/`) keeps the llama.cpp launch byte-for-byte identical (snapshot-tested).
+
+**1. Build the image** (not published to a registry; the host needs NVIDIA driver **580+**, i.e. CUDA 13, and the NVIDIA Container Toolkit):
+
+```bash
+git clone https://github.com/Niko1221/Strata && cd Strata
+docker build -t strata .                                        # all supported GPU generations
+docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (faster build)
+```
+
+**2. Enable it** on the llamaMan node: `STRATA_ENABLED=true` (see [Strata variables](#strata)). Settings → Docker Images then lists the image under *Built locally* (present / not built, with the build command; it is never pulled or auto-updated).
+
+**3. Launch.** The model library gains one virtual entry per family × size: `strata/qwen-Q2_0`, `strata/qwen-IQ2_XS`, `strata/qwen-IQ3_XXS`, `strata/qwen-IQ3_S`, `strata/swift-IQ2_XS`, `strata/swift-IQ3_XXS`, `strata/coder-IQ1_M`, `strata/unsloth-UD-Q4_K_XL` *(experimental)*. Each is its own instance and container, so switching models works like llama.cpp: launch or wake another instance, with the usual [eviction](#model-eviction) rules (a Strata instance is one chat model). The entries also appear in `/api/tags` and `/v1/models`, and requests may use the id (`strata/qwen-IQ2_XS`, any case, `:tag` ignored) or Strata's own served name (`qwen3.8-flash-next-iq2_xs`).
+
+The launch form hides the llama.cpp-only fields (GPU layers, MoE, threads, parallel, KV types, flash attention, spec decoding, mmproj, DRY, extra args) and shows **Image Input** (no / GPU / CPU), **KV Cache** (Strata default int8, `int8`, `q4_0`, `k8v4`) and **Low-RAM Mode** (auto / on / off). The API rejects llama.cpp-only fields set for a Strata model.
+
+**First start.** Strata downloads ~58-111 GB, prepares its "pack" and fetches its MTP layer before the server opens its port; later starts go straight to loading (1-3 minutes). The instance card shows *setting up → downloading (with %) → preparing pack → loading* parsed from the container log, and the Logs button streams the log. Two ways to download:
+
+- **Let Strata download** into its `/data` volume (default).
+- **Pre-download with llamaMan** (button in the Strata section, or `POST /api/engines/strata/download`): an ordinary entry in the Downloads tab (progress, pause/resume, retry, HF tokens, speed limits) that fetches the shards from the Hugging Face revision Strata pins into `MODELS_DIR/strata/<tag>/`. Once complete they are bind-mounted into the container and Strata's setup uses them instead of downloading. A launch is refused while that download is still running. The MTP layer (~5 GB) and the pack are still prepared by Strata on the first start.
+
+**Limits and behaviour**
+
+- **One request at a time.** Max Concurrent is forced to 1; further requests queue in llamaMan's gate (Max Queue Depth, then 429).
+- **RAM.** Strata loads 32-62 GB into RAM (`--ulimit memlock=-1` is always set). A **System Memory Limit** forces Low-RAM mode on, because Strata's setup reads the host's RAM and cannot see a container limit; the UI warns below ~64 GB.
+- **Settings are baked into Strata's setup.** Context / image input / KV / Low-RAM / GPU pinning are recorded per model on the data volume. llamaMan remembers the settings each model last came up healthy with and passes `REINSTALL=1` only when they change (the files are reused).
+- **Idle timeout** works (sleep stops the container; the next request wakes it), but a cold start takes minutes and the waking request waits for it (`STRATA_LOAD_TIMEOUT`).
+- **One instance per Strata model per node** (instances of one model share its setup on the volume).
+- **NVIDIA only.** The option is unavailable, with the reason, on ROCm / Intel / Vulkan / CPU nodes and when `STRATA_ENABLED` is off. In a cluster each node advertises its engines, so only capable nodes offer Strata models.
+- Bare-metal llamaMan reaches Strata the same way as llama-server (published port on `LLAMA_HOST_ADDR`).
+
+Details, design notes and a manual verification checklist: [docs/STRATA.md](docs/STRATA.md).
+
 ## OpenWebUI Integration
 
 Point OpenWebUI at the Ollama proxy (with an API key when `require_auth` is on):
@@ -458,7 +494,7 @@ Under **Settings → Download Settings**:
 
 ## Docker Image Management
 
-**Settings → Docker Images**: pull any llama.cpp image by name, delete old local images (disabled for the active `LLAMA_IMAGE`, and returns an error if Docker refuses because a container is using it), and optionally auto-update the active image on a schedule.
+**Settings → Docker Images**: pull any llama.cpp image by name, delete old local images (disabled for the active `LLAMA_IMAGE`, and returns an error if Docker refuses because a container is using it), and optionally auto-update the active image on a schedule. With `STRATA_ENABLED`, a *Built locally* list shows the Strata image (present or not, plus its `docker build` command); it is never pulled or auto-updated.
 
 ## Model Backup and Restore
 
@@ -652,6 +688,18 @@ The first embed records the vector dimension. A model with a different dimension
 | `GPU_TYPE` | *(auto)* | Override GPU vendor detection: `cuda`, `rocm`, `intel`, or `vulkan` (`vulkan` is opt-in only; picks `/dev/dri` + host render/video GIDs and the `server-vulkan` image) |
 | `LLAMA_GPU_DEVICES` | *(all)* | Comma-separated GPU indices visible to all spawned containers (e.g. `0,1,3`). Per-instance **GPU Devices** overrides. Not supported on Intel Arc |
 
+### Strata
+
+Optional; see [Strata Engine](#strata-engine).
+
+| Variable | Default | Description |
+|---|---|---|
+| `STRATA_ENABLED` | `false` | Offer Strata models on this node. Also needs an NVIDIA GPU (`GPU_TYPE=cuda` or detected) |
+| `STRATA_IMAGE` | `strata:latest` | Locally built Strata image (`docker build -t strata .` in the Strata repo) |
+| `STRATA_DATA_VOLUME` | `llamaman-strata-data` | Named Docker volume mounted at `/data` in every Strata container (model files, packs, MTP layer, per-model setup; 70-120 GB per model). Created by Docker on first use |
+| `HOST_STRATA_DATA_DIR` | *(unset)* | Host path to mount at `/data` instead of the named volume. Wins over `STRATA_DATA_VOLUME` |
+| `STRATA_LOAD_TIMEOUT` | `3600` | Seconds a request (or relaunch) waits for a Strata instance to become ready. High because a first start downloads and prepares the model before the port opens |
+
 ### Clustering
 
 Optional. `LLAMAMAN_NODE_NAME` (under Core) doubles as the cluster identity and is required for all installs.
@@ -716,8 +764,12 @@ Boundary quirks worth pinning:
 | `GET` | `/api/model-layers?path=<path>` | Read layer count from GGUF metadata |
 | `GET` | `/api/disk-space` | Free/used space on the models volume |
 | `GET` / `PUT` / `DELETE` | `/api/presets/<model_path>` | Get / save / delete a preset (`GET /api/presets` lists all) |
+| `GET` | `/api/engines` | This node's inference engines: availability (with reason), capabilities, launch fields, Strata's model catalogue |
+| `POST` | `/api/engines/strata/download` | Pre-download a Strata model's shards (`{"model": "strata/qwen-IQ2_XS"}`, optional `hf_token_id` / `speed_limit_mbps`) |
 
 Download body: `{"repo_id": "...", "filename": "...", "hf_token": "...", "speed_limit_mbps": 0}`. Blank `filename` pulls the full repo.
+
+Instances and presets take an optional `engine` (`llamacpp` default, or `strata`; inferred from a `/strata/...` model path) plus, for Strata, `strata_vision` (`no`/`yes`/`cpu`), `strata_kv` (`""`/`int8`/`q4_0`/`k8v4`) and `strata_low_ram` (`auto`/`on`/`off`). Strata model paths are virtual: `/strata/<family>-<SIZE>`, e.g. `PUT /api/presets/strata/qwen-IQ2_XS`.
 
 ### Settings, System, Request log
 
@@ -750,6 +802,9 @@ OpenAI: `/v1/models`, `/v1/chat/completions` (chat auto-starts).
 | GPU stats unavailable | NVIDIA: uncomment the `deploy.resources.reservations` block. AMD/Intel: ensure `/sys/class/drm:ro` is mounted |
 | Wrong GPU vendor detected | Set `GPU_TYPE=cuda`/`rocm`/`intel` to override |
 | Instance stuck on **starting** running bare-metal | The container is healthy but llamaman can't reach it. Set `LLAMAMAN_IN_DOCKER=false`/`true` explicitly if auto-detection is wrong for your runtime |
+| Strata: _"Docker image 'strata:latest' not found"_ | Build it: `docker build -t strata .` in a clone of the Strata repo (or set `STRATA_IMAGE` to your tag) |
+| Strata models not listed | Set `STRATA_ENABLED=true`; the node must be NVIDIA (`GPU_TYPE=cuda` if detection fails). `GET /api/engines` shows the reason |
+| Strata instance stuck on **starting** | Normal for minutes on a first start (download + pack). The card shows the stage; the log shows Strata's setup. "setup failed" means its setup stopped - read the log's `[X]` line |
 | Stats modal is empty | Enable **Settings → App Settings → Request recording** |
 | Launch fails with GPU/CDI error on a host without GPU passthrough | Set **GPU Layers** to `0` for CPU-only with no GPU device attached, or fix the GPU runtime |
 | Port conflict | The form auto-suggests an unused port; adjust if needed |

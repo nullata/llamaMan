@@ -76,6 +76,17 @@ services:
       # Uncomment to use MariaDB/MySQL instead of JSON file storage
       # - DATABASE_URL=mysql+pymysql://llama:password@mariadb:3306/llamaman
       #
+      # Strata engine (optional, NVIDIA only) - see README "Strata Engine".
+      # Build the image first in a clone of github.com/Niko1221/Strata:
+      #   docker build -t strata .
+      # - STRATA_ENABLED=true
+      # - STRATA_IMAGE=strata:latest
+      # Named volume (default) or a host path mounted at /data in Strata
+      # containers; 70-120 GB per model.
+      # - STRATA_DATA_VOLUME=llamaman-strata-data
+      # - HOST_STRATA_DATA_DIR=/srv/strata-data
+      # - STRATA_LOAD_TIMEOUT=3600
+      #
       # Clustering (optional) - run several llamaman deployments as one cluster.
       # Off by default; single-node installs ignore all of these. The node's
       # identity comes from LLAMAMAN_NODE_NAME above (required for all installs).
