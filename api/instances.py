@@ -12,15 +12,12 @@ from flask import Blueprint, Response, jsonify, request
 
 from config import (
     HEALTH_CHECK_TIMEOUT,
-    HOST_LOGS_DIR,
-    HOST_MODELS_DIR,
     INTERNAL_PORT_RANGE_END,
     INTERNAL_PORT_RANGE_START,
     LLAMA_CONTAINER_PORT,
     LLAMA_CONTAINER_PREFIX,
     LLAMA_GPU_DEVICES,
     LLAMA_IMAGE,
-    LLAMA_NETWORK,
     LLAMAMAN_MAX_MODELS,
     LOGS_DIR,
     MODELS_DIR,
@@ -39,6 +36,7 @@ from core.helpers import (
     stream_log_file,
 )
 from core.dry_sampling import DRY_SAMPLER_KEYS, parse_dry_config
+from core.engines import get_engine
 from core.loop_detect import LOOP_DETECT_KEYS, parse_loop_detect_config
 from core.perf import phase
 from core.proxy_sampling import parse_proxy_sampling_config
@@ -350,72 +348,13 @@ def _resolve_group_add() -> list:
     return ["video", "render"]
 
 
-def _run_container(
-    inst_id: str,
-    container_name: str,
-    model_path: str,
-    server_port: int,
-    config: dict,
-    log_file: str,
-) -> tuple:
-    """Start a llama-server Docker container. Returns (container, error_str)."""
-    import docker
-
-    cmd = build_llama_cmd(model_path, LLAMA_CONTAINER_PORT, config)
-    gpu_devices = config.get("gpu_devices") or None
-    image_name = config.get("image") or LLAMA_IMAGE
-
-    ensure_docker_network()
-
-    # Bind mounts for the sibling container.
-    # SOURCE must be a path on the Docker HOST (the daemon's filesystem).
-    # When llamaman itself runs in Docker, HOST_MODELS_DIR / HOST_LOGS_DIR are
-    # the real host paths; they default to MODELS_DIR / LOGS_DIR for bare-metal.
-    volumes = {
-        HOST_MODELS_DIR: {"bind": MODELS_DIR, "mode": "ro"},
-        HOST_LOGS_DIR: {"bind": LOGS_DIR, "mode": "rw"},
-    }
-
-    # Publish container port → host port so the Werkzeug proxy and direct
-    # clients can reach it via localhost/host network.
-    port_bindings = {LLAMA_CONTAINER_PORT: server_port}
-
-    kwargs = dict(
-        image=image_name,
-        command=cmd,
-        name=container_name,
-        network=LLAMA_NETWORK,
-        volumes=volumes,
-        ports=port_bindings,
-        detach=True,
-        labels={
-            "llamaman.instance_id": inst_id,
-            "llamaman.model_path": model_path,
-            "llamaman.port": str(server_port),
-            "llamaman.config": json.dumps(config),
-        },
-    )
-
-    threads = config.get("threads")
-    if threads:
-        kwargs["nano_cpus"] = int(float(threads) * 1e9)
-
-    memory_limit = config.get("memory_limit")
-    if memory_limit:
-        kwargs["mem_limit"] = memory_limit
-
-    try:
-        n_gpu_layers = int(config.get("n_gpu_layers", -1))
-    except (TypeError, ValueError):
-        n_gpu_layers = -1
-
-    vendor = get_vendor()
-    if n_gpu_layers == 0:
-        # CPU-only: attach no GPU devices at all. Besides honoring the user's
-        # intent, this avoids Docker's CDI GPU discovery, which errors on hosts
-        # without a configured GPU runtime (e.g. WSL without the NVIDIA
-        # container toolkit).
-        pass
+def _apply_gpu_attachment(kwargs: dict, attach: str, gpu_devices: str | None,
+                          vendor: str | None) -> None:
+    """Add the GPU device kwargs an engine asked for (Engine.gpu_attachment)."""
+    if attach == "none":
+        return
+    if attach == "nvidia":
+        kwargs["device_requests"] = _make_device_requests(gpu_devices)
     elif vendor == "rocm":
         kwargs["devices"] = _make_rocm_devices()
         kwargs["group_add"] = _resolve_group_add()
@@ -438,13 +377,47 @@ def _run_container(
         # NVIDIA (cuda) or unknown/CPU - use Docker device_requests
         kwargs["device_requests"] = _make_device_requests(gpu_devices)
 
+
+def _run_container(
+    inst_id: str,
+    container_name: str,
+    model_path: str,
+    server_port: int,
+    config: dict,
+    log_file: str,
+) -> tuple:
+    """Start an inference server container. Returns (container, error_str).
+
+    The engine (core/engines, picked by config["engine"]) supplies the image,
+    command, env, mounts, ports, limits and labels; this function adds the
+    GPU devices it asks for and talks to Docker.
+    """
+    import docker
+
+    engine = get_engine(config, model_path)
+    gpu_devices = config.get("gpu_devices") or None
+
+    ensure_docker_network()
+
+    kwargs = engine.container_spec(
+        inst_id=inst_id,
+        container_name=container_name,
+        model_path=model_path,
+        server_port=server_port,
+        config=config,
+    )
+    image_name = kwargs["image"]
+
+    vendor = get_vendor()
+    _apply_gpu_attachment(kwargs, engine.gpu_attachment(config, vendor), gpu_devices, vendor)
+
     try:
         client = get_docker_client()
         container = client.containers.run(**kwargs)
         _start_log_relay(container, log_file)
         return container, None
     except docker.errors.ImageNotFound:
-        return None, f"Docker image '{image_name}' not found. Pull it in the Docker Images tab, or run: docker pull {image_name}"
+        return None, engine.image_missing_message(image_name)
     except docker.errors.APIError as e:
         return None, f"Docker API error: {e}"
     except Exception as e:
