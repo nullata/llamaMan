@@ -1,0 +1,67 @@
+name: Release Docker Image
+
+# Builds and pushes nullata/llamaman to Docker Hub when VERSION changes on main.
+# Equivalent to docker-image-build.sh (tags :latest and :<VERSION>) plus the push.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'VERSION'
+  workflow_dispatch: # Allow manual trigger / re-run
+
+# Two quick VERSION bumps must not race on the :latest tag.
+concurrency:
+  group: release-docker
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    # Only main may publish — workflow_dispatch can be started from any branch.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # least privilege: only need to read the repo
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read and validate version
+        id: version
+        run: |
+          set -euo pipefail
+          if [[ ! -f VERSION ]]; then
+            echo "❌ Version file not found!"
+            exit 1
+          fi
+          version=$(tr -d '[:space:]' < VERSION)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]; then
+            echo "❌ VERSION is not a valid version string: '$version'"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building nullata/llamaman:$version"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: nullata
+          password: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            nullata/llamaman:latest
+            nullata/llamaman:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

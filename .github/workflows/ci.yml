@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12' # matches the python:3.12-slim base in Dockerfile
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Closest analogue to `go vet`: catches syntax errors in modules the
+      # test suite never imports.
+      - name: Compile
+        run: python -m compileall -q app.py config.py gunicorn.conf.py api core proxy storage scripts tests
+
+      # Each test file sets its own required env vars (LLAMAMAN_NODE_NAME etc.)
+      # via os.environ.setdefault, so no env setup is needed here.
+      - name: Test
+        run: python -m unittest discover tests
