@@ -77,6 +77,17 @@ def discover_models(models_dir: str) -> list[dict]:
     return unique
 
 
+def list_models(models_dir: str) -> list[dict]:
+    """The model library: files on disk (discover_models) followed by the
+    virtual models of every engine this node can launch (e.g. Strata's
+    family x size catalogue). Files come first so filename lookups keep
+    their precedence. Update scans and the cluster snapshot stay on
+    discover_models - virtual models have no file to check or download."""
+    from core.engines import available_virtual_models
+    from core.gpu import get_vendor
+    return discover_models(models_dir) + available_virtual_models(get_vendor())
+
+
 def attach_model_sources(models: list[dict], sources: dict[str, str]) -> list[dict]:
     enriched = []
     for model in models:
@@ -258,7 +269,7 @@ def estimate_model_vram(size_bytes: int, n_gpu_layers: int, block_count: int | N
 
 @bp.route("/api/models")
 def api_models():
-    models = discover_models(MODELS_DIR)
+    models = list_models(MODELS_DIR)
     models = attach_model_sources(models, get_model_sources(get_storage().get_settings()))
     return jsonify(models)
 

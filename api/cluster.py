@@ -110,6 +110,16 @@ def build_local_snapshot() -> dict:
     except Exception:
         kb_info = {"enabled": False, "mcp": False}
 
+    # Engine availability, so a peer's UI only offers e.g. Strata on nodes
+    # with an NVIDIA GPU and STRATA_ENABLED. Published under "system" (it is
+    # a node capability, like the GPU list) rather than as a new top-level
+    # key; consumers treat unknown keys as opaque, so older peers ignore it.
+    try:
+        from api.engines import engines_snapshot
+        system = {**system, "engines": engines_snapshot()}
+    except Exception:
+        pass
+
     return {
         "system": system,
         "gpus": gpus,

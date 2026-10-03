@@ -212,6 +212,16 @@ class Engine:
         from pathlib import Path
         return Path(model_path).name
 
+    def virtual_models(self) -> list[dict]:
+        """Model-library entries (api/models.discover_models shape plus
+        engine-specific keys) for an engine whose models aren't files."""
+        return []
+
+    def model_metadata(self, model_path: str) -> dict:
+        """GGUF-header-shaped metadata for a virtual model, so the Ollama
+        /api/show, /api/tags and /api/ps builders need no special case."""
+        return {}
+
     def served_model_names(self, model_path: str) -> list[str]:
         """Lowercase names a request's `model` field may carry for this
         instance, beyond the llamaman-wide filename rules."""

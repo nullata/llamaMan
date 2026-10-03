@@ -82,9 +82,18 @@ def _stamp_serving_node(resp):
 # ---------------------------------------------------------------------------
 
 
+def _library() -> list[dict]:
+    """Files on disk, then the virtual models of engines this node can
+    launch (see api.models.list_models). Goes through this module's
+    discover_models so tests patching it keep controlling the file part."""
+    from core.engines import available_virtual_models
+    from core.gpu import get_vendor
+    return discover_models(MODELS_DIR) + available_virtual_models(get_vendor())
+
+
 def _find_model_by_name(name: str) -> dict | None:
     name_lower = name.split(":")[0].lower()
-    models = discover_models(MODELS_DIR)
+    models = _library()
     # Exact pretty-name match wins over every filename rule below. It's checked
     # first (and only exactly) so a cosmetic label can never be beaten by the
     # substring fallback, and so it resolves to precisely the file it was set on.
@@ -96,6 +105,12 @@ def _find_model_by_name(name: str) -> dict | None:
                 return m
     for m in models:
         if model_name_from_path(m["path"]) == name_lower:
+            return m
+    # A virtual model also answers to the names its engine serves it under
+    # (e.g. Strata's own "qwen3.8-flash-next-iq2_xs" from its /v1/models).
+    from core.engines import get_engine
+    for m in models:
+        if m.get("engine") and name_lower in get_engine(m["engine"]).served_model_names(m["path"]):
             return m
     for m in models:
         if name_lower in model_name_from_path(m["path"]):
@@ -591,6 +606,11 @@ def _ensure_model_running(
 
 
 def _gguf_meta_for(model_path: str, model_type: str | None) -> dict:
+    from core.engines import ENGINES, engine_for_path
+    owner = engine_for_path(model_path)
+    if owner:
+        # A virtual model has no file header; its engine describes it.
+        return ENGINES[owner].model_metadata(model_path)
     if model_type and model_type != "gguf":
         return {}
     return get_cached_gguf_metadata(model_path)
@@ -785,7 +805,7 @@ def _llamaman_ps_entry(model_path: str, model_meta: dict | None = None,
 def _list_loaded_models() -> list[dict]:
     model_index = {
         os.path.realpath(m["path"]): m
-        for m in discover_models(MODELS_DIR)
+        for m in _library()
     }
     live_by_path: dict[str, dict] = {}
 
@@ -1342,7 +1362,7 @@ def _handle_request(mode: str = "chat"):
 
 @bp.route("/api/tags", methods=["GET"])
 def llamaman_tags():
-    models = discover_models(MODELS_DIR)
+    models = _library()
     entries = [_llamaman_model_entry(m) for m in models]
     taken = {e["name"].lower() for e in entries}
     entries.extend(_cluster_group_entries(taken, _llamaman_group_entry))
@@ -1541,7 +1561,7 @@ def _openai_group_entry(group: dict) -> dict:
 
 @bp.route("/v1/models", methods=["GET"])
 def llamaman_v1_models():
-    models = discover_models(MODELS_DIR)
+    models = _library()
     data = [_openai_model_entry(m) for m in models]
     taken = {e["id"].lower() for e in data}
     data.extend(_cluster_group_entries(taken, _openai_group_entry))

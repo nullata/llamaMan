@@ -316,6 +316,43 @@ class StrataEngine(Engine):
         parsed = parse_model_path(model_path)
         return model_id_for(*parsed) if parsed else super().display_name(model_path)
 
+    def virtual_models(self) -> list[dict]:
+        out = []
+        for m in catalogue():
+            size_bytes = int(m["download_gb"] * 1e9)
+            out.append({
+                "name": m["id"],
+                "path": m["path"],
+                "type": "strata",
+                "engine": self.name,
+                "quant": m["size"],
+                "size_bytes": size_bytes,
+                "size_display": f"~{m['download_gb']:.0f} GB",
+                "title": m["title"],
+                "family": m["family"],
+                "served_name": m["served_name"],
+                "ram_gb": m["ram_gb"],
+                "vision": m["vision"],
+                "experimental": m["experimental"],
+                "local_shards": local_shard_dir(m["family"], m["size"]) is not None,
+            })
+        return out
+
+    def model_metadata(self, model_path: str) -> dict:
+        parsed = parse_model_path(model_path)
+        if not parsed:
+            return {}
+        family, size = parsed
+        arch = FAMILIES[family]["served"]
+        # context_length: what a launch without a preset gets
+        # (docker-entrypoint.sh CONTEXT default); _effective_ctx_for_model
+        # prefers a running instance's or the preset's ctx over this.
+        return {
+            "general.architecture": arch,
+            "general.name": f"{FAMILIES[family]['title']} {size}",
+            f"{arch}.context_length": DEFAULT_CONTEXT,
+        }
+
     def served_model_names(self, model_path: str) -> list[str]:
         parsed = parse_model_path(model_path)
         if not parsed:

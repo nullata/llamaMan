@@ -12,7 +12,15 @@ from pathlib import Path
 
 
 def model_name_from_path(path: str) -> str:
-    """Derive a lowercase model name from a file path (stem only)."""
+    """Derive a lowercase model name from a file path (stem only).
+
+    An engine's virtual model (e.g. /strata/qwen-IQ2_XS) is named by its
+    model id instead ("strata/qwen-iq2_xs"): its "stem" alone would read like
+    a GGUF filename and could shadow or be shadowed by one."""
+    from core.engines import ENGINES, engine_for_path
+    owner = engine_for_path(path)
+    if owner:
+        return ENGINES[owner].display_name(path).lower()
     return Path(path).stem.lower()
 
 

@@ -391,7 +391,12 @@ def _model_matches(inst_model_path: str, requested_model: str) -> bool:
     # name, so translate it to the file stem before the filename rules below.
     from core.model_alias import canonical_name
     req_model = canonical_name(requested_model).split(":")[0].lower()
-    return req_model == inst_model or req_model in inst_model
+    if req_model == inst_model or req_model in inst_model:
+        return True
+    # A virtual model (e.g. Strata) also answers to the name its engine
+    # reports in its own /v1/models. Empty for GGUF files.
+    from core.engines import get_engine
+    return req_model in get_engine(None, inst_model_path).served_model_names(inst_model_path)
 
 
 def _find_sleeping_instance_for_port(model_name: str, proxy_port: int) -> str | None:

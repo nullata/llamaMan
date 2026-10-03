@@ -85,12 +85,12 @@ def validate_pretty_name(pretty: str, model_path: str) -> tuple[str, str]:
     if not key:
         return "", "name is empty after normalization"
 
-    from api.models import discover_models
+    from api.models import list_models
     from config import MODELS_DIR
     from core.helpers import model_name_from_path
 
     normalized_target = _normalize_model_path(model_path)
-    for m in discover_models(MODELS_DIR):
+    for m in list_models(MODELS_DIR):
         if _normalize_model_path(m["path"]) == normalized_target:
             continue
         if model_name_from_path(m["path"]) == key:

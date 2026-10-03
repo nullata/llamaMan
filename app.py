@@ -14,6 +14,7 @@ from storage import get_storage
 
 import api.auth as auth
 import api.models as models
+import api.engines as engines
 import api.presets as presets
 import api.instances as instances
 import api.downloads as downloads
@@ -52,6 +53,7 @@ def create_app() -> Flask:
 
     application.register_blueprint(auth.bp)
     application.register_blueprint(models.bp)
+    application.register_blueprint(engines.bp)
     application.register_blueprint(presets.bp)
     application.register_blueprint(instances.bp)
     application.register_blueprint(downloads.bp)

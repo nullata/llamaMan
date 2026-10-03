@@ -50,6 +50,15 @@ def describe_engines(vendor: str | None) -> list[dict]:
     return [e.describe(vendor) for e in ENGINES.values()]
 
 
+def available_virtual_models(vendor: str | None) -> list[dict]:
+    """Virtual model entries of every engine this node can launch."""
+    out = []
+    for eng in ENGINES.values():
+        if eng.capabilities.get("virtual_models") and eng.availability(vendor)[0]:
+            out.extend(eng.virtual_models())
+    return out
+
+
 def parse_engine(body: dict | None, model_path: str | None = None) -> tuple[str, str | None]:
     """Validate an API body's `engine` field. Returns (engine_name, error).
 
