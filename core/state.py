@@ -74,7 +74,7 @@ def save_state():
         dl_list = []
         with downloads_lock:
             for dl in downloads.values():
-                dl_list.append({
+                row = {
                     "id": dl["id"],
                     "repo_id": dl["repo_id"],
                     "filename": dl.get("filename", ""),
@@ -91,7 +91,14 @@ def save_state():
                     "update_model_path": dl.get("update_model_path", ""),
                     "update_temp_dir": dl.get("update_temp_dir", ""),
                     "update_sha256": dl.get("update_sha256", ""),
-                })
+                }
+                # Pinned revision / engine model of an engine pre-download
+                # (api/engines.py); only written when set, so ordinary
+                # download rows are unchanged.
+                for key in ("revision", "engine_model"):
+                    if dl.get(key):
+                        row[key] = dl[key]
+                dl_list.append(row)
 
         t_write0 = time.monotonic()
         try:
@@ -388,6 +395,9 @@ def load_state():
             "_process": None,
             "_log_fh": None,
         }
+        for key in ("revision", "engine_model"):
+            if entry.get(key):
+                dl[key] = entry[key]
         downloads[dl["id"]] = dl
 
     logger.info("Restored state: %d instances, %d downloads",

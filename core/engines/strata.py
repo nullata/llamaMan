@@ -184,13 +184,36 @@ def catalogue() -> list[dict]:
     return out
 
 
+def shards_base_dir(family: str, size: str) -> str:
+    """Where llamaman keeps this model's shards: MODELS_DIR/strata/<tag>."""
+    from config import MODELS_DIR
+    return os.path.join(MODELS_DIR, "strata", setup_tag(family, size))
+
+
+def model_download(family: str, size: str) -> dict | None:
+    """The newest llamaman download record for this model's shards."""
+    from core.state import downloads, downloads_lock
+    model_id = model_id_for(family, size)
+    with downloads_lock:
+        mine = [dict(d) for d in downloads.values() if d.get("engine_model") == model_id]
+    if not mine:
+        return None
+    return max(mine, key=lambda d: d.get("started_at") or 0)
+
+
 def local_shard_dir(family: str, size: str) -> str | None:
     """The directory (as llamaman sees it) holding every shard of this model
     under MODELS_DIR/strata/<tag>/, or None. Looks in that folder and one
     level below it, because llamaman's downloader keeps a repo's size folder
-    (e.g. .../iq2_xs/IQ2_XS/<shards>)."""
-    from config import MODELS_DIR
-    base = os.path.join(MODELS_DIR, "strata", setup_tag(family, size))
+    (e.g. .../iq2_xs/IQ2_XS/<shards>).
+
+    A llamaman download of the shards that hasn't completed means the files
+    may be partial (the downloader writes under the final names), so they
+    are not offered to Strata until it finishes."""
+    base = shards_base_dir(family, size)
+    dl = model_download(family, size)
+    if dl and dl.get("status") != "completed":
+        return None
     names = shard_files(family, size)
     candidates = [base]
     try:
@@ -335,8 +358,47 @@ class StrataEngine(Engine):
                 "vision": m["vision"],
                 "experimental": m["experimental"],
                 "local_shards": local_shard_dir(m["family"], m["size"]) is not None,
+                "download": self._download_summary(m["family"], m["size"]),
             })
         return out
+
+    @staticmethod
+    def _download_summary(family: str, size: str) -> dict | None:
+        dl = model_download(family, size)
+        return {"id": dl["id"], "status": dl.get("status")} if dl else None
+
+    def canonical_model_path(self, name: str) -> str | None:
+        parsed = parse_model_path(name)
+        return model_path_for(*parsed) if parsed else None
+
+    def download_plan(self, model_path: str) -> dict | None:
+        parsed = parse_model_path(model_path)
+        if not parsed:
+            return None
+        family, size = parsed
+        repo = FAMILIES[family]["repo"]
+        return {
+            "repo_id": repo,
+            # Shard 1: the downloader expands a split GGUF to all its shards.
+            "filename": repo_files(family, size)[0],
+            "revision": HF_REVISIONS[repo],
+            "dest_path": shards_base_dir(family, size),
+            "model_id": model_id_for(family, size),
+            "download_gb": SIZES[size]["download_gb"],
+        }
+
+    def launch_blocker(self, model_path: str) -> str | None:
+        # Starting now would make the container download the same ~70 GB
+        # into its own volume while llamaman is still fetching them.
+        parsed = parse_model_path(model_path)
+        if not parsed:
+            return None
+        dl = model_download(*parsed)
+        if dl and dl.get("status") in ("downloading", "paused"):
+            return (f"{model_id_for(*parsed)} is still being downloaded by llamaman "
+                    f"(download {dl['id'][:8]}, {dl['status']}); launch it when the download "
+                    f"finishes, or cancel the download to let Strata fetch the files itself")
+        return None
 
     def model_metadata(self, model_path: str) -> dict:
         parsed = parse_model_path(model_path)

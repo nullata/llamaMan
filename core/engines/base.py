@@ -222,6 +222,19 @@ class Engine:
         /api/show, /api/tags and /api/ps builders need no special case."""
         return {}
 
+    def canonical_model_path(self, name: str) -> str | None:
+        """A virtual model's path from its id or path, or None."""
+        return None
+
+    def download_plan(self, model_path: str) -> dict | None:
+        """How llamaman's downloader can pre-fetch this model's files:
+        {"repo_id", "filename", "revision", "dest_path"}, or None."""
+        return None
+
+    def launch_blocker(self, model_path: str) -> str | None:
+        """A reason this model can't be launched right now, or None."""
+        return None
+
     def served_model_names(self, model_path: str) -> list[str]:
         """Lowercase names a request's `model` field may carry for this
         instance, beyond the llamaman-wide filename rules."""

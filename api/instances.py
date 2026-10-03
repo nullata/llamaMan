@@ -594,6 +594,9 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
                            if i["status"] not in ("stopped",) and i.get("model_path") == model_path]
     if port in used_ports:
         return None, f"Port {port} is already in use"
+    blocker = eng.launch_blocker(model_path)
+    if blocker:
+        return None, blocker
     if eng.capabilities.get("single_instance_per_model") and same_model_live:
         other = same_model_live[0]
         return None, (f"{eng.display_name(model_path)} already has an instance on port {other['port']} "

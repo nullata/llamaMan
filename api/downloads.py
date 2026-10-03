@@ -26,10 +26,13 @@ def _download_progress_path(dl_id: str) -> str:
 
 
 def _build_download_env(repo_id: str, dest_path: str, filename: str, token: str,
-                        per_model_mbps: float, progress_file: str = "") -> dict:
+                        per_model_mbps: float, progress_file: str = "",
+                        revision: str = "") -> dict:
     global_mbps = float(get_storage().get_settings().get("global_speed_limit_mbps", 0) or 0)
     effective_mbps = global_mbps if global_mbps > 0 else per_model_mbps
     return {
+        # Empty = main (core.downloader's default).
+        "HF_REVISION": revision,
         **os.environ,
         "HF_REPO_ID": repo_id,
         "HF_LOCAL_DIR": dest_path,
@@ -44,13 +47,15 @@ def _build_download_env(repo_id: str, dest_path: str, filename: str, token: str,
 
 
 def _spawn_download_process(dl_id: str, repo_id: str, dest_path: str, filename: str,
-                            token: str, per_model_mbps: float, log_mode: str = "w"):
+                            token: str, per_model_mbps: float, log_mode: str = "w",
+                            revision: str = ""):
     log_file = os.path.join(LOGS_DIR, f"dl-{dl_id}.log")
     progress_file = _download_progress_path(dl_id)
     log_fh = open(log_file, log_mode, buffering=1)
     proc = subprocess.Popen(
         [sys.executable, "-u", "-m", "core.downloader"],
-        env=_build_download_env(repo_id, dest_path, filename, token, per_model_mbps, progress_file),
+        env=_build_download_env(repo_id, dest_path, filename, token, per_model_mbps,
+                                progress_file, revision),
         stdout=log_fh,
         stderr=subprocess.STDOUT,
         close_fds=True,
@@ -81,6 +86,7 @@ def _restart_existing_download(dl: dict):
             token or "",
             float(dl.get("per_model_speed_limit_mbps", 0) or 0),
             log_mode="a",
+            revision=dl.get("revision", ""),
         ), None)
     except Exception as e:
         return None, None, None, str(e)
@@ -177,49 +183,56 @@ def api_downloads_list():
     return jsonify(safe)
 
 
-@bp.route("/api/downloads", methods=["POST"])
-def api_downloads_create():
-    body = request.get_json(force=True)
-    repo_id = body.get("repo_id", "").strip()
-    if not repo_id:
-        return jsonify({"error": "repo_id is required"}), 400
+def start_download(repo_id: str, filename: str, token: str, token_id: str,
+                   per_model_mbps: float, *, dest_path: str | None = None,
+                   revision: str = "", record_source: bool = True,
+                   extra: dict | None = None) -> tuple[dict | None, str | None, int]:
+    """Start a download as an ordinary download record (speed limits, saved
+    tokens, progress feed, pause/resume/cancel, auto-retry all apply).
+    Returns (download, error, http_status).
 
-    filename = body.get("filename", "").strip()
-    token = body.get("hf_token", "").strip()
-    token_id = body.get("hf_token_id", "").strip()
-    if token_id:
-        token = get_hf_token_secret(token_id)
-        if not token:
-            return jsonify({"error": "Saved Hugging Face token not found"}), 400
-    per_model_mbps = float(body.get("speed_limit_mbps", 0) or 0)
-
+    dest_path defaults to MODELS_DIR/<file stem or repo name>. revision pins a
+    commit (persisted, so resume/retry fetch the same bytes). record_source=
+    False skips the provenance used by update checks - right for files an
+    engine pins, which must not be "updated" to a newer upstream revision.
+    `extra` adds persisted fields to the record (e.g. the engine model id)."""
     if filename:
         try:
-            repo_files = list_repo_files(repo_id, token or None)
+            if revision:
+                repo_files = list_repo_files(repo_id, token or None, revision)
+            else:
+                repo_files = list_repo_files(repo_id, token or None)
         except Exception as e:
-            return jsonify({"error": f"Could not list files in {repo_id}: {e}"}), 502
+            return None, f"Could not list files in {repo_id}: {e}", 502
         try:
             targets = resolve_filename(filename, repo_files, rid=repo_id)
         except RuntimeError as e:
-            return jsonify({"error": str(e)}), 400
+            return None, str(e), 400
         # Canonical name: shard 1 for multipart, full repo path for nested basenames.
         filename = targets[0]["name"]
 
-    dest_name = repo_id.split("/")[-1]
-    if filename:
-        dest_name = Path(filename).stem
-    dest_path = os.path.join(MODELS_DIR, dest_name)
+    if dest_path is None:
+        dest_name = repo_id.split("/")[-1]
+        if filename:
+            dest_name = Path(filename).stem
+        dest_path = os.path.join(MODELS_DIR, dest_name)
     os.makedirs(dest_path, exist_ok=True)
     model_path = os.path.join(dest_path, filename) if filename else dest_path
 
     dl_id = str(uuid.uuid4())
 
     try:
-        proc, log_fh, log_file = _spawn_download_process(
-            dl_id, repo_id, dest_path, filename, token, per_model_mbps, log_mode="w",
-        )
+        if revision:
+            proc, log_fh, log_file = _spawn_download_process(
+                dl_id, repo_id, dest_path, filename, token, per_model_mbps, log_mode="w",
+                revision=revision,
+            )
+        else:
+            proc, log_fh, log_file = _spawn_download_process(
+                dl_id, repo_id, dest_path, filename, token, per_model_mbps, log_mode="w",
+            )
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return None, str(e), 500
 
     dl = {
         "id": dl_id,
@@ -237,18 +250,53 @@ def api_downloads_create():
         "_process": proc,
         "_log_fh": log_fh,
     }
+    if revision:
+        dl["revision"] = revision
+    if extra:
+        dl.update(extra)
 
     with downloads_lock:
         downloads[dl_id] = dl
 
-    record_model_source(dest_path, repo_id, model_path=model_path)
-    if filename and targets:
-        # Stamp the published hash now, so a later update check is an exact
-        # comparison instead of falling back to matching file sizes.
-        record_model_sha(model_path, targets[0].get("sha256", ""))
+    if record_source:
+        record_model_source(dest_path, repo_id, model_path=model_path)
+        if filename and targets:
+            # Stamp the published hash now, so a later update check is an exact
+            # comparison instead of falling back to matching file sizes.
+            record_model_sha(model_path, targets[0].get("sha256", ""))
 
     logger.info("Download started: %s -> %s (pid %d)", repo_id, dest_path, proc.pid)
     save_state()
+    return dl, None, 201
+
+
+def resolve_request_token(body: dict) -> tuple[str, str, str | None]:
+    """(token, token_id, error) from a body's hf_token / hf_token_id."""
+    token = (body.get("hf_token") or "").strip()
+    token_id = (body.get("hf_token_id") or "").strip()
+    if token_id:
+        token = get_hf_token_secret(token_id)
+        if not token:
+            return "", token_id, "Saved Hugging Face token not found"
+    return token, token_id, None
+
+
+@bp.route("/api/downloads", methods=["POST"])
+def api_downloads_create():
+    body = request.get_json(force=True)
+    repo_id = body.get("repo_id", "").strip()
+    if not repo_id:
+        return jsonify({"error": "repo_id is required"}), 400
+
+    filename = body.get("filename", "").strip()
+    token, token_id, err = resolve_request_token(body)
+    if err:
+        return jsonify({"error": err}), 400
+    per_model_mbps = float(body.get("speed_limit_mbps", 0) or 0)
+
+    dl, err, code = start_download(repo_id, filename, token, token_id, per_model_mbps)
+    if err:
+        return jsonify({"error": err}), code
     return jsonify(public_dict(dl)), 201
 
 

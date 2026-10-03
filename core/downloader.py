@@ -13,6 +13,9 @@ MULTIPART_RE = re.compile(r"^(.*)-(\d{5})-of-(\d{5})\.gguf$", re.IGNORECASE)
 repo_id = os.environ.get("HF_REPO_ID", "")
 local_dir = os.environ.get("HF_LOCAL_DIR", "")
 filename = os.environ.get("HF_FILENAME", "").strip()
+# A commit sha (or branch) to download from instead of main. Set for engines
+# that pin their model files (core/engines/strata.py HF_REVISIONS).
+revision = os.environ.get("HF_REVISION", "").strip() or "main"
 token = os.environ.get("HF_TOKEN", "").strip() or None
 speed_limit = int(os.environ.get("HF_SPEED_LIMIT", "0"))        # effective at launch (for log)
 per_model_limit = int(os.environ.get("HF_PER_MODEL_SPEED_LIMIT", "0"))  # per-model fallback
@@ -153,18 +156,22 @@ def _throttled_iter(resp):
         yield chunk
 
 
-def list_repo_files(rid=None, tok=None):
+def list_repo_files(rid=None, tok=None, rev=None):
     """Fetch file list from HuggingFace API.
 
-    Defaults to module-level repo_id/token (script use); pass args when
-    imported from another module.
+    Defaults to module-level repo_id/token/revision (script use); pass args
+    when imported from another module.
     """
     rid = rid or repo_id
     tok = tok if tok is not None else token
+    rev = rev or revision
     # blobs=true is what makes HF populate `size` and the `lfs` object on each
     # sibling; without it the API returns rfilename only, so sizes came back
     # None and there was no content hash to compare against for updates.
-    url = f"{HF_API}/api/models/{rid}?blobs=true"
+    if rev == "main":
+        url = f"{HF_API}/api/models/{rid}?blobs=true"
+    else:
+        url = f"{HF_API}/api/models/{rid}/revision/{rev}?blobs=true"
     r = requests.get(url, headers=_headers(tok), timeout=30)
     if r.status_code in (401, 403):
         raise RuntimeError(f"Authentication failed ({r.status_code}). Check your HF token.")
@@ -188,7 +195,7 @@ def download_file(fname, file_num=None, total_files=None, part_idx=None):
     """Download a single file with resume support and rate limiting."""
     local_path = os.path.join(local_dir, fname)
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
-    url = f"{HF_API}/{repo_id}/resolve/main/{fname}"
+    url = f"{HF_API}/{repo_id}/resolve/{revision}/{fname}"
 
     part = None
     if part_idx is not None and 0 <= part_idx < len(_PROGRESS["parts"]):
@@ -314,6 +321,8 @@ def main():
     print(f"Starting download: {repo_id}", flush=True)
     if filename:
         print(f"Single file: {filename}", flush=True)
+    if revision != "main":
+        print(f"Revision: {revision}", flush=True)
     print(f"Destination: {local_dir}", flush=True)
     if speed_limit:
         print(f"Speed limit: {speed_limit * 8 / 1_000_000:.0f} Mbps ({speed_limit / 1024 / 1024:.1f} MB/s)", flush=True)
