@@ -180,6 +180,13 @@ HOST_STRATA_DATA_DIR = os.environ.get("HOST_STRATA_DATA_DIR", "").strip()
 # opens its port, so this is far above MODEL_LOAD_TIMEOUT.
 STRATA_LOAD_TIMEOUT = int(os.environ.get("STRATA_LOAD_TIMEOUT", 3600))
 
+# Model archive (core/archive.py): a second storage volume models can be moved
+# to and restored from in the UI. Setting ARCHIVE_DIR (the path INSIDE the
+# llamaman container where that volume is mounted, e.g. /archive) enables it;
+# unset, the feature is hidden. llamaman moves the files itself - no sibling
+# container mounts it - so no HOST_ path is needed.
+ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "").strip().rstrip("/")
+
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(LOGS_DIR, exist_ok=True)
 

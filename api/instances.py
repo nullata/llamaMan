@@ -597,6 +597,10 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
     blocker = eng.launch_blocker(model_path)
     if blocker:
         return None, blocker
+    from core.archive import busy_reason as archive_busy_reason
+    blocker = archive_busy_reason(model_path)
+    if blocker:
+        return None, blocker
     if eng.capabilities.get("single_instance_per_model") and same_model_live:
         other = same_model_live[0]
         return None, (f"{eng.display_name(model_path)} already has an instance on port {other['port']} "

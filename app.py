@@ -15,6 +15,7 @@ from storage import get_storage
 import api.auth as auth
 import api.models as models
 import api.engines as engines
+import api.archive as archive_api
 import api.presets as presets
 import api.instances as instances
 import api.downloads as downloads
@@ -54,6 +55,7 @@ def create_app() -> Flask:
     application.register_blueprint(auth.bp)
     application.register_blueprint(models.bp)
     application.register_blueprint(engines.bp)
+    application.register_blueprint(archive_api.bp)
     application.register_blueprint(presets.bp)
     application.register_blueprint(instances.bp)
     application.register_blueprint(downloads.bp)
@@ -129,6 +131,14 @@ else:
 
 # Load persisted state (instances, downloads) and collect proxies to restore
 _deferred_proxies = load_state()
+
+# A model move (core/archive.py) interrupted by a restart leaves a partial
+# copy at its destination; the source is intact, so just drop the copy.
+try:
+    from core.archive import cleanup_partials as _cleanup_archive_partials
+    _cleanup_archive_partials()
+except Exception as _e:
+    logger.warning("archive partial cleanup failed: %s", _e)
 
 # Start background health/download poller
 start_background_poller()
