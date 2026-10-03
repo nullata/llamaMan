@@ -415,5 +415,14 @@ class BusyGuardTests(_Api):
                 archive.cancel_job(job["id"])
 
 
+class TemplateTests(unittest.TestCase):
+
+    def test_archive_ui_script_loaded_after_downloads(self):
+        with open(os.path.join(REPO_ROOT, "templates", "index.html"), encoding="utf-8") as f:
+            html = f.read()
+        self.assertIn("js/archive.js", html)
+        self.assertLess(html.index("js/downloads.js"), html.index("js/archive.js"))
+
+
 if __name__ == "__main__":
     unittest.main()

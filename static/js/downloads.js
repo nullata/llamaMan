@@ -116,6 +116,8 @@ async function pollDownloads() {
         });
       });
     }
+    // Model archive moves (static/js/archive.js) show in this panel too.
+    if (typeof mergeArchiveJobs === 'function') await mergeArchiveJobs(map);
     downloads = map;
     renderDownloads();
   } catch (e) { /* ignore */ }
@@ -136,6 +138,10 @@ function createDownloadItem(dl) {
 }
 
 function updateDownloadItem(item, dl) {
+  if (dl._archive && typeof updateArchiveItem === 'function') {
+    updateArchiveItem(item, dl);
+    return;
+  }
   item.dataset.id = dl.id;
 
   const label = dl.filename ? dl.filename : dl.repo_id.split('/').pop();
@@ -228,9 +234,10 @@ function renderDownloads() {
   }
 
   // Sort: active first, then by started_at desc
+  const isActive = d => d.status === 'downloading' || d.status === 'moving' || d.status === 'queued';
   all.sort((a, b) => {
-    const aActive = a.status === 'downloading' ? 1 : 0;
-    const bActive = b.status === 'downloading' ? 1 : 0;
+    const aActive = isActive(a) ? 1 : 0;
+    const bActive = isActive(b) ? 1 : 0;
     return bActive - aActive || b.started_at - a.started_at;
   });
 
@@ -273,6 +280,7 @@ function renderDownloads() {
   panel.querySelectorAll('.btn-dl-remove').forEach(btn => {
     btn.addEventListener('click', () => removeDownload(btn.dataset.id, btn.dataset.node));
   });
+  if (typeof bindArchiveItemButtons === 'function') bindArchiveItemButtons(panel);
   panel.querySelectorAll('.btn-dl-use').forEach(btn => {
     btn.addEventListener('click', () => {
       const fullPath = btn.dataset.filename

@@ -2811,3 +2811,73 @@ body.login-page {
 .engine-images-heading {
   margin: 16px 0 8px;
 }
+
+/* ---- Model archive (static/js/archive.js) ---- */
+.model-item .btn-archive-model,
+.model-item .btn-restore-model {
+  position: absolute;
+  top: 6px;
+  right: 30px;              /* left of the hover-only delete button */
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+.model-item .btn-archive-model {
+  display: none;
+}
+.model-item:hover .btn-archive-model,
+.model-item .btn-archive-model.btn-archive-busy {
+  display: block;
+}
+.model-item .btn-archive-model:hover:not(:disabled),
+.model-item .btn-restore-model:hover {
+  color: var(--accent);
+  background: rgba(16, 185, 129, 0.15);
+}
+.model-item .btn-archive-model:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+/* Archived items have no delete button: Restore takes the corner, always shown. */
+.model-item .btn-restore-model {
+  right: 6px;
+  display: block;
+}
+.model-item-archived {
+  opacity: 0.6;
+}
+.model-item-archived:hover {
+  opacity: 0.85;
+}
+.badge-archived {
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  background: none;
+}
+.arch-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+.arch-progress-bar {
+  flex: 0 1 160px;
+  height: 8px;
+  background: var(--surface);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.arch-progress-bar > div {
+  height: 100%;
+  background: var(--green);
+  transition: width .3s;
+}
+.arch-progress-text {
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

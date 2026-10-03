@@ -277,7 +277,8 @@ function _modelSets() {
       ...((typeof engineModelsFromSnapshot === 'function') ? engineModelsFromSnapshot(targetNode) : []),
     ];
 
-  const presentKeys = new Set(present.map(m => m.name.toLowerCase()));
+  // An archived model isn't launchable here, so it doesn't hide a peer's copy.
+  const presentKeys = new Set(present.filter(m => !m.archived).map(m => m.name.toLowerCase()));
   const ghostMap = {};
   (cs.nodes || []).forEach(n => {
     if (n.node_id === target) return;
@@ -305,6 +306,9 @@ function renderModels() {
   const ghostFiltered = ghost.filter(matches);
 
   filtered.sort((a, b) => {
+    // Archived models sink to the bottom; favorites lead the rest.
+    const archDiff = (a.archived ? 1 : 0) - (b.archived ? 1 : 0);
+    if (archDiff !== 0) return archDiff;
     const favDiff = (isModelFavorited(a.path) ? 0 : 1) - (isModelFavorited(b.path) ? 0 : 1);
     if (favDiff !== 0) return favDiff;
     return a.name.localeCompare(b.name);
@@ -337,9 +341,15 @@ function renderModels() {
         + `${m.download && m.download.status !== 'completed' ? `<span class="badge badge-warn">download ${escHtml(m.download.status)}</span>` : ''}`
         + `${m.experimental ? '<span class="badge badge-warn">experimental</span>' : ''}`
       : '';
-    const deleteBtn = isVirtual
+    const deleteBtn = (isVirtual || m.archived)
       ? ''
       : '<button class="btn-delete-model" title="Delete model from disk"><i class="fa-solid fa-trash"></i></button>';
+    // Archive / Restore (static/js/archive.js): only when ARCHIVE_DIR is set.
+    const archiveBtn = (typeof archiveButtonHtml === 'function') ? archiveButtonHtml(m) : '';
+    const archivedBadge = m.archived
+      ? '<span class="badge badge-archived" title="On the archive volume - restore it to launch"><i class="fa-solid fa-box-archive"></i> archived</span>'
+      : '';
+    if (m.archived) el.classList.add('model-item-archived');
     el.innerHTML = `
       <div class="model-item-row">
         <button class="${starClass}" title="Toggle favorite"><i class="${starIcon}"></i></button>
@@ -350,10 +360,12 @@ function renderModels() {
             ${quantBadge}
             <span class="badge badge-size">${escHtml(m.size_display)}</span>
             ${virtualBadges}
+            ${archivedBadge}
           </div>
           <span class="path">${escHtml(isVirtual && m.title ? m.title : m.path)}</span>
         </div>
       </div>
+      ${archiveBtn}
       ${deleteBtn}
     `;
     el.querySelector('.btn-star').addEventListener('click', async (e) => {
@@ -366,7 +378,21 @@ function renderModels() {
       e.stopPropagation();
       deleteModel(m);
     });
-    el.addEventListener('click', () => selectModel(m, el));
+    el.querySelector('.btn-archive-model')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      archiveModel(m);
+    });
+    el.querySelector('.btn-restore-model')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      restoreModel(m);
+    });
+    el.addEventListener('click', () => {
+      if (m.archived) {
+        toast('This model is archived - restore it to launch', 'info');
+        return;
+      }
+      selectModel(m, el);
+    });
     list.appendChild(el);
   });
 
@@ -623,7 +649,7 @@ function populateSpecDraftModelOptions() {
   if (!dl) return;
   const { present } = _modelSets();
   dl.innerHTML = '';
-  present.filter(m => m.type === 'gguf').forEach(m => {
+  present.filter(m => m.type === 'gguf' && !m.archived).forEach(m => {
     const opt = document.createElement('option');
     opt.value = m.path;
     opt.textContent = m.name;
@@ -638,7 +664,7 @@ function populateMmprojModelOptions() {
   if (!dl) return;
   const { present } = _modelSets();
   dl.innerHTML = '';
-  present.filter(m => m.type === 'gguf').forEach(m => {
+  present.filter(m => m.type === 'gguf' && !m.archived).forEach(m => {
     const opt = document.createElement('option');
     opt.value = m.path;
     opt.textContent = m.name;
