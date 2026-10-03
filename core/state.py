@@ -113,6 +113,7 @@ def adopt_orphans() -> int:
 
     Scans Docker containers with the llamaman label. Returns the count adopted.
     """
+    from core.engines import get_engine
     from core.helpers import list_llama_containers
 
     containers = list_llama_containers()
@@ -179,7 +180,7 @@ def adopt_orphans() -> int:
         adopt_log_file = os.path.join(LOGS_DIR, f"{inst_id}.log")
         inst = {
             "id": inst_id,
-            "model_name": Path(model_path).name,
+            "model_name": get_engine(orphan_config, model_path).display_name(model_path),
             "model_path": model_path,
             "port": port,
             "status": "starting",  # poller will verify and flip to healthy

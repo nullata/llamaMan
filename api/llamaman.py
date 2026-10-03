@@ -570,6 +570,7 @@ def _ensure_model_running(
             proxy_sampling_top_p=float(preset.get("proxy_sampling_top_p", 0.95)),
             proxy_sampling_presence_penalty=float(preset.get("proxy_sampling_presence_penalty", 0.0)),
             proxy_sampling_repeat_penalty=float(preset.get("proxy_sampling_repeat_penalty", 0.0)),
+            engine=preset.get("engine"),
         )
         if err:
             return None, err

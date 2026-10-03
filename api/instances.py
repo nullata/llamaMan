@@ -5,7 +5,6 @@ import os
 import threading
 import time
 import uuid
-from pathlib import Path
 
 import requests as http_requests
 from flask import Blueprint, Response, jsonify, request
@@ -17,10 +16,8 @@ from config import (
     LLAMA_CONTAINER_PORT,
     LLAMA_CONTAINER_PREFIX,
     LLAMA_GPU_DEVICES,
-    LLAMA_IMAGE,
     LLAMAMAN_MAX_MODELS,
     LOGS_DIR,
-    MODELS_DIR,
     MODEL_LOAD_TIMEOUT,
     PORT_RANGE_END,
     PORT_RANGE_START,
@@ -36,7 +33,7 @@ from core.helpers import (
     stream_log_file,
 )
 from core.dry_sampling import DRY_SAMPLER_KEYS, parse_dry_config
-from core.engines import get_engine
+from core.engines import DEFAULT_ENGINE, engine_name, get_engine, parse_engine
 from core.loop_detect import LOOP_DETECT_KEYS, parse_loop_detect_config
 from core.perf import phase
 from core.proxy_sampling import parse_proxy_sampling_config
@@ -64,6 +61,7 @@ LLAMA_CONTAINER_PORT = 8080
 def _public_instance(inst: dict) -> dict:
     d = public_dict(inst)
     d["last_request_at"] = inst.get("_last_request_at")
+    d["engine"] = engine_name(inst.get("config"), inst.get("model_path"))
     if inst.get("_internal_port") is not None:
         d["internal_port"] = inst.get("_internal_port")
     gate = get_gate(inst["id"])
@@ -564,7 +562,9 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
                     loop_detect_min_repetitions=3,
                     loop_detect_max_buffer_chars=8192,
                     loop_detect_scan_interval_s=10,
-                    loop_detect_scan_every_n_tokens=64):
+                    loop_detect_scan_every_n_tokens=64,
+                    engine=None):
+    eng = get_engine(engine)
     with instances_lock:
         used_ports = {i["port"] for i in instances.values() if i["status"] not in ("stopped",)}
     if port in used_ports:
@@ -666,7 +666,7 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
         "share_queue_fallback": bool(share_queue_fallback),
         "embedding_model": embedding_model,
         "auto_restart_on_crash": auto_restart_on_crash,
-        "image": (image or "").strip() or LLAMA_IMAGE,
+        "image": (image or "").strip() or eng.default_image(),
         "proxy_sampling_override_enabled": proxy_sampling_override_enabled,
         "proxy_sampling_temperature": proxy_sampling_temperature,
         "proxy_sampling_top_k": proxy_sampling_top_k,
@@ -694,11 +694,16 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
         "loop_detect_scan_interval_s": int(loop_detect_scan_interval_s),
         "loop_detect_scan_every_n_tokens": int(loop_detect_scan_every_n_tokens),
     }
+    # Only non-default engines are recorded: a missing key means llama.cpp
+    # (core/engines), and stamping it would change the llama.cpp container's
+    # llamaman.config label.
+    if eng.name != DEFAULT_ENGINE:
+        config["engine"] = eng.name
 
     inst_id = str(uuid.uuid4())
     container_name = f"{LLAMA_CONTAINER_PREFIX}{inst_id[:8]}"
     log_file = os.path.join(LOGS_DIR, f"{inst_id}.log")
-    model_name = Path(model_path).name
+    model_name = eng.display_name(model_path)
 
     if not is_port_available(port):
         return None, f"Port {port} is already occupied by another process"
@@ -1124,6 +1129,12 @@ def api_instances_create():
     loop_detect_config, loop_detect_err = parse_loop_detect_config(body)
     if loop_detect_err:
         return jsonify({"error": loop_detect_err}), 400
+    engine, engine_err = parse_engine(body)
+    if engine_err:
+        return jsonify({"error": engine_err}), 400
+    engine_ok, engine_reason = get_engine(engine).availability(get_vendor())
+    if not engine_ok:
+        return jsonify({"error": engine_reason}), 400
 
     incoming_embedding_model = bool(body.get("embedding_model", False))
     confirm_overcommit = bool(body.get("confirm_overcommit", False))
@@ -1165,6 +1176,7 @@ def api_instances_create():
         embedding_model=bool(body.get("embedding_model", False)),
         auto_restart_on_crash=bool(body.get("auto_restart_on_crash", False)),
         image=body.get("image", "").strip() or None,
+        engine=engine,
         **spec_config,
         **mmproj_config,
         **proxy_sampling_config,
@@ -1299,6 +1311,7 @@ def api_instances_restart(inst_id):
         loop_detect_max_buffer_chars=int(config.get("loop_detect_max_buffer_chars", 8192)),
         loop_detect_scan_interval_s=int(config.get("loop_detect_scan_interval_s", 10)),
         loop_detect_scan_every_n_tokens=int(config.get("loop_detect_scan_every_n_tokens", 64)),
+        engine=config.get("engine"),
     )
     if err:
         _restore_restarted_instance(old)

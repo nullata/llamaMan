@@ -3,6 +3,7 @@
 from flask import Blueprint, jsonify, request
 
 from core.dry_sampling import parse_dry_config
+from core.engines import DEFAULT_ENGINE, parse_engine
 from core.helpers import normalize_flash_attn, normalize_load_mode, normalize_reasoning_format
 from core.loop_detect import LOOP_DETECT_KEYS, parse_loop_detect_config
 from core.model_alias import PRETTY_NAME_KEY, existing_aliases
@@ -155,6 +156,9 @@ def api_preset_save(model_path):
     loop_detect_config, loop_detect_err = parse_loop_detect_config(body)
     if loop_detect_err:
         return jsonify({"error": loop_detect_err}), 400
+    engine, engine_err = parse_engine(body)
+    if engine_err:
+        return jsonify({"error": engine_err}), 400
     # Preserve existing meta fields (favorite, note) that aren't part of the launch form
     existing = get_storage().get_preset(model_path) or {}
     if not isinstance(existing, dict):
@@ -223,6 +227,11 @@ def api_preset_save(model_path):
         # Same tier as DRY.
         **loop_detect_config,
     }
+
+    # Like instance configs, only a non-default engine is written: a preset
+    # without the key (every preset saved before engines existed) is llama.cpp.
+    if engine != DEFAULT_ENGINE:
+        data["engine"] = engine
 
     # Cluster: when a target node is named, the form's hardware fields are that
     # node's override; the shared base hardware is kept from the existing preset.

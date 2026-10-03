@@ -33,3 +33,22 @@ def get_engine(config_or_name: dict | str | None = None, model_path: str | None 
 
 def describe_engines(vendor: str | None) -> list[dict]:
     return [e.describe(vendor) for e in ENGINES.values()]
+
+
+def parse_engine(body: dict | None) -> tuple[str, str | None]:
+    """Validate an API body's `engine` field. Returns (engine_name, error).
+
+    Missing / empty / null means llama.cpp (every client written before
+    engines existed). An unknown name is an error rather than a silent
+    fallback, so a typo can't launch the wrong backend."""
+    raw = (body or {}).get("engine")
+    if raw in (None, ""):
+        return DEFAULT_ENGINE, None
+    if not isinstance(raw, str):
+        return DEFAULT_ENGINE, "engine must be a string"
+    name = raw.strip().lower()
+    if not name:
+        return DEFAULT_ENGINE, None
+    if name not in ENGINES:
+        return DEFAULT_ENGINE, f"unknown engine '{raw}' (available: {', '.join(sorted(ENGINES))})"
+    return name, None
