@@ -551,6 +551,7 @@ def _background_poller():
                 new_status = "starting"
 
             status_changed = False
+            became_ready = None
             with instances_lock:
                 if inst_id in instances and instances[inst_id]["status"] not in ("stopped", "sleeping"):
                     old_status = instances[inst_id]["status"]
@@ -563,9 +564,16 @@ def _background_poller():
                             stats = instances[inst_id].setdefault("stats", {})
                             stats["model_load_time_s"] = round(time.time() - started, 1)
                         logger.info("Instance %s is now healthy (was %s)", inst_id, old_status)
+                        became_ready = dict(instances[inst_id])
 
             if status_changed:
                 save_state()
+            if became_ready is not None:
+                try:
+                    from core.engines import get_engine
+                    get_engine(became_ready.get("config"), became_ready.get("model_path")).on_ready(became_ready)
+                except Exception as e:
+                    logger.warning("engine on_ready hook failed for %s: %s", inst_id, e)
 
         # --- Idle timeout reaper ---
         for inst_id in inst_ids:

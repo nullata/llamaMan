@@ -165,6 +165,21 @@ LLAMA_IMAGE = _resolve_llama_image()
 HOST_MODELS_DIR = os.environ.get("HOST_MODELS_DIR", MODELS_DIR)
 HOST_LOGS_DIR = os.environ.get("HOST_LOGS_DIR", LOGS_DIR)
 
+# Strata (core/engines/strata.py): a second inference engine for the
+# Qwen3.8-Flash-Next family on NVIDIA GPUs. Off unless STRATA_ENABLED is set.
+# The image is not published upstream - it is built locally from
+# https://github.com/Niko1221/Strata with `docker build -t strata .`.
+STRATA_ENABLED = os.environ.get("STRATA_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+STRATA_IMAGE = os.environ.get("STRATA_IMAGE", "").strip() or "strata:latest"
+# What is mounted at /data in every Strata container (model files, prepared
+# packs, the MTP layer, per-model setup configs: 70-120 GB per model). A host
+# path in HOST_STRATA_DATA_DIR wins over the named volume.
+STRATA_DATA_VOLUME = os.environ.get("STRATA_DATA_VOLUME", "").strip() or "llamaman-strata-data"
+HOST_STRATA_DATA_DIR = os.environ.get("HOST_STRATA_DATA_DIR", "").strip()
+# A first start downloads ~60-110 GB and builds the pack before the server
+# opens its port, so this is far above MODEL_LOAD_TIMEOUT.
+STRATA_LOAD_TIMEOUT = int(os.environ.get("STRATA_LOAD_TIMEOUT", 3600))
+
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(LOGS_DIR, exist_ok=True)
 

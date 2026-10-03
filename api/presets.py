@@ -3,7 +3,7 @@
 from flask import Blueprint, jsonify, request
 
 from core.dry_sampling import parse_dry_config
-from core.engines import DEFAULT_ENGINE, parse_engine
+from core.engines import DEFAULT_ENGINE, ENGINES, get_engine, parse_engine
 from core.helpers import normalize_flash_attn, normalize_load_mode, normalize_reasoning_format
 from core.loop_detect import LOOP_DETECT_KEYS, parse_loop_detect_config
 from core.model_alias import PRETTY_NAME_KEY, existing_aliases
@@ -156,7 +156,16 @@ def api_preset_save(model_path):
     loop_detect_config, loop_detect_err = parse_loop_detect_config(body)
     if loop_detect_err:
         return jsonify({"error": loop_detect_err}), 400
-    engine, engine_err = parse_engine(body)
+    # Presets are shared cluster-wide, so engine *availability* on this node
+    # is not checked here (a Strata preset may be edited from a node without
+    # an NVIDIA GPU); launching re-validates it on the target node.
+    engine, engine_err = parse_engine(body, model_path)
+    if engine_err:
+        return jsonify({"error": engine_err}), 400
+    engine_err = ENGINES[engine].reject_unsupported_fields(body)
+    if engine_err:
+        return jsonify({"error": engine_err}), 400
+    engine_options, engine_err = ENGINES[engine].parse_options(body, model_path)
     if engine_err:
         return jsonify({"error": engine_err}), 400
     # Preserve existing meta fields (favorite, note) that aren't part of the launch form
@@ -232,6 +241,8 @@ def api_preset_save(model_path):
     # without the key (every preset saved before engines existed) is llama.cpp.
     if engine != DEFAULT_ENGINE:
         data["engine"] = engine
+        data.update(engine_options)
+    ENGINES[engine].enforce_capabilities(data)
 
     # Cluster: when a target node is named, the form's hardware fields are that
     # node's override; the shared base hardware is kept from the existing preset.
@@ -304,6 +315,7 @@ def _apply_live_preset_changes(model_path: str, preset: dict) -> None:
             for f in _LIVE_PROXY_SAMPLING_FIELDS:
                 if f in preset:
                     config[f] = preset[f]
+            get_engine(config, model_path).enforce_capabilities(config)
             touched.append(inst["id"])
 
     for inst_id in touched:

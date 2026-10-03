@@ -18,7 +18,6 @@ from config import (
     LLAMA_GPU_DEVICES,
     LLAMAMAN_MAX_MODELS,
     LOGS_DIR,
-    MODEL_LOAD_TIMEOUT,
     PORT_RANGE_END,
     PORT_RANGE_START,
     logger,
@@ -33,7 +32,7 @@ from core.helpers import (
     stream_log_file,
 )
 from core.dry_sampling import DRY_SAMPLER_KEYS, parse_dry_config
-from core.engines import DEFAULT_ENGINE, engine_name, get_engine, parse_engine
+from core.engines import DEFAULT_ENGINE, engine_name, get_engine, load_timeout_for, validate_launch
 from core.loop_detect import LOOP_DETECT_KEYS, parse_loop_detect_config
 from core.perf import phase
 from core.proxy_sampling import parse_proxy_sampling_config
@@ -62,6 +61,10 @@ def _public_instance(inst: dict) -> dict:
     d = public_dict(inst)
     d["last_request_at"] = inst.get("_last_request_at")
     d["engine"] = engine_name(inst.get("config"), inst.get("model_path"))
+    if inst.get("status") == "starting":
+        stage = get_engine(inst.get("config"), inst.get("model_path")).load_stage(inst)
+        if stage:
+            d["load_stage"] = stage
     if inst.get("_internal_port") is not None:
         d["internal_port"] = inst.get("_internal_port")
     gate = get_gate(inst["id"])
@@ -167,7 +170,12 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
         ):
             if key in preset:
                 merged[key] = preset[key]
-    return merged
+        engine = get_engine(config, model_path)
+        for key in engine.option_keys:
+            if key in preset:
+                merged[key] = preset[key]
+    # No-op for llama.cpp; e.g. keeps Strata's gate at 1 whatever the preset says.
+    return get_engine(config, model_path).enforce_capabilities(merged)
 
 
 def _parse_required_positive_int(body: dict, field_name: str) -> tuple[int | None, str | None]:
@@ -507,7 +515,7 @@ def relaunch_inactive_instance(inst_id: str) -> bool:
 
     save_state()
 
-    if not wait_for_healthy(server_host, health_port, timeout=MODEL_LOAD_TIMEOUT):
+    if not wait_for_healthy(server_host, health_port, timeout=load_timeout_for(config, model_path)):
         logger.warning("Relaunched %s but it did not become healthy", inst_id)
         return False
 
@@ -515,7 +523,10 @@ def relaunch_inactive_instance(inst_id: str) -> bool:
         inst = instances.get(inst_id)
         if inst:
             inst["status"] = "healthy"
+            ready = dict(inst)
     save_state()
+    if inst:
+        get_engine(config, model_path).on_ready(ready)
     return True
 
 
@@ -563,12 +574,30 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
                     loop_detect_max_buffer_chars=8192,
                     loop_detect_scan_interval_s=10,
                     loop_detect_scan_every_n_tokens=64,
-                    engine=None):
-    eng = get_engine(engine)
+                    engine=None, engine_options=None):
+    # engine=None picks the engine owning model_path's virtual model, else
+    # llama.cpp. Capabilities clamp the queue/feature knobs (no-op for
+    # llama.cpp): Strata serves one request at a time, so its gate is forced
+    # to 1 and queueing happens in llamaman's RequestGate.
+    eng = get_engine(engine, model_path)
+    clamped = eng.enforce_capabilities({
+        "max_concurrent": max_concurrent,
+        "embedding_model": embedding_model,
+        "spec_enabled": spec_enabled,
+    })
+    max_concurrent = clamped["max_concurrent"]
+    embedding_model = clamped["embedding_model"]
+    spec_enabled = clamped["spec_enabled"]
     with instances_lock:
         used_ports = {i["port"] for i in instances.values() if i["status"] not in ("stopped",)}
+        same_model_live = [i for i in instances.values()
+                           if i["status"] not in ("stopped",) and i.get("model_path") == model_path]
     if port in used_ports:
         return None, f"Port {port} is already in use"
+    if eng.capabilities.get("single_instance_per_model") and same_model_live:
+        other = same_model_live[0]
+        return None, (f"{eng.display_name(model_path)} already has an instance on port {other['port']} "
+                      f"({other['status']}); {eng.label} runs one instance per model")
 
     needs_proxy = idle_timeout_min > 0 or max_concurrent > 0 or proxy_sampling_override_enabled
     if needs_proxy:
@@ -699,6 +728,9 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
     # llamaman.config label.
     if eng.name != DEFAULT_ENGINE:
         config["engine"] = eng.name
+        for key in eng.option_keys:
+            if key in (engine_options or {}):
+                config[key] = engine_options[key]
 
     inst_id = str(uuid.uuid4())
     container_name = f"{LLAMA_CONTAINER_PREFIX}{inst_id[:8]}"
@@ -1129,12 +1161,9 @@ def api_instances_create():
     loop_detect_config, loop_detect_err = parse_loop_detect_config(body)
     if loop_detect_err:
         return jsonify({"error": loop_detect_err}), 400
-    engine, engine_err = parse_engine(body)
+    engine, engine_options, engine_err = validate_launch(body, model_path, get_vendor())
     if engine_err:
         return jsonify({"error": engine_err}), 400
-    engine_ok, engine_reason = get_engine(engine).availability(get_vendor())
-    if not engine_ok:
-        return jsonify({"error": engine_reason}), 400
 
     incoming_embedding_model = bool(body.get("embedding_model", False))
     confirm_overcommit = bool(body.get("confirm_overcommit", False))
@@ -1177,6 +1206,7 @@ def api_instances_create():
         auto_restart_on_crash=bool(body.get("auto_restart_on_crash", False)),
         image=body.get("image", "").strip() or None,
         engine=engine,
+        engine_options=engine_options,
         **spec_config,
         **mmproj_config,
         **proxy_sampling_config,
@@ -1312,6 +1342,7 @@ def api_instances_restart(inst_id):
         loop_detect_scan_interval_s=int(config.get("loop_detect_scan_interval_s", 10)),
         loop_detect_scan_every_n_tokens=int(config.get("loop_detect_scan_every_n_tokens", 64)),
         engine=config.get("engine"),
+        engine_options={k: config[k] for k in get_engine(config, model_path).option_keys if k in config},
     )
     if err:
         _restore_restarted_instance(old)

@@ -481,12 +481,13 @@ def make_proxy_app(inst_id: str, internal_port: int, proxy_port: int):
                 return [json.dumps({"error": "instance no longer exists"}).encode()]
         elif status == "starting":
             from api.instances import wait_for_healthy
-            from config import MODEL_LOAD_TIMEOUT
+            from core.engines import load_timeout_for
             with instances_lock:
                 _inst = instances.get(inst_id)
                 _host = _inst.get("_server_host", "localhost") if _inst else "localhost"
                 _port = (_inst.get("_server_port") or _inst.get("_internal_port") or internal_port) if _inst else internal_port
-            if not wait_for_healthy(_host, _port, timeout=MODEL_LOAD_TIMEOUT):
+                _timeout = load_timeout_for(dict(_inst) if _inst else None)
+            if not wait_for_healthy(_host, _port, timeout=_timeout):
                 start_response("503 Service Unavailable",
                                [("Content-Type", "application/json")])
                 return [json.dumps({"error": "model is loading but did not become healthy in time"}).encode()]

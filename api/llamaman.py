@@ -16,7 +16,6 @@ from config import (
     HEALTH_CHECK_TIMEOUT,
     MODELS_DIR,
     LLAMAMAN_MAX_MODELS,
-    MODEL_LOAD_TIMEOUT,
     REQUEST_TIMEOUT,
     VERSION,
     logger,
@@ -35,6 +34,7 @@ from core.loop_detect import (
     make_ollama_terminator as _loop_detect_ollama_terminator,
     make_openai_sse_terminator as _loop_detect_openai_terminator,
 )
+from core.engines import load_timeout_for
 from core.proxy_sampling import apply_proxy_sampling_overrides
 from core.spec_decoding import DEFAULT_SPEC_TYPE
 from core.request_log import record_request, finalize_async, SSEAccumulator
@@ -544,12 +544,14 @@ def _ensure_model_running(
         if port is None:
             return None, "no ports available"
 
+        from core.engines import get_engine
+        engine = get_engine(preset, model["path"])
         inst, err = launch_instance(
             model_path=model["path"],
             port=port,
             n_gpu_layers=preset.get("n_gpu_layers", -1),
             n_cpu_moe_layers=int(preset.get("n_cpu_moe_layers", 0) or 0),
-            ctx_size=preset.get("ctx_size", 4096),
+            ctx_size=preset.get("ctx_size", engine.default_ctx_size),
             threads=preset.get("threads"),
             memory_limit=preset.get("memory_limit") or None,
             parallel=preset.get("parallel"),
@@ -570,7 +572,8 @@ def _ensure_model_running(
             proxy_sampling_top_p=float(preset.get("proxy_sampling_top_p", 0.95)),
             proxy_sampling_presence_penalty=float(preset.get("proxy_sampling_presence_penalty", 0.0)),
             proxy_sampling_repeat_penalty=float(preset.get("proxy_sampling_repeat_penalty", 0.0)),
-            engine=preset.get("engine"),
+            engine=engine.name,
+            engine_options={k: preset[k] for k in engine.option_keys if k in preset},
         )
         if err:
             return None, err
@@ -1252,7 +1255,7 @@ def _handle_request(mode: str = "chat"):
     # to become healthy before forwarding the request so the prompt is not
     # lost to a connection-refused error.
     if inst.get("status") != "healthy":
-        if not _wait_for_model_ready(server_host, server_port, MODEL_LOAD_TIMEOUT):
+        if not _wait_for_model_ready(server_host, server_port, load_timeout_for(inst)):
             return jsonify({"error": "model launched but did not become healthy in time"}), 500
         with instances_lock:
             if inst["id"] in instances:
@@ -1584,7 +1587,7 @@ def llamaman_v1_chat():
 
     # Wait for the model to finish loading before forwarding
     if inst.get("status") != "healthy":
-        if not _wait_for_model_ready(server_host, server_port, MODEL_LOAD_TIMEOUT):
+        if not _wait_for_model_ready(server_host, server_port, load_timeout_for(inst)):
             return jsonify({"error": {"message": "model launched but did not become healthy in time"}}), 500
         with instances_lock:
             if inst_id in instances:
@@ -1784,7 +1787,7 @@ def _proxy_passthrough(upstream_path: str, endpoint_label: str):
     inst_id = inst["id"]
 
     if inst.get("status") != "healthy":
-        if not _wait_for_model_ready(server_host, server_port, MODEL_LOAD_TIMEOUT):
+        if not _wait_for_model_ready(server_host, server_port, load_timeout_for(inst)):
             return jsonify({"error": {"message": "model launched but did not become healthy in time"}}), 500
         with instances_lock:
             if inst_id in instances:
@@ -1924,7 +1927,7 @@ def llamaman_v1_embeddings():
     inst_id = inst["id"]
 
     if inst.get("status") != "healthy":
-        if not _wait_for_model_ready(server_host, server_port, MODEL_LOAD_TIMEOUT):
+        if not _wait_for_model_ready(server_host, server_port, load_timeout_for(inst)):
             return jsonify({"error": {"message": "model launched but did not become healthy in time"}}), 500
         with instances_lock:
             if inst_id in instances:
