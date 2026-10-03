@@ -2749,3 +2749,65 @@ body.login-page {
 .app-footer-repo:hover .app-footer-star {
   color: var(--yellow);
 }
+
+/* ---- Inference engines (static/js/engines.js) ---- */
+[data-engine-only][hidden] {
+  display: none !important;
+}
+.badge-engine {
+  background: var(--surface);
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
+.strata-download-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.strata-warnings {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--yellow);
+}
+.strata-warnings li + li {
+  margin-top: 4px;
+}
+.load-stage-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.load-stage-name {
+  text-transform: capitalize;
+  color: var(--text);
+}
+.load-stage-bar {
+  flex: 0 1 120px;
+  height: 8px;
+  background: var(--surface);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.load-stage-bar > div {
+  height: 100%;
+  background: var(--green);
+  transition: width .3s;
+}
+.load-stage-pct {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.load-stage-detail {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.engine-images-heading {
+  margin: 16px 0 8px;
+}

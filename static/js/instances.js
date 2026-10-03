@@ -284,9 +284,12 @@ function renderInstances() {
       </div>`;
     }
 
+    const serverLabel = (typeof instanceServerLabel === 'function') ? instanceServerLabel(inst) : 'llama-server';
     const portLine = inst.internal_port != null
-      ? `Public ${inst.port} -> llama-server ${inst.internal_port}`
+      ? `Public ${inst.port} -> ${serverLabel} ${inst.internal_port}`
       : `Port ${inst.port}`;
+    const engineBadge = (typeof instanceEngineBadge === 'function') ? instanceEngineBadge(inst) : '';
+    const loadStageLine = (typeof instanceLoadStageLine === 'function') ? instanceLoadStageLine(inst) : '';
 
     const nodeBadge = (typeof instanceNodeBadge === 'function') ? instanceNodeBadge(inst) : '';
     const queueGroupBadge = (typeof instanceQueueGroupBadge === 'function') ? instanceQueueGroupBadge(inst) : '';
@@ -328,8 +331,9 @@ function renderInstances() {
     card.classList.toggle('instance-card-remote', !!inst._remote);
     card.innerHTML = `
     <div class="inst-info">
-      <div class="model">${escHtml(inst.model_name)}${nodeBadge}${queueGroupBadge}</div>
+      <div class="model">${escHtml(inst.model_name)}${engineBadge}${nodeBadge}${queueGroupBadge}</div>
       <div class="meta">${portLine} &nbsp;·&nbsp; Container ${inst.container_id ? escHtml(inst.container_id.slice(0, 12)) : '-'} &nbsp;·&nbsp; ${uptime}</div>
+      ${loadStageLine}
       ${statsLine}
       ${resourceLine}
       ${queueLine}
@@ -783,7 +787,31 @@ async function updatePortSuggestion() {
   }
 }
 
+// Shared range checks for the proxy-side sampling fields (llama.cpp and
+// Strata launch bodies alike). Throws with the user-facing message.
+function validateProxySamplingBody(body) {
+  if (!Number.isFinite(body.proxy_sampling_temperature) || body.proxy_sampling_temperature < 0 || body.proxy_sampling_temperature > 2) {
+    throw new Error('Proxy-side temperature must be between 0 and 2');
+  }
+  if (!Number.isInteger(body.proxy_sampling_top_k) || body.proxy_sampling_top_k < 0) {
+    throw new Error('Proxy-side top k must be an integer >= 0');
+  }
+  if (!Number.isFinite(body.proxy_sampling_top_p) || body.proxy_sampling_top_p <= 0 || body.proxy_sampling_top_p > 1) {
+    throw new Error('Proxy-side top p must be greater than 0 and no more than 1');
+  }
+  if (!Number.isFinite(body.proxy_sampling_presence_penalty) || body.proxy_sampling_presence_penalty < -2 || body.proxy_sampling_presence_penalty > 2) {
+    throw new Error('Proxy-side presence penalty must be between -2 and 2');
+  }
+  if (!Number.isFinite(body.proxy_sampling_repeat_penalty) || body.proxy_sampling_repeat_penalty < 0 || body.proxy_sampling_repeat_penalty > 2) {
+    throw new Error('Proxy-side repeat penalty must be between 0 and 2');
+  }
+}
+
 function readLaunchForm() {
+  // A non-llama.cpp model (static/js/engines.js) sends only its own fields.
+  if (typeof currentLaunchEngine === 'function' && currentLaunchEngine() === 'strata') {
+    return readStrataLaunchForm();
+  }
   const ctxSizeRaw = document.getElementById('f-ctx-size').value.trim();
   if (!ctxSizeRaw) {
     throw new Error('Context size is required');
@@ -843,21 +871,7 @@ function readLaunchForm() {
     loop_detect_scan_every_n_tokens: parseInt(document.getElementById('f-loop-detect-scan-every-n-tokens')?.value, 10) || 64,
     loop_detect_scan_interval_s: parseInt(document.getElementById('f-loop-detect-scan-interval-s')?.value, 10) || 10,
   };
-  if (!Number.isFinite(body.proxy_sampling_temperature) || body.proxy_sampling_temperature < 0 || body.proxy_sampling_temperature > 2) {
-    throw new Error('Proxy-side temperature must be between 0 and 2');
-  }
-  if (!Number.isInteger(body.proxy_sampling_top_k) || body.proxy_sampling_top_k < 0) {
-    throw new Error('Proxy-side top k must be an integer >= 0');
-  }
-  if (!Number.isFinite(body.proxy_sampling_top_p) || body.proxy_sampling_top_p <= 0 || body.proxy_sampling_top_p > 1) {
-    throw new Error('Proxy-side top p must be greater than 0 and no more than 1');
-  }
-  if (!Number.isFinite(body.proxy_sampling_presence_penalty) || body.proxy_sampling_presence_penalty < -2 || body.proxy_sampling_presence_penalty > 2) {
-    throw new Error('Proxy-side presence penalty must be between -2 and 2');
-  }
-  if (!Number.isFinite(body.proxy_sampling_repeat_penalty) || body.proxy_sampling_repeat_penalty < 0 || body.proxy_sampling_repeat_penalty > 2) {
-    throw new Error('Proxy-side repeat penalty must be between 0 and 2');
-  }
+  validateProxySamplingBody(body);
   if (body.spec_enabled && SPEC_TYPES_NEEDING_DRAFT_MODEL.includes(body.spec_type) && !body.spec_draft_model) {
     throw new Error(`Speculative decoding with ${body.spec_type} requires a draft model`);
   }
@@ -956,8 +970,9 @@ async function submitLaunchForm(btn, status) {
 
     const { res, data } = result;
     if (res.ok) {
+      const serverLabel = (typeof instanceServerLabel === 'function') ? instanceServerLabel(data) : 'llama-server';
       const msg = data.internal_port != null
-        ? `Instance launched: public ${data.port}, llama-server ${data.internal_port}`
+        ? `Instance launched: public ${data.port}, ${serverLabel} ${data.internal_port}`
         : `Instance launched on port ${data.port}`;
       toast(msg, 'success');
       updatePortSuggestion();

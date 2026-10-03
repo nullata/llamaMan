@@ -821,6 +821,29 @@ if (autoUpdateScanToggle) {
 
 let _pullStatusInterval = null;
 
+// Images of other engines that can't be pulled (Strata is built locally from
+// its repository): whether each exists on this node, and the build command.
+function renderEngineImages(engineImages) {
+  const box = document.getElementById('engine-images-list');
+  if (!box) return;
+  if (!engineImages.length) { box.innerHTML = ''; return; }
+  box.innerHTML = '<h4 class="engine-images-heading">Built locally</h4>' + engineImages.map(img => {
+    const badge = img.present
+      ? '<span class="badge badge-ok">local</span>'
+      : '<span class="badge badge-warn">not built</span>';
+    const size = img.size_mb ? `${img.size_mb} MB` : '-';
+    return `<div class="dl-item">
+      <div class="dl-item-top">
+        <span class="dl-item-name"><strong>${escHtml(img.name)}</strong> <span class="badge badge-engine">${escHtml(img.label)}</span> ${badge}</span>
+        <span class="list-meta-date">${escHtml(size)}</span>
+      </div>
+      <div class="hint-text">Not published to a registry - build it from
+        <a href="${escHtml(img.source)}" target="_blank" rel="noopener">${escHtml(img.source)}</a>:
+        <code>${escHtml(img.build_command)}</code>. ${escHtml(img.note || '')}</div>
+    </div>`;
+  }).join('');
+}
+
 async function loadImages() {
   const list = document.getElementById('images-list');
   if (!list) return;
@@ -833,6 +856,8 @@ async function loadImages() {
     if (autoToggle) autoToggle.checked = !!data.auto_update_enabled;
     const intervalInput = document.getElementById('s-image-update-interval');
     if (intervalInput) intervalInput.value = data.auto_update_interval_hours ?? 24;
+
+    renderEngineImages(data.engine_images || []);
 
     if (!data.images || data.images.length === 0) {
       list.innerHTML = '<div class="list-empty-state">No images tracked yet.</div>';

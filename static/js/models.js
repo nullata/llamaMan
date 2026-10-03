@@ -268,9 +268,14 @@ function _modelSets() {
 
   const target = _launchNode();
   const targetNode = (cs.nodes || []).find(n => n.node_id === target);
+  // A peer's snapshot lists only its files; its engines' virtual models
+  // (e.g. Strata, only on capable nodes) come from snapshot.system.engines.
   const present = (target === cs.self_id)
     ? allModels
-    : ((targetNode && targetNode.snapshot && targetNode.snapshot.models) || []);
+    : [
+      ...((targetNode && targetNode.snapshot && targetNode.snapshot.models) || []),
+      ...((typeof engineModelsFromSnapshot === 'function') ? engineModelsFromSnapshot(targetNode) : []),
+    ];
 
   const presentKeys = new Set(present.map(m => m.name.toLowerCase()));
   const ghostMap = {};
@@ -323,6 +328,18 @@ function renderModels() {
     // too; the filename stays visible on the path line below.
     const pretty = getModelPrettyName(m.path);
     const displayName = pretty || m.name;
+    // Virtual models (an engine's catalogue, e.g. Strata) have no file to
+    // delete; show what they need instead.
+    const isVirtual = !!m.engine;
+    const virtualBadges = isVirtual
+      ? `${m.ram_gb ? `<span class="badge" title="System RAM Strata needs">${m.ram_gb} GB RAM</span>` : ''}`
+        + `${m.local_shards ? '<span class="badge badge-ok" title="Files downloaded by llamaMan">files local</span>' : ''}`
+        + `${m.download && m.download.status !== 'completed' ? `<span class="badge badge-warn">download ${escHtml(m.download.status)}</span>` : ''}`
+        + `${m.experimental ? '<span class="badge badge-warn">experimental</span>' : ''}`
+      : '';
+    const deleteBtn = isVirtual
+      ? ''
+      : '<button class="btn-delete-model" title="Delete model from disk"><i class="fa-solid fa-trash"></i></button>';
     el.innerHTML = `
       <div class="model-item-row">
         <button class="${starClass}" title="Toggle favorite"><i class="${starIcon}"></i></button>
@@ -332,11 +349,12 @@ function renderModels() {
             <span class="badge">${m.type.toUpperCase()}</span>
             ${quantBadge}
             <span class="badge badge-size">${escHtml(m.size_display)}</span>
+            ${virtualBadges}
           </div>
-          <span class="path">${escHtml(m.path)}</span>
+          <span class="path">${escHtml(isVirtual && m.title ? m.title : m.path)}</span>
         </div>
       </div>
-      <button class="btn-delete-model" title="Delete model from disk"><i class="fa-solid fa-trash"></i></button>
+      ${deleteBtn}
     `;
     el.querySelector('.btn-star').addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -344,7 +362,7 @@ function renderModels() {
       renderModels();
       updateLaunchFormStar();
     });
-    el.querySelector('.btn-delete-model').addEventListener('click', (e) => {
+    el.querySelector('.btn-delete-model')?.addEventListener('click', (e) => {
       e.stopPropagation();
       deleteModel(m);
     });
@@ -558,6 +576,7 @@ function applyPresetToLaunchForm(p) {
   if (typeof updateMmprojState === 'function') updateMmprojState();
   if (typeof updateGpuSettingsState === 'function') updateGpuSettingsState();
   if (typeof updateModelSettingsState === 'function') updateModelSettingsState();
+  if (typeof applyStrataPresetToLaunchForm === 'function') applyStrataPresetToLaunchForm(p);
 }
 
 async function selectModel(model, el) {
@@ -574,6 +593,11 @@ async function selectModel(model, el) {
   if (typeof setActiveTab === 'function') setActiveTab('settings', 'launch');
   updatePortSuggestion();
   if (ctxField) ctxField.value = '';
+  // Show the selected engine's fields before its preset fills them.
+  if (typeof applyEngineToLaunchForm === 'function') {
+    applyEngineToLaunchForm(engineForModel(model), model);
+    if (typeof applyStrataPresetToLaunchForm === 'function') applyStrataPresetToLaunchForm({});
+  }
   // Load preset if one exists
   _loadedPreset = null;
   _loadedPresetPath = null;
@@ -587,6 +611,7 @@ async function selectModel(model, el) {
       toast('Preset loaded', 'info');
     }
   } catch (e) { /* no preset, use defaults */ }
+  if (typeof refreshStrataSection === 'function') refreshStrataSection();
   if (typeof updateQuickLaunchVisibility === 'function') updateQuickLaunchVisibility();
   // Detect layer count for model
   await updateGpuLayersTotal(model.path);
@@ -626,6 +651,10 @@ function populateMmprojModelOptions() {
 async function populateLaunchImageSelect() {
   const sel = document.getElementById('f-image');
   if (!sel) return;
+  if (typeof currentLaunchEngine === 'function' && currentLaunchEngine() !== 'llamacpp') {
+    await populateEngineImageSelect();
+    return;
+  }
   const want = sel.value;  // preserve an explicit pick across refreshes
   try {
     const res = await _nf(_launchNode(), '/api/images');
@@ -697,6 +726,7 @@ function resetLaunchForm() {
   _loadedPreset = null;
   _loadedPresetPath = null;
   currentModelMeta = null;
+  if (typeof applyEngineToLaunchForm === 'function') applyEngineToLaunchForm('llamacpp');
   // form.reset() doesn't fire change events, so the share-queue cluster row
   // (which hides + clears its inputs on toggle-off) needs a manual nudge.
   if (typeof updateShareQueueClusterRow === 'function') updateShareQueueClusterRow();

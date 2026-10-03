@@ -214,7 +214,32 @@ def list_images():
         "auto_update_enabled": docker_images.get("auto_update_enabled", False),
         "auto_update_interval_hours": docker_images.get("auto_update_interval_hours", 24),
         "current_image": LLAMA_IMAGE,
+        "engine_images": _engine_images(),
     })
+
+
+def _engine_images() -> list[dict]:
+    """Images of enabled non-llama.cpp engines that can't be pulled (Strata
+    is built locally from its repository), with whether each exists here and
+    how to build it. Kept out of `images` so they get no Pull button and are
+    never touched by auto-update."""
+    from config import STRATA_ENABLED, STRATA_IMAGE
+    if not STRATA_ENABLED:
+        return []
+    local = _get_image_local_info(STRATA_IMAGE)
+    return [{
+        "engine": "strata",
+        "label": "Strata",
+        "name": STRATA_IMAGE,
+        "present": local.get("present", False),
+        "size_mb": local.get("size_mb"),
+        "created": local.get("created"),
+        "pullable": False,
+        "source": "https://github.com/Niko1221/Strata",
+        "build_command": f"docker build -t {STRATA_IMAGE} .",
+        "note": "NVIDIA driver 580+ (CUDA 13) on the host. "
+                "Optional: --build-arg CUDA_ARCHITECTURES=89 builds for one GPU generation only (faster).",
+    }]
 
 
 @bp.route("/api/images/pull-status", methods=["GET"])
