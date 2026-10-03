@@ -18,6 +18,9 @@ services:
       - ./models:/models
       - ./data:/data
       - ./logs:/tmp/llama-logs
+      # Optional model archive volume (README "Model Archive"); also set
+      # ARCHIVE_DIR=/archive below.
+      # - /mnt/user/backup/llms:/archive
       # Docker socket - allows llamaman to spawn llama-server containers
       - /var/run/docker.sock:/var/run/docker.sock
       # GPU monitoring (AMD + Intel Arc): exposes VRAM and utilization via sysfs.
@@ -75,6 +78,10 @@ services:
       # - SECRET_KEY=change-me-to-something-random
       # Uncomment to use MariaDB/MySQL instead of JSON file storage
       # - DATABASE_URL=mysql+pymysql://llama:password@mariadb:3306/llamaman
+      #
+      # Model archive (optional): the container path of the archive volume
+      # mounted above. Enables Archive / Restore in the model list.
+      # - ARCHIVE_DIR=/archive
       #
       # Strata engine (optional, NVIDIA only) - see README "Strata Engine".
       # Build the image first in a clone of github.com/Niko1221/Strata:

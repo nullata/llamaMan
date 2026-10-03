@@ -15,7 +15,7 @@
 - [Features](#features) · [Architecture](#architecture) · [Request Flow](#request-flow) · [Design Decisions](#design-decisions--trade-offs)
 - [Quick Start](#quick-start) · [Authentication](#authentication) · [Models](#models) · [Launching Instances](#launching-instances) · [Launch settings reference](#launch-settings-reference)
 - [Image & PDF Input](#image--pdf-input) · [Anti-Loop](#anti-loop) · [Per-Instance Proxy](#per-instance-proxy) · [Idle Timeout](#idle-timeout) · [GPU Stats](#gpu-stats)
-- [Request Recording & Stats](#request-recording--stats) · [Model Eviction](#model-eviction) · [Strata Engine](#strata-engine) · [OpenWebUI](#openwebui-integration)
+- [Request Recording & Stats](#request-recording--stats) · [Model Eviction](#model-eviction) · [Strata Engine](#strata-engine) · [Model Archive](#model-archive) · [OpenWebUI](#openwebui-integration)
 - [Storage & DB Outage Mirror](#storage-backends) · [Clustering](#clustering) · 🆕 [Knowledge Base & MCP](#knowledge-base--mcp)
 - [Environment Variables](#environment-variables) · [REST API](#rest-api) · [Troubleshooting](#troubleshooting)
 
@@ -37,6 +37,7 @@
 - **Multi-node clustering** *(opt-in)* - heterogeneous nodes as one logical cluster; aggregated dashboard; shared-queue load balancing
 - **Request recording + logging dashboard** - opt-in per-request or per-conversation, with retention
 - **Per-model display names** - friendly name API clients (OpenWebUI) see and accept instead of the raw quant filename
+- **Model archive** *(opt-in)* - move models to a second storage volume and back from the model list, with progress in the Downloads panel
 - **Docker image management** - pull any llama.cpp image by name; delete old local images from the UI
 - **Strata engine** *(opt-in, NVIDIA)* - launch [Strata](https://github.com/Niko1221/Strata) instances (Qwen3.8-Flash-Next MoE on consumer GPUs) next to llama.cpp, with first-run download progress and optional pre-download through llamaMan
 - 🆕 **Knowledge base + MCP server** *(opt-in, MariaDB backend)* - store documents as topics, search them by meaning with your own embedding model, and expose the whole thing to any MCP client (Claude Desktop, agents) over `POST /mcp/knowledge` — all local, nothing leaves your database
@@ -496,6 +497,40 @@ Under **Settings → Download Settings**:
 
 **Settings → Docker Images**: pull any llama.cpp image by name, delete old local images (disabled for the active `LLAMA_IMAGE`, and returns an error if Docker refuses because a container is using it), and optionally auto-update the active image on a schedule. With `STRATA_ENABLED`, a *Built locally* list shows the Strata image (present or not, plus its `docker build` command); it is never pulled or auto-updated.
 
+## Model Archive
+
+*(opt-in)* Move models off fast storage to a second volume and back from the UI, instead of shuffling files by hand on the host.
+
+**Enable it** by mounting the archive volume into the llamaMan container and pointing `ARCHIVE_DIR` at it:
+
+```yaml
+    volumes:
+      - /mnt/user/backup/llms:/archive
+    environment:
+      - ARCHIVE_DIR=/archive
+```
+
+Unset, the feature is hidden. llamaMan moves the files itself, so no `HOST_` path is needed.
+
+**Use it.**
+
+- Hover a model in the library and click the archive icon.
+- Archived models stay in the list, dimmed, with an *archived* badge and a **Restore** button. They can't be selected for launch and never appear in `/api/tags` / `/v1/models`.
+- Moves show in the **Downloads** panel with progress, speed and time left, and can be cancelled.
+- Restore puts a model back at its original path, so presets, favorites, notes and display names come back with it.
+
+**What moves.** A model's whole top-level folder under `/models`: a download's folder, with every shard of a split GGUF. A `.gguf` lying directly in `/models` moves together with its split siblings. A Strata model's shard folder (`strata/<tag>`) moves on its own.
+
+**Safety.**
+
+- **Same disk:** the move is an instant rename.
+- **Across disks:** llamaMan copies into a hidden `.llamaman-partial-*` folder on the destination, fsyncs, checks every file's size, renames it into place, and only then deletes the source.
+- **Failures:** a cancel, a failed check or too little free space leave the source untouched. Partial copies left by a restart mid-move are removed at startup.
+- **One move at a time.**
+- **Refused** while an instance uses the model (including a sleeping one, or as a draft model / mmproj, or a Strata instance using the shards), while a download writes into it, or when the destination name already exists. Launching or deleting a model that is being moved is refused too.
+
+**Limits.** Move jobs live in memory: after a llamaMan restart the list is empty, and a move that was interrupted must be started again (nothing is lost). In cluster mode each node archives to its own volume, and the buttons show for the node you are browsing.
+
 ## Model Backup and Restore
 
 **Settings → App Settings**:
@@ -662,6 +697,7 @@ The first embed records the vector dimension. A model with a different dimension
 | `LOGS_DIR` | `/tmp/llama-logs` | Directory for instance and download logs (container path) |
 | `HOST_MODELS_DIR` | *(same as `MODELS_DIR`)* | **Host-side** absolute path of the models volume. Must match the left side of `-v /host/path:/models` - passed to the Docker daemon when spawning sibling containers |
 | `HOST_LOGS_DIR` | *(same as `LOGS_DIR`)* | Host-side absolute path of the logs volume. Same requirement as `HOST_MODELS_DIR` |
+| `ARCHIVE_DIR` | *(unset)* | Container path where an archive volume is mounted (e.g. `/archive`). Setting it enables [Model Archive](#model-archive); unset hides it |
 | `PORT_RANGE_START` / `PORT_RANGE_END` | `8000` / `8020` | Public llama-server/proxy port pool |
 | `INTERNAL_PORT_RANGE_START` / `INTERNAL_PORT_RANGE_END` | `9000` / `9020` | Internal port pool used when proxy mode is enabled |
 | `LLAMAMAN_PROXY_PORT` | `42069` | Port for the Ollama-compatible proxy |
@@ -759,12 +795,16 @@ Boundary quirks worth pinning:
 | `GET` / `DELETE` | `/api/downloads/<id>` | Get / cancel |
 | `DELETE` | `/api/downloads/<id>/remove` | Remove a completed/failed entry |
 | `GET` | `/api/downloads/<id>/logs`, `.../logs/stream` | Tail / SSE stream |
-| `GET` | `/api/models` | Discovered models (includes `repo_id` when known) |
+| `GET` | `/api/models` | Discovered models (includes `repo_id` when known; archived models flagged `archived` with `restore_path`) |
 | `POST` | `/api/models/delete` | Delete from disk (`{"path": "/models/..."}`) |
 | `GET` | `/api/model-layers?path=<path>` | Read layer count from GGUF metadata |
 | `GET` | `/api/disk-space` | Free/used space on the models volume |
 | `GET` / `PUT` / `DELETE` | `/api/presets/<model_path>` | Get / save / delete a preset (`GET /api/presets` lists all) |
 | `GET` | `/api/engines` | This node's inference engines: availability (with reason), capabilities, launch fields, Strata's model catalogue |
+| `GET` | `/api/archive` | Archive status (`enabled`, `available`, `reason`, `free_bytes`) and move jobs |
+| `POST` | `/api/archive` | Archive a model: `{"path": "/models/..."}` (moves its whole folder). 409 when in use |
+| `POST` | `/api/archive/restore` | Restore an archived model: `{"path": "<ARCHIVE_DIR>/..."}` |
+| `DELETE` | `/api/archive/jobs/<id>` | Cancel a queued/running move (source kept), or remove a finished one |
 | `POST` | `/api/engines/strata/download` | Pre-download a Strata model's shards (`{"model": "strata/qwen-IQ2_XS"}`, optional `hf_token_id` / `speed_limit_mbps`) |
 
 Download body: `{"repo_id": "...", "filename": "...", "hf_token": "...", "speed_limit_mbps": 0}`. Blank `filename` pulls the full repo.
