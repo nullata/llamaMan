@@ -111,9 +111,21 @@ MEMORY_WARN_GB = 64
 _SETUPS_LOCK = threading.Lock()
 
 
+_SHARD_RE = re.compile(r"^(?P<stem>.+)-(?P<i>\d{5})-of-(?P<n>\d{5})\.gguf$", re.IGNORECASE)
+# The quantization at the end of a shard's stem (setup.py GGUF_QUANT):
+# "...-GSQ-RCO-IQ3_S", "...-UD-Q4_K_XL".
+_QUANT_RE = re.compile(r"(?<![A-Za-z0-9])((?:UD-)?I?Q\d+(?:_[A-Za-z0-9]+)*)$", re.IGNORECASE)
+
+
 def model_for_file(path: str | None) -> tuple[str, str] | None:
-    """A downloaded shard of a catalogue model, recognized by its file name
-    (any folder) -> (family, size); else None."""
+    """A shard of a model Strata runs -> (family, size); else None.
+
+    The published file names match exactly. Any other name matches when it
+    is split like the published files and ends in a quant Strata runs (a
+    renamed copy or another upload of the same files): setup.py reads the
+    shard count from the name and runs only its own quants
+    (SUPPORTED_GGUFS), so a different split or quant is not offered. Sizes
+    two families share (IQ2_XS, IQ3_XXS) are Swift's when the name says so."""
     if not isinstance(path, str) or not path.lower().endswith(".gguf"):
         return None
     name = os.path.basename(path)
@@ -121,19 +133,49 @@ def model_for_file(path: str | None) -> tuple[str, str] | None:
         for size, meta in SIZES.items():
             if family in meta["families"] and name in shard_files(family, size):
                 return family, size
-    return None
+    m = _SHARD_RE.match(name)
+    q = _QUANT_RE.search(m.group("stem")) if m else None
+    size = next((s for s in SIZES if q and s.lower() == q.group(1).lower()), None)
+    if not size:
+        return None
+    families = SIZES[size]["families"]
+    lowered = name.lower()
+    family = next((f for f in families if f != "qwen" and f in lowered), None) \
+        or ("qwen" if "qwen" in families else (families[0] if len(families) == 1 else None))
+    if not family or int(m.group("n")) != FAMILIES[family]["shards"]:
+        return None
+    return family, size
+
+
+def _shard_pairs(path: str, parsed: tuple[str, str]) -> list[tuple[str, str]]:
+    """(the sibling shard's path, its published name) for every shard of the
+    model `path` belongs to, whether or not they exist."""
+    published = shard_files(*parsed)
+    name = os.path.basename(path)
+    if name in published:
+        own = published
+    else:
+        stem = _SHARD_RE.match(name).group("stem")
+        own = ["%s-%05d-of-%05d.gguf" % (stem, i, len(published)) for i in range(1, len(published) + 1)]
+    d = os.path.dirname(path)
+    return [(os.path.join(d, n), pub) for n, pub in zip(own, published)]
+
+
+def shard_mounts_for_file(path: str | None) -> list[tuple[str, str]] | None:
+    """Every shard of the model `path` is a shard of, as (path, the
+    published name setup.py looks for), when all are next to it; else None."""
+    parsed = model_for_file(path)
+    if not parsed:
+        return None
+    pairs = _shard_pairs(path, parsed)
+    return pairs if all(os.path.isfile(f) for f, _ in pairs) else None
 
 
 def shards_dir_for_file(path: str | None) -> str | None:
     """The folder of a downloaded shard when every shard of its model is
-    there (what gets mounted into the container), else None."""
-    parsed = model_for_file(path)
-    if not parsed:
-        return None
-    d = os.path.dirname(path)
-    if all(os.path.isfile(os.path.join(d, n)) for n in shard_files(*parsed)):
-        return d
-    return None
+    there, else None."""
+    mounts = shard_mounts_for_file(path)
+    return os.path.dirname(mounts[0][0]) if mounts else None
 
 
 def parse_model_path(model_path: str | None) -> tuple[str, str] | None:
@@ -440,9 +482,11 @@ class StrataEngine(Engine):
             return (f"{model_id_for(*parsed)} is still being downloaded "
                     f"(download {dl['id'][:8]}, {dl['status']}); launch it when the download finishes")
         if model_for_file(model_path):
-            if not shards_dir_for_file(model_path):
-                return (f"not every shard of {model_id_for(*parsed)} is next to {os.path.basename(model_path)} "
-                        f"(expected {', '.join(shard_files(*parsed))})")
+            missing = [os.path.basename(f) for f, _ in _shard_pairs(model_path, parsed)
+                       if not os.path.isfile(f)]
+            if missing:
+                return (f"not every shard of {model_id_for(*parsed)} is next to "
+                        f"{os.path.basename(model_path)} (missing {', '.join(missing)})")
         elif not local_shard_dir(*parsed):
             return (f"{model_id_for(*parsed)} is not downloaded: download it from Recommended "
                     f"models in the Strata settings, then launch it from the model library")
@@ -606,14 +650,20 @@ class StrataEngine(Engine):
             HOST_LOGS_DIR: {"bind": LOGS_DIR, "mode": "rw"},
         }
         family, size = parse_model_path(model_path)
+        target = f"/data/models/{shards_dir_tag(family, size)}"
         # The file it was launched from (launch_instance), else llamaman's
         # own download folder for it.
-        shards = shards_dir_for_file(config.get("engine_source_path")) or local_shard_dir(family, size)
+        mounts = shard_mounts_for_file(config.get("engine_source_path"))
+        if mounts and any(os.path.basename(f) != pub for f, pub in mounts):
+            # Renamed copies: setup.py looks for the published names, so each
+            # file is mounted under its own.
+            for f, pub in mounts:
+                vols[_host_path_for_models_subdir(f)] = {"bind": f"{target}/{pub}", "mode": "rw"}
+            return vols
+        shards = os.path.dirname(mounts[0][0]) if mounts else local_shard_dir(family, size)
         if shards:
             # rw: setup writes a <shard>.done mark beside each file it accepts.
-            vols[_host_path_for_models_subdir(shards)] = {
-                "bind": f"/data/models/{shards_dir_tag(family, size)}", "mode": "rw",
-            }
+            vols[_host_path_for_models_subdir(shards)] = {"bind": target, "mode": "rw"}
         return vols
 
     def ulimits(self, config: dict) -> list:

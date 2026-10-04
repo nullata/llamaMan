@@ -1288,7 +1288,8 @@
         <button class="btn-icon" id="btn-close-strata-models" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <div class="modal-body">
-        <p class="hint-text">Strata runs only these models. A download goes to the target node&#39;s models folder and shows in the Downloads panel; when it finishes the model appears in the library - select it and choose Strata as the Inference Engine.</p>
+        <p class="hint-text">Strata runs only these quants. A download goes to the target node&#39;s models folder and shows in the Downloads panel; when it finishes the model appears in the library - select it and choose Strata as the Inference Engine.</p>
+        <p class="hint-text">The same quants can also be downloaded manually with the Hugging Face downloader, even from another upload or under other file names, as long as they are split into the same number of files. Other quants of the same architecture (K-quants, other i-quants) do not run on Strata.</p>
         <div id="strata-models-list" class="strata-models-list"></div>
       </div>
     </div>

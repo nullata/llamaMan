@@ -299,6 +299,49 @@ class ShardReadinessTests(_Isolated):
             vols = STRATA.volumes(QWEN, cfg)
         self.assertEqual(vols[d], {"bind": "/data/models/IQ2_XS", "mode": "rw"})
 
+    def test_other_names_of_a_supported_quant_match(self):
+        for name, want in (
+            ("Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf", ("qwen", "IQ3_S")),   # published
+            ("my-upload-IQ3_S-00002-of-00002.gguf", ("qwen", "IQ3_S")),                    # renamed
+            ("some-swift-copy-IQ2_XS-00001-of-00002.gguf", ("swift", "IQ2_XS")),           # shared size
+            ("plain-IQ2_XS-00001-of-00002.gguf", ("qwen", "IQ2_XS")),
+            ("mirror-coder-IQ1_M-00001-of-00002.gguf", ("coder", "IQ1_M")),
+            ("Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf", ("unsloth", "UD-Q4_K_XL")),
+        ):
+            self.assertEqual(S.model_for_file(f"/m/{name}"), want, name)
+
+    def test_unsupported_quants_and_splits_do_not_match(self):
+        for name in ("Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00004.gguf",   # quant Strata can't run
+                     "Qwen3.8-Flash-Next-Q2_K_XL-00001-of-00003.gguf",
+                     "my-upload-IQ3_S-00001-of-00003.gguf",                  # different split
+                     "my-upload-IQ3_S.gguf",                                 # not split
+                     "llama-3-8b-Q4_K_M.gguf", "notes.txt"):
+            self.assertIsNone(S.model_for_file(f"/m/{name}"), name)
+
+    def test_renamed_copy_mounted_under_published_names(self):
+        d = os.path.join(self.models_dir, "uploads")
+        os.makedirs(d)
+        own = [f"my-upload-IQ2_XS-0000{i}-of-00002.gguf" for i in (1, 2)]
+        for n in own:
+            open(os.path.join(d, n), "w").close()
+        src = os.path.join(d, own[1])                       # either shard selects the model
+        self.assertIsNone(STRATA.launch_blocker(src))
+        with patch("config.HOST_MODELS_DIR", "/host/models"):
+            vols = STRATA.volumes(QWEN, {"engine_source_path": src})
+        for n, pub in zip(own, S.shard_files("qwen", "IQ2_XS")):
+            self.assertEqual(vols[f"/host/models/uploads/{n}"],
+                             {"bind": f"/data/models/IQ2_XS/{pub}", "mode": "rw"})
+        os.remove(os.path.join(d, own[0]))
+        self.assertIn(own[0], STRATA.launch_blocker(src))
+
+    def test_published_names_still_mount_the_folder(self):
+        d = self._write_shards()
+        src = os.path.join(d, S.shard_files("qwen", "IQ2_XS")[0])
+        with patch("config.HOST_MODELS_DIR", "/host/models"):
+            vols = STRATA.volumes(QWEN, {"engine_source_path": src})
+        rel = os.path.relpath(d, self.models_dir)
+        self.assertEqual(vols[f"/host/models/{rel}"], {"bind": "/data/models/IQ2_XS", "mode": "rw"})
+
     def test_plain_file_cannot_run_on_strata(self):
         plain = os.path.join(self.models_dir, "chat-Q4_K_M.gguf")
         open(plain, "w").close()
