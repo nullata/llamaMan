@@ -736,6 +736,7 @@ Optional; see [Strata Engine](#strata-engine).
 | `STRATA_DATA_VOLUME` | `llamaman-strata-data` | Named Docker volume mounted at `/data` in every Strata container (model files, packs, MTP layer, per-model setup; 70-120 GB per model). Created by Docker on first use |
 | `HOST_STRATA_DATA_DIR` | *(unset)* | Host path to mount at `/data` instead of the named volume. Wins over `STRATA_DATA_VOLUME` |
 | `STRATA_LOAD_TIMEOUT` | `3600` | Seconds a request (or relaunch) waits for a Strata instance to become ready. High because a first start downloads and prepares the model before the port opens |
+| `STRATA_WEB_HOSTS` | *(unset)* | Extra host names / IPs (comma-separated) you open a Strata instance's own web app by (`http://<host>:<instance port>/`). Without an API key Strata refuses chat requests from pages on other names; the host of `CLUSTER_ADVERTISE_URL` is always allowed. Applies to instances started afterwards |
 
 ### Clustering
 

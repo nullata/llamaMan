@@ -777,17 +777,39 @@ class StrataEngine(Engine):
 
     def container_spec(self, **kw) -> dict:
         kwargs = super().container_spec(**kw)
-        # Without an API key Strata refuses any Host header that isn't an IP,
-        # localhost or a name it knows (DNS-rebinding check, serve/server.py
-        # host_allowed). llamaman reaches the container by its name on the
-        # Docker network, and bare-metal by LLAMA_HOST_ADDR, so allow both.
-        # Read at every server start: no REINSTALL needed.
-        from config import LLAMA_HOST_ADDR
-        hosts = [kw["container_name"]]
-        if LLAMA_HOST_ADDR and LLAMA_HOST_ADDR not in hosts:
-            hosts.append(LLAMA_HOST_ADDR)
-        kwargs.setdefault("environment", {})["STRATA_ALLOWED_HOSTS"] = ",".join(hosts)
+        kwargs.setdefault("environment", {})["STRATA_ALLOWED_HOSTS"] = ",".join(
+            self.allowed_hosts(kw["container_name"]))
         return kwargs
+
+    @staticmethod
+    def allowed_hosts(container_name: str) -> list[str]:
+        """Names Strata (without an API key) accepts in Host and Origin
+        (serve/server.py host_allowed / origin_allowed): llamaman's own route
+        to it (the container name on the Docker network, LLAMA_HOST_ADDR
+        bare-metal) and the names a browser opens its web app by - the host
+        of CLUSTER_ADVERTISE_URL and STRATA_WEB_HOSTS; the web app's chat
+        requests carry the page's Origin. Read at every server start (no
+        REINSTALL). Entries Strata would reject (it refuses to start on a
+        malformed one) are dropped."""
+        from urllib.parse import urlsplit
+        from config import CLUSTER_ADVERTISE_URL, LLAMA_HOST_ADDR, STRATA_WEB_HOSTS
+        candidates = [container_name, LLAMA_HOST_ADDR]
+        if CLUSTER_ADVERTISE_URL:
+            try:
+                candidates.append(urlsplit(CLUSTER_ADVERTISE_URL).hostname or "")
+            except ValueError:
+                pass
+        for raw in STRATA_WEB_HOSTS:
+            # Like Strata: drop a scheme, port or path ("http://a.lan:12021/" -> "a.lan").
+            x = raw.split("://", 1)[-1].split("/", 1)[0]
+            candidates.append(x.split(":", 1)[0] if x.count(":") == 1 else x.strip("[]"))
+        out = []
+        for h in candidates:
+            h = (h or "").strip().lower().rstrip(".")
+            ok = bool(h) and (all(c.isalnum() or c in "-._" for c in h) or ":" in h)
+            if ok and h not in out:
+                out.append(h)
+        return out
 
     def data_mount_source(self) -> str:
         from config import HOST_STRATA_DATA_DIR, STRATA_DATA_VOLUME

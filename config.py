@@ -179,6 +179,10 @@ HOST_STRATA_DATA_DIR = os.environ.get("HOST_STRATA_DATA_DIR", "").strip()
 # A first start downloads ~60-110 GB and builds the pack before the server
 # opens its port, so this is far above MODEL_LOAD_TIMEOUT.
 STRATA_LOAD_TIMEOUT = int(os.environ.get("STRATA_LOAD_TIMEOUT", 3600))
+# Extra host names / IPs (comma-separated) a browser uses to open a Strata
+# instance's own web app. Strata (no API key) refuses other Host / Origin
+# names; the host of CLUSTER_ADVERTISE_URL is allowed without listing it.
+STRATA_WEB_HOSTS = [h.strip() for h in os.environ.get("STRATA_WEB_HOSTS", "").split(",") if h.strip()]
 
 # Model archive (core/archive.py): a second storage volume models can be moved
 # to and restored from in the UI. Setting ARCHIVE_DIR (the path INSIDE the

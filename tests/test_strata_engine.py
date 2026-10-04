@@ -163,6 +163,16 @@ class StrataContainerSpecTests(_TmpDirs):
             env = self._spec()["environment"]
         self.assertEqual(env["STRATA_ALLOWED_HOSTS"], "llamaman-inst-1,gpu-box.lan")
 
+    def test_browser_hosts_allowed_for_the_web_app(self):
+        # Strata's own web app sends the page's Origin with its chat requests;
+        # without an API key Strata accepts only names in its allowed list.
+        with patch("config.CLUSTER_ADVERTISE_URL", "http://192.168.0.116:5005"), \
+             patch("config.STRATA_WEB_HOSTS", ["NullSrv", "http://box.lan:12021/", "bad host!", "nullsrv"]), \
+             patch("config.LLAMA_HOST_ADDR", ""):
+            env = self._spec()["environment"]
+        self.assertEqual(env["STRATA_ALLOWED_HOSTS"].split(","),
+                         ["llamaman-inst-1", "192.168.0.116", "nullsrv", "box.lan"])
+
     def test_memlock_unlimited_always(self):
         (ul,) = self._spec()["ulimits"]
         self.assertEqual((ul["Name"], ul["Soft"], ul["Hard"]), ("memlock", -1, -1))
