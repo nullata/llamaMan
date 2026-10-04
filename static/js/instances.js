@@ -323,6 +323,7 @@ function renderInstances() {
         ${stopBtn}${restartBtn}${removeBtn}
       </div>
       <div class="inst-controls-secondary">
+        ${(typeof instanceWebUiButton === 'function') ? instanceWebUiButton(inst) : ''}
         <button class="btn btn-secondary btn-logs" data-id="${inst.id}"${nodeAttr}><i class="fa-solid fa-terminal"></i> Logs</button>
         <button class="btn btn-secondary btn-stats" data-id="${inst.id}"${nodeAttr} data-model="${escHtml(inst.model_name)}"><i class="fa-solid fa-chart-line"></i> Stats</button>
       </div>
@@ -870,6 +871,7 @@ function readLaunchForm() {
     share_queue_fallback: document.getElementById('f-share-queue-fallback')?.checked || false,
     auto_restart_on_crash: document.getElementById('f-auto-restart').checked,
     embedding_model: document.getElementById('f-embedding-model').checked,
+    webui_enabled: document.getElementById('f-webui-enabled')?.checked !== false,
     spec_enabled: document.getElementById('f-spec-enabled').checked,
     spec_type: currentSpecType(),
     spec_draft_model: document.getElementById('f-spec-draft-model').value.trim(),

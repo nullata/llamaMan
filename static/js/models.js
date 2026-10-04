@@ -517,6 +517,9 @@ function applyPresetToLaunchForm(p) {
   if (typeof updateShareQueueClusterRow === 'function') updateShareQueueClusterRow();
   document.getElementById('f-auto-restart').checked = !!p.auto_restart_on_crash;
   document.getElementById('f-embedding-model').checked = !!p.embedding_model;
+  // Default on: presets saved before the toggle existed keep the web UI.
+  const webuiEl = document.getElementById('f-webui-enabled');
+  if (webuiEl) webuiEl.checked = p.webui_enabled !== false;
   document.getElementById('f-proxy-sampling-override-enabled').checked = !!p.proxy_sampling_override_enabled;
   document.getElementById('f-proxy-sampling-temperature').value = p.proxy_sampling_temperature ?? 0.8;
   document.getElementById('f-proxy-sampling-top-k').value = p.proxy_sampling_top_k ?? 40;

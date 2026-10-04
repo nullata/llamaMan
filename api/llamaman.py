@@ -589,6 +589,7 @@ def _ensure_model_running(
             max_queue_depth=preset.get("max_queue_depth", 200),
             share_queue=preset.get("share_queue", False),
             embedding_model=preset.get("embedding_model", False),
+            webui_enabled=preset.get("webui_enabled", True) is not False,
             proxy_sampling_override_enabled=bool(preset.get("proxy_sampling_override_enabled", False)),
             proxy_sampling_temperature=float(preset.get("proxy_sampling_temperature", 0.8)),
             proxy_sampling_top_k=int(preset.get("proxy_sampling_top_k", 40)),

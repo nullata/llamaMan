@@ -26,6 +26,15 @@ class LlamaCppEngine(Engine):
     }
     launch_fields = None  # the whole launch form
 
+    def web_ui_path(self, config: dict) -> str | None:
+        # llama-server's built-in chat page, unless turned off or the model
+        # only embeds (the page can't chat with it).
+        if config.get("embedding_model") or config.get("webui_enabled") is False:
+            return None
+        if "--no-webui" in str(config.get("extra_args") or "").split():
+            return None
+        return "/"
+
     def default_image(self) -> str:
         from config import LLAMA_IMAGE
         return LLAMA_IMAGE

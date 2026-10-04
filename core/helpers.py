@@ -237,6 +237,10 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
         cmd += ["--parallel", str(int(config["parallel"]))]
     if config.get("embedding_model"):
         cmd += ["--embeddings"]
+    # Only an explicit False: configs from before the toggle keep the web UI,
+    # and a --no-webui typed into extra_args is not doubled.
+    if config.get("webui_enabled") is False and "--no-webui" not in str(config.get("extra_args") or "").split():
+        cmd += ["--no-webui"]
     # Multi-GPU placement. All three llama.cpp modes are exposed and emitted
     # literally: none (single GPU only, ignores --tensor-split), layer (splits
     # whole layers - llama.cpp's own default when no flag is passed), row

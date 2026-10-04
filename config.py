@@ -182,6 +182,10 @@ STRATA_LOAD_TIMEOUT = int(os.environ.get("STRATA_LOAD_TIMEOUT", 3600))
 # Extra host names / IPs (comma-separated) a browser uses to open a Strata
 # instance's own web app. Strata (no API key) refuses other Host / Origin
 # names; the host of CLUSTER_ADVERTISE_URL is allowed without listing it.
+# How far the host's published ports are from the instance ports inside the
+# llamaman container (compose "12020-12025:8000-8005" -> 4020). Only used to
+# build links a browser opens (Strata's own web app); 0 = mapped 1:1.
+INSTANCE_PORT_OFFSET = int(os.environ.get("INSTANCE_PORT_OFFSET", 0) or 0)
 STRATA_WEB_HOSTS = [h.strip() for h in os.environ.get("STRATA_WEB_HOSTS", "").split(",") if h.strip()]
 
 # Model archive (core/archive.py): a second storage volume models can be moved

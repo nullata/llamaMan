@@ -38,6 +38,8 @@ LLAMACPP_ONLY_FIELDS = {
     "cache_type_v": ("f16",),
     "dry_enabled": (),
     "embedding_model": (),
+    # Default on; Strata always serves its own page, so either value is fine.
+    "webui_enabled": (True,),
 }
 
 
@@ -238,6 +240,11 @@ class Engine:
 
     def launch_blocker(self, model_path: str) -> str | None:
         """A reason this model can't be launched right now, or None."""
+        return None
+
+    def web_ui_path(self, config: dict) -> str | None:
+        """The path of the engine's own browser page on an instance's port,
+        or None when it has none worth linking."""
         return None
 
     def image_input_enabled(self, body: dict) -> bool | None:

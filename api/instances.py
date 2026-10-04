@@ -67,6 +67,22 @@ def _public_instance(inst: dict) -> dict:
             d["load_stage"] = stage
     if inst.get("_internal_port") is not None:
         d["internal_port"] = inst.get("_internal_port")
+    web_path = get_engine(inst.get("config"), inst.get("model_path")).web_ui_path(inst.get("config") or {})
+    if web_path and inst.get("port") is not None:
+        # The engine's own page as the browser reaches it. Behind llamaman's
+        # proxy (internal_port set) that is llamaman's published port
+        # (INSTANCE_PORT_OFFSET: the host's mapping), and with require_auth it
+        # wants a bearer token a browser tab can't send - the UI disables the
+        # link. Without the proxy the server's container publishes the port
+        # on the host itself.
+        proxied = inst.get("_internal_port") is not None
+        from config import INSTANCE_PORT_OFFSET
+        auth = False
+        if proxied:
+            from api.auth import is_require_auth_enabled
+            auth = is_require_auth_enabled()
+        d["web_ui"] = {"port": int(inst["port"]) + (INSTANCE_PORT_OFFSET if proxied else 0),
+                       "path": web_path, "auth_required": auth}
     gate = get_gate(inst["id"])
     if gate:
         d["queue"] = {
@@ -149,6 +165,7 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
             "share_queue_group",
             "share_queue_fallback",
             "embedding_model",
+            "webui_enabled",
             "auto_restart_on_crash",
             "proxy_sampling_override_enabled",
             "proxy_sampling_temperature",
@@ -555,6 +572,7 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
                     share_queue=False, share_queue_group="",
                     share_queue_fallback=False,
                     embedding_model=False,
+                    webui_enabled=True,
                     auto_restart_on_crash=False,
                     image=None,
                     proxy_sampling_override_enabled=False,
@@ -710,6 +728,9 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
         "share_queue_group": (share_queue_group or "").strip().lower(),
         "share_queue_fallback": bool(share_queue_fallback),
         "embedding_model": embedding_model,
+        # llama-server's built-in web UI (off -> --no-webui). Default on, like
+        # llama-server; configs saved before this key existed keep it on.
+        "webui_enabled": bool(webui_enabled),
         "auto_restart_on_crash": auto_restart_on_crash,
         "image": (image or "").strip() or eng.default_image(),
         "proxy_sampling_override_enabled": proxy_sampling_override_enabled,
@@ -1222,6 +1243,7 @@ def api_instances_create():
         share_queue_group=body.get("share_queue_group", ""),
         share_queue_fallback=bool(body.get("share_queue_fallback", False)),
         embedding_model=bool(body.get("embedding_model", False)),
+        webui_enabled=body.get("webui_enabled", True) is not False,
         auto_restart_on_crash=bool(body.get("auto_restart_on_crash", False)),
         image=body.get("image", "").strip() or None,
         engine=engine,
@@ -1342,6 +1364,7 @@ def api_instances_restart(inst_id):
         share_queue_group=config.get("share_queue_group", ""),
         share_queue_fallback=config.get("share_queue_fallback", False),
         embedding_model=config.get("embedding_model", False),
+        webui_enabled=config.get("webui_enabled", True) is not False,
         image=config.get("image"),
         proxy_sampling_override_enabled=bool(config.get("proxy_sampling_override_enabled", False)),
         proxy_sampling_temperature=float(config.get("proxy_sampling_temperature", 0.8)),

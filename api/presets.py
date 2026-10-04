@@ -220,6 +220,7 @@ def api_preset_save(model_path):
         "share_queue_group": (body.get("share_queue_group") or "").strip().lower() if share_queue_on else "",
         "share_queue_fallback": bool(body.get("share_queue_fallback", False)) if share_queue_on else False,
         "embedding_model": body.get("embedding_model", False),
+        "webui_enabled": body.get("webui_enabled", True) is not False,
         "auto_restart_on_crash": body.get("auto_restart_on_crash", False),
         "favorite": body.get("favorite", existing.get("favorite", False)),
         "note": body.get("note", existing.get("note", "")),

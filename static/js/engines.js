@@ -91,6 +91,27 @@ function instanceEngineBadge(inst) {
   return ` <span class="badge badge-engine" title="Inference engine">${escHtml(label)}</span>`;
 }
 
+// "Open Strata" on a running Strata instance: its own web app through the
+// instance's public port. The host is the one this page was opened on, or a
+// peer's advertise host for a peer's instance.
+function instanceWebUiButton(inst) {
+  const w = inst && inst.web_ui;
+  if (!w || !['healthy', 'sleeping'].includes(inst.status)) return '';
+  let host = window.location.hostname;
+  if (inst._remote) {
+    const node = ((window.clusterState || {}).nodes || []).find(n => n.node_id === inst._node_id);
+    try { host = new URL(node.advertise_url).hostname; } catch (e) { return ''; }
+  }
+  const label = `<i class="fa-solid fa-arrow-up-right-from-square"></i> Open ${escHtml(instanceServerLabel(inst))}`;
+  if (w.auth_required) {
+    return `<button class="btn btn-secondary btn-web-ui" disabled
+      title="Require Authentication is on: the instance port needs an API key a browser tab can't send">${label}</button>`;
+  }
+  const url = `http://${host.includes(':') ? `[${host}]` : host}:${w.port}${w.path || '/'}`;
+  const tip = inst.status === 'sleeping' ? 'Opening it wakes the instance (a cold start takes minutes)' : url;
+  return `<a class="btn btn-secondary btn-web-ui" href="${escHtml(url)}" target="_blank" rel="noopener" title="${escHtml(tip)}">${label}</a>`;
+}
+
 function instanceServerLabel(inst) {
   return (inst && inst.engine === 'strata') ? 'Strata' : 'llama-server';
 }

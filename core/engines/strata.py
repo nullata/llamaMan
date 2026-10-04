@@ -702,6 +702,9 @@ class StrataEngine(Engine):
         return {"strata_vision": vision, "strata_kv": kv, "strata_low_ram": low_ram,
                 "strata_layer_split": split}, None
 
+    def web_ui_path(self, config: dict) -> str | None:
+        return "/"                                   # serve/web/index.html
+
     def image_input_enabled(self, body: dict) -> bool | None:
         return str(body.get("strata_vision") or "no").strip().lower() != "no"
 
