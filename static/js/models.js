@@ -597,12 +597,15 @@ function applyPresetToLaunchForm(p) {
   document.getElementById('f-note').value = p.note || '';
   // Per-node hardware (base, overlaid with the selected node's override)
   applyPresetHardwareForNode(p, _launchNode());
+  // Strata's fields first: updateMmprojState reads Image Input
+  // (f-strata-vision) and clears the PDF toggles when it is off, so it must
+  // see the preset's value, not the form's default.
+  if (typeof applyStrataPresetToLaunchForm === 'function') applyStrataPresetToLaunchForm(p);
   if (typeof updateProxySamplingOverrideState === 'function') updateProxySamplingOverrideState();
   if (typeof updateSpecState === 'function') updateSpecState();
   if (typeof updateMmprojState === 'function') updateMmprojState();
   if (typeof updateGpuSettingsState === 'function') updateGpuSettingsState();
   if (typeof updateModelSettingsState === 'function') updateModelSettingsState();
-  if (typeof applyStrataPresetToLaunchForm === 'function') applyStrataPresetToLaunchForm(p);
 }
 
 async function selectModel(model, el) {

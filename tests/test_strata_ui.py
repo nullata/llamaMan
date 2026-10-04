@@ -82,6 +82,20 @@ class StrataPdfInputTests(unittest.TestCase):
         self.assertIsNone(err)
 
 
+class PresetLoadOrderTests(unittest.TestCase):
+
+    def test_strata_fields_applied_before_mmproj_state(self):
+        # updateMmprojState clears the PDF toggles when Strata's Image Input
+        # is off; run before the preset set Image Input, it wiped a saved
+        # "Accept PDF uploads".
+        with open(os.path.join(REPO_ROOT, "static", "js", "models.js"), encoding="utf-8") as f:
+            js = f.read()
+        body = js[js.index("function applyPresetToLaunchForm("):]
+        body = body[:body.index("\n}\n")]
+        self.assertLess(body.index("applyStrataPresetToLaunchForm(p)"),
+                        body.index("updateMmprojState()"))
+
+
 class LaunchFormMarkupTests(unittest.TestCase):
 
     @classmethod
@@ -126,6 +140,10 @@ class LaunchFormMarkupTests(unittest.TestCase):
                        'id="strata-warnings"', 'id="strata-context-options"'):
             self.assertEqual(self._section_of(marker), "model-settings-section", marker)
         self.assertIn("js/engines.js", self.html)
+
+    def test_dry_explanations_llamacpp_only(self):
+        self.assertIn('<p class="hint-text" data-engine-only="llamacpp">Two independent controls.', self.html)
+        self.assertIn('<span class="text-meta" data-engine-only="llamacpp">Two-tier defense', self.html)
 
     def test_image_pdf_section_shared_mmproj_parts_llamacpp_only(self):
         sec = re.search(r'<div class="form-group full launch-settings-section" id="image-pdf-section">', self.html)

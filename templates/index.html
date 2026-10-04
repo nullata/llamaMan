@@ -466,9 +466,9 @@
                 <div class="form-group full launch-settings-section">
                   <div class="launch-settings-section-header">
                     <h3>Anti-Loop</h3>
-                    <span class="text-meta">Two-tier defense against output loops</span>
+                    <span class="text-meta" data-engine-only="llamacpp">Two-tier defense against output loops</span>
                   </div>
-                  <p class="hint-text">Two independent controls. <strong>DRY sampler</strong> is a soft, sampling-time deterrent baked into llama-server &mdash; it discourages token sequences that would extend a recent n-gram. <strong>Output Loop Detection</strong> is a hard, post-hoc kill: llamaman's proxy watches the model's output text and, if it sees the same large chunk repeat, ends the turn and tells the client. DRY prevents most loops from forming; Loop Detection is the safety net when DRY isn't enough.</p>
+                  <p class="hint-text" data-engine-only="llamacpp">Two independent controls. <strong>DRY sampler</strong> is a soft, sampling-time deterrent baked into llama-server &mdash; it discourages token sequences that would extend a recent n-gram. <strong>Output Loop Detection</strong> is a hard, post-hoc kill: llamaman's proxy watches the model's output text and, if it sees the same large chunk repeat, ends the turn and tells the client. DRY prevents most loops from forming; Loop Detection is the safety net when DRY isn't enough.</p>
 
                   <div class="launch-settings-section-header anti-loop-subheader" data-engine-only="llamacpp">
                     <h4>DRY sampler</h4>
