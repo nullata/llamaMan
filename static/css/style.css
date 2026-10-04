@@ -2763,11 +2763,8 @@ body.login-page {
 .strata-model-info {
   margin-bottom: 12px;
 }
-a.btn-web-ui {
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.inst-web-ui a {
+  color: var(--accent);
 }
 .engine-select-row {
   display: flex;

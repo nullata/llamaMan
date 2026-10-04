@@ -2,9 +2,8 @@
 
 """llama.cpp's built-in web UI: the Web UI launch toggle (webui_enabled,
 default on -> --no-webui when off) and the instance card's link to it
-(_public_instance web_ui): hidden for embedding models and with the UI off;
-behind llamaman's proxy it uses llamaman's published port (offset) and is
-disabled under require_auth, without the proxy it is the server's own port."""
+(_public_instance web_ui): hidden for embedding models and with the UI off,
+always the port the server's own container publishes."""
 
 import os
 import unittest
@@ -42,20 +41,17 @@ class CommandTests(unittest.TestCase):
 
 class LinkTests(unittest.TestCase):
 
-    def _public(self, auth=False, offset=4020, **inst):
+    def _public(self, **inst):
         base = {"id": "i1", "model_path": GGUF, "status": "healthy", "port": 8001, "config": {}}
         base.update(inst)
-        with patch("api.auth.is_require_auth_enabled", return_value=auth), \
-             patch("config.INSTANCE_PORT_OFFSET", offset):
-            return instances_api._public_instance(base)
+        return instances_api._public_instance(base)
 
-    def test_direct_instance_uses_its_own_port_and_no_auth(self):
-        d = self._public(auth=True)
-        self.assertEqual(d["web_ui"], {"port": 8001, "path": "/", "auth_required": False})
+    def test_direct_instance_uses_its_port(self):
+        self.assertEqual(self._public()["web_ui"], {"port": 8001, "path": "/"})
 
-    def test_proxied_instance_uses_llamamans_port(self):
-        d = self._public(auth=True, _internal_port=12001)
-        self.assertEqual(d["web_ui"], {"port": 12021, "path": "/", "auth_required": True})
+    def test_proxied_instance_uses_the_servers_own_published_port(self):
+        # Not llamaman's proxy port: no auth, no host port mapping in between.
+        self.assertEqual(self._public(_internal_port=12001)["web_ui"], {"port": 12001, "path": "/"})
 
     def test_no_link_for_embeddings_or_ui_off(self):
         self.assertNotIn("web_ui", self._public(config={"embedding_model": True}))

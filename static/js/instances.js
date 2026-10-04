@@ -323,7 +323,6 @@ function renderInstances() {
         ${stopBtn}${restartBtn}${removeBtn}
       </div>
       <div class="inst-controls-secondary">
-        ${(typeof instanceWebUiButton === 'function') ? instanceWebUiButton(inst) : ''}
         <button class="btn btn-secondary btn-logs" data-id="${inst.id}"${nodeAttr}><i class="fa-solid fa-terminal"></i> Logs</button>
         <button class="btn btn-secondary btn-stats" data-id="${inst.id}"${nodeAttr} data-model="${escHtml(inst.model_name)}"><i class="fa-solid fa-chart-line"></i> Stats</button>
       </div>
@@ -333,6 +332,7 @@ function renderInstances() {
     card.innerHTML = `
     <div class="inst-info">
       <div class="model">${escHtml(inst.model_name)}${engineBadge}${nodeBadge}${queueGroupBadge}</div>
+      ${(typeof instanceWebUiLink === 'function') ? instanceWebUiLink(inst) : ''}
       <div class="meta">${portLine} &nbsp;·&nbsp; Container ${inst.container_id ? escHtml(inst.container_id.slice(0, 12)) : '-'} &nbsp;·&nbsp; ${uptime}</div>
       ${loadStageLine}
       ${statsLine}

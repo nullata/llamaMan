@@ -399,22 +399,14 @@ class WebUiLinkTests(_Instances):
     app) as the browser reaches it."""
 
     def _public(self, inst):
-        with patch("api.auth.is_require_auth_enabled", return_value=self.auth):
-            return instances_api._public_instance(inst)
-
-    def setUp(self):
-        super().setUp()
-        self.auth = False
+        return instances_api._public_instance(inst)
 
     def test_strata_instance_has_web_ui_with_port_offset(self):
         # Strata always runs behind llamaman's proxy (gate forced to 1).
         inst = {"id": "s1", "model_path": QWEN, "status": "healthy", "port": 8001,
                 "_internal_port": 12001, "config": {"engine": "strata"}}
-        with patch("config.INSTANCE_PORT_OFFSET", 4020):
-            d = self._public(inst)
-        self.assertEqual(d["web_ui"], {"port": 12021, "path": "/", "auth_required": False})
-        self.auth = True
-        self.assertTrue(self._public(inst)["web_ui"]["auth_required"])
+        # Straight to the container's published port, not llamaman's proxy.
+        self.assertEqual(self._public(inst)["web_ui"], {"port": 12001, "path": "/"})
 
     def test_llamacpp_embedding_instance_has_none(self):
         d = self._public({"id": "l1", "model_path": "/models/a.gguf", "status": "healthy",

@@ -68,21 +68,12 @@ def _public_instance(inst: dict) -> dict:
     if inst.get("_internal_port") is not None:
         d["internal_port"] = inst.get("_internal_port")
     web_path = get_engine(inst.get("config"), inst.get("model_path")).web_ui_path(inst.get("config") or {})
-    if web_path and inst.get("port") is not None:
-        # The engine's own page as the browser reaches it. Behind llamaman's
-        # proxy (internal_port set) that is llamaman's published port
-        # (INSTANCE_PORT_OFFSET: the host's mapping), and with require_auth it
-        # wants a bearer token a browser tab can't send - the UI disables the
-        # link. Without the proxy the server's container publishes the port
-        # on the host itself.
-        proxied = inst.get("_internal_port") is not None
-        from config import INSTANCE_PORT_OFFSET
-        auth = False
-        if proxied:
-            from api.auth import is_require_auth_enabled
-            auth = is_require_auth_enabled()
-        d["web_ui"] = {"port": int(inst["port"]) + (INSTANCE_PORT_OFFSET if proxied else 0),
-                       "path": web_path, "auth_required": auth}
+    # The engine's own page, straight on the port its container publishes on
+    # the host (the internal port behind llamaman's proxy, else the public
+    # one) - not through llamaman's proxy.
+    server_port = inst.get("_internal_port") if inst.get("_internal_port") is not None else inst.get("port")
+    if web_path and server_port is not None:
+        d["web_ui"] = {"port": int(server_port), "path": web_path}
     gate = get_gate(inst["id"])
     if gate:
         d["queue"] = {
