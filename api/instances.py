@@ -57,6 +57,15 @@ LLAMA_CONTAINER_PORT = 8080
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _browser_host() -> str:
+    """The host name the browser used for this request (no port): what it
+    will also use for an instance's own web page."""
+    h = (request.headers.get("X-Forwarded-Host") or request.host or "").split(",")[0].strip()
+    if h.startswith("["):
+        return h[1:].split("]", 1)[0]
+    return h.split(":", 1)[0] if h.count(":") == 1 else h
+
+
 def _public_instance(inst: dict) -> dict:
     d = public_dict(inst)
     d["last_request_at"] = inst.get("_last_request_at")
@@ -566,6 +575,7 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
                     webui_enabled=True,
                     auto_restart_on_crash=False,
                     image=None,
+                    web_hosts=None,
                     proxy_sampling_override_enabled=False,
                     proxy_sampling_temperature=0.8,
                     proxy_sampling_top_k=40,
@@ -758,6 +768,9 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
         config["engine"] = eng.name
         if source_path:
             config["engine_source_path"] = source_path
+        hosts = [h for h in dict.fromkeys(web_hosts or []) if h]
+        if eng.records_web_hosts and hosts:
+            config["web_hosts"] = hosts
         for key in eng.option_keys:
             if key in (engine_options or {}):
                 config[key] = engine_options[key]
@@ -1237,6 +1250,7 @@ def api_instances_create():
         webui_enabled=body.get("webui_enabled", True) is not False,
         auto_restart_on_crash=bool(body.get("auto_restart_on_crash", False)),
         image=body.get("image", "").strip() or None,
+        web_hosts=[_browser_host()],
         engine=engine,
         engine_options=engine_options,
         **spec_config,
@@ -1313,7 +1327,9 @@ def api_instances_restart(inst_id):
         return jsonify({"error": "No ports available"}), 409
 
     inst, err = launch_instance(
-        model_path=model_path,
+        # A Strata instance runs under its model id; relaunch it from the file
+        # it was started from so that file's folder is mounted again.
+        model_path=config.get("engine_source_path") or model_path,
         port=port,
         n_gpu_layers=config.get("n_gpu_layers", -1),
         n_cpu_moe_layers=int(config.get("n_cpu_moe_layers", 0) or 0),
@@ -1357,6 +1373,7 @@ def api_instances_restart(inst_id):
         embedding_model=config.get("embedding_model", False),
         webui_enabled=config.get("webui_enabled", True) is not False,
         image=config.get("image"),
+        web_hosts=[*(config.get("web_hosts") or []), _browser_host()],
         proxy_sampling_override_enabled=bool(config.get("proxy_sampling_override_enabled", False)),
         proxy_sampling_temperature=float(config.get("proxy_sampling_temperature", 0.8)),
         proxy_sampling_top_k=int(config.get("proxy_sampling_top_k", 40)),

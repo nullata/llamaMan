@@ -702,6 +702,8 @@ class StrataEngine(Engine):
         return {"strata_vision": vision, "strata_kv": kv, "strata_low_ram": low_ram,
                 "strata_layer_split": split}, None
 
+    records_web_hosts = True
+
     def web_ui_path(self, config: dict) -> str | None:
         return "/"                                   # serve/web/index.html
 
@@ -781,16 +783,18 @@ class StrataEngine(Engine):
     def container_spec(self, **kw) -> dict:
         kwargs = super().container_spec(**kw)
         kwargs.setdefault("environment", {})["STRATA_ALLOWED_HOSTS"] = ",".join(
-            self.allowed_hosts(kw["container_name"]))
+            self.allowed_hosts(kw["container_name"], kw.get("config") or {}))
         return kwargs
 
     @staticmethod
-    def allowed_hosts(container_name: str) -> list[str]:
+    def allowed_hosts(container_name: str, config: dict | None = None) -> list[str]:
         """Names Strata (without an API key) accepts in Host and Origin
         (serve/server.py host_allowed / origin_allowed): llamaman's own route
         to it (the container name on the Docker network, LLAMA_HOST_ADDR
         bare-metal) and the names a browser opens its web app by - the host
-        of CLUSTER_ADVERTISE_URL and STRATA_WEB_HOSTS; the web app's chat
+        of CLUSTER_ADVERTISE_URL, STRATA_WEB_HOSTS, and the hosts the UI was
+        opened on when it launched / restarted this instance
+        (config["web_hosts"]); the web app's chat
         requests carry the page's Origin. Read at every server start (no
         REINSTALL). Entries Strata would reject (it refuses to start on a
         malformed one) are dropped."""
@@ -802,7 +806,7 @@ class StrataEngine(Engine):
                 candidates.append(urlsplit(CLUSTER_ADVERTISE_URL).hostname or "")
             except ValueError:
                 pass
-        for raw in STRATA_WEB_HOSTS:
+        for raw in [*STRATA_WEB_HOSTS, *((config or {}).get("web_hosts") or [])]:
             # Like Strata: drop a scheme, port or path ("http://a.lan:12021/" -> "a.lan").
             x = raw.split("://", 1)[-1].split("/", 1)[0]
             candidates.append(x.split(":", 1)[0] if x.count(":") == 1 else x.strip("[]"))

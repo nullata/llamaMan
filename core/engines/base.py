@@ -242,6 +242,11 @@ class Engine:
         """A reason this model can't be launched right now, or None."""
         return None
 
+    # The server checks the Host / Origin a browser sends against a list
+    # (Strata without an API key): UI launches record the host the browser
+    # used (config["web_hosts"]) so the engine can allow it.
+    records_web_hosts = False
+
     def web_ui_path(self, config: dict) -> str | None:
         """The path of the engine's own browser page on an instance's port,
         or None when it has none worth linking."""
