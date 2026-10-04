@@ -27,8 +27,11 @@ def snapshot_subprocess_settings() -> None:
         logger.warning("subprocess_settings snapshot: failed to read settings: %s", e)
         return
 
+    from core.node_settings import effective_from_settings
     payload = {
-        "global_speed_limit_mbps": float(settings.get("global_speed_limit_mbps", 0) or 0),
+        # Per node (core/node_settings.NODE_SCOPED_KEYS), legacy shared fallback.
+        "global_speed_limit_mbps": float(
+            effective_from_settings(settings, "global_speed_limit_mbps", 0) or 0),
     }
 
     try:
@@ -245,6 +248,11 @@ def _sanitize_settings(settings: dict) -> dict:
     for key in ("admin_ui_enforce_max_models", "allow_ollama_api_override_admin",
                 "allow_openai_api_override_admin", "db_mirror_enabled"):
         safe[key] = bool(effective_from_settings(settings, key, safe.get(key, False)))
+    safe["global_speed_limit_mbps"] = _coerce_non_negative_float(
+        effective_from_settings(settings, "global_speed_limit_mbps",
+                                safe.get("global_speed_limit_mbps", DEFAULT_GLOBAL_SPEED_LIMIT_MBPS)),
+        default=DEFAULT_GLOBAL_SPEED_LIMIT_MBPS,
+    )
     safe.pop("nodes", None)
     return safe
 
@@ -263,7 +271,7 @@ def save_settings():
     # namespace; everything else stays shared cluster-wide.
     node_patch = {k: data.pop(k) for k in list(data.keys()) if k in NODE_SCOPED_KEYS}
     if node_patch:
-        merge_node_settings(node_patch)
+        merge_node_settings(_normalize_settings_patch(node_patch))
     if data:
         settings = get_storage().merge_settings(_normalize_settings_patch(data))
     else:
@@ -271,7 +279,7 @@ def save_settings():
     if "recording_mode" in data:
         from core.request_log import invalidate_cache as _invalidate_recording_cache
         _invalidate_recording_cache()
-    if "global_speed_limit_mbps" in data:
+    if "global_speed_limit_mbps" in node_patch:
         snapshot_subprocess_settings()
     return jsonify({"ok": True, "settings": _sanitize_settings(settings)})
 

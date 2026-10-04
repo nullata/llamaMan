@@ -490,6 +490,7 @@ Models are listed by GGUF filename stem by default. Set a per-model **Display Na
 
 Under **Settings → Download Settings**:
 
+- **Global speed limit (Mbps)** (0 = unlimited) - caps every download on this node and applies to running downloads within a second. Per node: in a cluster each node has its own limit (a value saved before it became per-node applies to every node until that node saves its own)
 - **Auto-retry failed downloads** (off by default) + **Retry count per failed download** (default 3)
 - **Check models for updates in the background** (off by default) - opt-in worker that asks each source repo whether a file has been republished, plus computes a checksum for any model that doesn't have one yet. **Update check interval (hours)** default 24. Hashes at most one model per pass; never runs while a download is in progress.
 

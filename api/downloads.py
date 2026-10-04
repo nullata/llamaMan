@@ -28,7 +28,9 @@ def _download_progress_path(dl_id: str) -> str:
 def _build_download_env(repo_id: str, dest_path: str, filename: str, token: str,
                         per_model_mbps: float, progress_file: str = "",
                         revision: str = "") -> dict:
-    global_mbps = float(get_storage().get_settings().get("global_speed_limit_mbps", 0) or 0)
+    from core.node_settings import effective_from_settings
+    global_mbps = float(effective_from_settings(
+        get_storage().get_settings(), "global_speed_limit_mbps", 0) or 0)
     effective_mbps = global_mbps if global_mbps > 0 else per_model_mbps
     return {
         # Empty = main (core.downloader's default).
