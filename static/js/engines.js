@@ -27,6 +27,7 @@ function engineForModel(m) {
 // (engine_models.strata, a downloaded recommended model) on a node that can
 // run Strata.
 async function updateEngineSelect() {
+  updateStrataModelsButton();
   const sel = document.getElementById('f-engine');
   if (!sel) return;
   sel.value = launchEngine;
@@ -218,17 +219,9 @@ async function refreshStrataSection() {
     if (noVision) vision.value = 'no';
   }
 
-  updateStrataDownloadRow();
   updateStrataWarnings();
 }
 
-function updateStrataDownloadRow() {
-  // The selected model is a local file: nothing to download here.
-  const status = document.getElementById('strata-download-status');
-  const btn = document.getElementById('btn-strata-download');
-  if (status) status.textContent = '';
-  if (btn) btn.hidden = true;
-}
 
 // Strata's caveats, each under the Container & Proxy field it is about.
 function updateStrataWarnings() {
@@ -315,37 +308,101 @@ function readStrataLaunchForm() {
   return body;
 }
 
-async function startStrataPredownload() {
-  const m = launchEngineModel;
-  if (!m) return;
-  const btn = document.getElementById('btn-strata-download');
+// -------------------------------------------------------------------------
+// Strata models modal: the catalogue, each downloadable into the target
+// node's models folder (POST /api/engines/strata/download). Downloaded
+// models appear in the library as ordinary files.
+// -------------------------------------------------------------------------
+
+function _strataModelStatus(m) {
+  if (m.local_shards) return '<span class="badge badge-ok">downloaded</span>';
+  const d = m.download;
+  if (d && (d.status === 'downloading' || d.status === 'paused')) {
+    return `<span class="badge badge-warn">${escHtml(d.status)} - see Downloads</span>`;
+  }
+  if (d && d.status === 'failed') {
+    return '<span class="badge badge-warn">failed - retry it in Downloads</span>';
+  }
+  return `<button type="button" class="btn btn-secondary btn-sm btn-strata-model-download" data-model="${escHtml(m.name)}">
+    <i class="fa-solid fa-download"></i> Download</button>`;
+}
+
+async function renderStrataModelsList(force = true) {
+  const list = document.getElementById('strata-models-list');
+  if (!list) return;
+  const info = _engineInfo(await fetchEnginesForNode(_launchNode(), force), 'strata');
+  if (!info) { list.innerHTML = '<p class="text-meta">Could not reach the target node.</p>'; return; }
+  if (!info.available) {
+    list.innerHTML = `<p class="text-meta">${escHtml(info.reason || 'Strata is unavailable on the target node.')}</p>`;
+    return;
+  }
+  list.innerHTML = (info.models || []).map(m => `
+    <div class="strata-model-row">
+      <div class="strata-model-main">
+        <div class="name">${escHtml(m.title || m.name)}</div>
+        <div class="strata-model-badges">
+          <span class="badge" title="Download size">${escHtml(m.size_display || '')}</span>
+          ${m.ram_gb ? `<span class="badge" title="System RAM Strata needs">~${m.ram_gb} GB RAM</span>` : ''}
+          ${m.vision ? '<span class="badge" title="Has an image encoder">images</span>' : ''}
+          ${m.experimental ? '<span class="badge badge-warn">experimental</span>' : ''}
+        </div>
+        <span class="path">${escHtml(m.name)}</span>
+      </div>
+      <div class="strata-model-action">${_strataModelStatus(m)}</div>
+    </div>`).join('');
+  list.querySelectorAll('.btn-strata-model-download').forEach(btn => {
+    btn.addEventListener('click', () => downloadStrataModel(btn.dataset.model, btn));
+  });
+}
+
+async function downloadStrataModel(modelId, btn) {
   if (btn) btn.disabled = true;
   try {
     const res = await _nf(_launchNode(), '/api/engines/strata/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: m.name }),
+      body: JSON.stringify({ model: modelId }),
     });
     const data = await readApiResponse(res);
     if (res.ok) {
-      toast(`Downloading ${m.name} (${m.size_display}) - see the Downloads tab`, 'success');
-      m.download = { id: data.id, status: data.status };
+      toast(`Downloading ${modelId} - progress in the Downloads panel`, 'success');
       if (typeof pollDownloads === 'function') pollDownloads();
-      if (typeof loadModels === 'function') loadModels();
     } else {
       toast(`Download failed: ${data.error}`, 'error');
     }
   } catch (e) {
     toast('Error starting download: ' + e.message, 'error');
   } finally {
-    if (btn) btn.disabled = false;
-    updateStrataDownloadRow();
-    updateStrataWarnings();
+    renderStrataModelsList(true);
   }
 }
 
-const _strataDownloadBtn = document.getElementById('btn-strata-download');
-if (_strataDownloadBtn) _strataDownloadBtn.addEventListener('click', startStrataPredownload);
+function openStrataModelsModal() {
+  document.getElementById('strata-models-modal')?.classList.add('open');
+  renderStrataModelsList(true);
+}
+
+function closeStrataModelsModal() {
+  document.getElementById('strata-models-modal')?.classList.remove('open');
+}
+
+// The button beside the Inference Engine dropdown: whenever the target node
+// can run Strata, so a first model can be downloaded before any is local.
+async function updateStrataModelsButton() {
+  const btn = document.getElementById('btn-strata-models-open');
+  if (!btn) return;
+  const info = _engineInfo(await fetchEnginesForNode(_launchNode()), 'strata');
+  btn.hidden = !(info && info.available);
+}
+
+document.getElementById('btn-strata-models-open')?.addEventListener('click', openStrataModelsModal);
+updateStrataModelsButton();
+document.getElementById('btn-close-strata-models')?.addEventListener('click', closeStrataModelsModal);
+const _strataModelsModal = document.getElementById('strata-models-modal');
+if (_strataModelsModal) _strataModelsModal.addEventListener('click', (e) => {
+  if (e.target === _strataModelsModal) closeStrataModelsModal();
+});
+
 ['f-memory-limit', 'f-idle-timeout'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('input', updateStrataWarnings);

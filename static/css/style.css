@@ -2759,9 +2759,51 @@ body.login-page {
   color: var(--accent);
   border: 1px solid var(--border);
 }
-/* Strata's model summary, download row and warnings, at the top of Model Settings. */
+/* Strata's model summary, at the top of Model Settings. */
 .strata-model-info {
   margin-bottom: 12px;
+}
+.engine-select-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.engine-select-row select {
+  flex: 1;
+  min-width: 0;
+}
+.strata-models-list {
+  display: flex;
+  flex-direction: column;
+}
+.strata-model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.strata-model-row:last-child {
+  border-bottom: none;
+}
+.strata-model-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.strata-model-main .path {
+  font-size: 11px;
+  color: var(--muted);
+}
+.strata-model-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.strata-model-action {
+  flex-shrink: 0;
 }
 .strata-download-row {
   display: flex;

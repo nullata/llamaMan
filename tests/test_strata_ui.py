@@ -136,8 +136,7 @@ class LaunchFormMarkupTests(unittest.TestCase):
                              ("f-strata-layer-split", "gpu-settings-section")):
             self.assertEqual(self._group_tag(fid), ' data-engine-only="strata" hidden', fid)
             self.assertEqual(self._section_of(f'id="{fid}"'), section, fid)
-        for marker in ('id="strata-model-summary"', 'id="btn-strata-download"',
-                       'id="strata-context-options"'):
+        for marker in ('id="strata-model-summary"', 'id="strata-context-options"'):
             self.assertEqual(self._section_of(marker), "model-settings-section", marker)
         self.assertIn("js/engines.js", self.html)
 
@@ -147,6 +146,15 @@ class LaunchFormMarkupTests(unittest.TestCase):
             self.assertRegex(self.html, rf'<input id="{field}"[^>]*/>\s*<ul id="{ul}" class="strata-warnings" '
                                         r'data-engine-only="strata" hidden></ul>')
             self.assertEqual(self._section_of(f'id="{ul}"'), "container-proxy-settings-section")
+
+    def test_strata_models_modal_reachable_from_the_engine_picker(self):
+        # Beside the dropdown, not inside the Strata-only fields: those only
+        # show once a Strata model is downloaded and picked.
+        self.assertRegex(self.html, r'(?s)<select id="f-engine">.*?</select>\s*'
+                                    r'<button type="button" class="btn btn-secondary btn-sm" id="btn-strata-models-open" hidden')
+        self.assertIn('<div class="modal-overlay" id="strata-models-modal">', self.html)
+        self.assertIn('id="strata-models-list"', self.html)
+        self.assertNotIn('id="btn-strata-download"', self.html)
 
     def test_engine_picker_between_target_node_and_image(self):
         self.assertLess(self.html.index('id="f-node"'), self.html.index('id="f-engine"'))

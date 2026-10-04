@@ -136,10 +136,16 @@
                       <label for="f-engine">Inference Engine</label>
                       <span class="info-tip" tabindex="0" role="button" aria-label="Inference Engine help" data-tip="What runs the selected model. llama.cpp runs any GGUF. Strata runs only its recommended models (download them from the Strata settings) and needs an NVIDIA GPU with STRATA_ENABLED on the target node. The choice is saved in the model&#39;s preset."><i class="fa-solid fa-circle-info"></i></span>
                     </span>
-                    <select id="f-engine">
-                      <option value="llamacpp" selected>llama.cpp</option>
-                      <option value="strata">Strata</option>
-                    </select>
+                    <div class="engine-select-row">
+                      <select id="f-engine">
+                        <option value="llamacpp" selected>llama.cpp</option>
+                        <option value="strata">Strata</option>
+                      </select>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-strata-models-open" hidden
+                        title="The models Strata can run, ready to download">
+                        <i class="fa-solid fa-list"></i> Strata models
+                      </button>
+                    </div>
                   </div>
                   <div class="form-group">
                     <span class="label-row">
@@ -175,12 +181,6 @@
                        warnings; its options sit beside their llama.cpp counterparts. -->
                   <div class="strata-model-info" data-engine-only="strata" hidden>
                     <span id="strata-model-summary" class="text-meta"></span>
-                    <div class="strata-download-row">
-                      <span id="strata-download-status" class="text-meta"></span>
-                      <button type="button" class="btn btn-secondary btn-sm" id="btn-strata-download" hidden>
-                        <i class="fa-solid fa-download"></i> Pre-download with llamaMan
-                      </button>
-                    </div>
                     <datalist id="strata-context-options"></datalist>
                   </div>
                   <div class="launch-section-grid">
@@ -1279,6 +1279,21 @@
   </div>
 
   <!-- Download Form Modal -->
+  <!-- Strata's recommended models (static/js/engines.js): the catalogue,
+       each downloadable into the target node's models folder. -->
+  <div class="modal-overlay" id="strata-models-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Strata models</h3>
+        <button class="btn-icon" id="btn-close-strata-models" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <p class="hint-text">Strata runs only these models. A download goes to the target node&#39;s models folder and shows in the Downloads panel; when it finishes the model appears in the library - select it and choose Strata as the Inference Engine.</p>
+        <div id="strata-models-list" class="strata-models-list"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="download-modal">
     <div class="modal modal-sm">
       <div class="modal-header">
