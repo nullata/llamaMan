@@ -37,7 +37,6 @@ from core.loop_detect import (
 )
 from core.engines import load_timeout_for
 from core.proxy_sampling import apply_proxy_sampling_overrides
-from core.spec_decoding import DEFAULT_SPEC_TYPE
 from core.request_log import record_request, finalize_async, SSEAccumulator
 from api.models import (
     detect_quant,
@@ -466,7 +465,8 @@ def _ensure_model_running(
     instances may also be evicted; None defers to the Ollama override toggle.
     """
     from api.instances import (
-        launch_instance, relaunch_inactive_instance, wait_for_healthy,
+        launch_instance, launch_kwargs_from_config, relaunch_inactive_instance,
+        wait_for_healthy,
     )
 
     # Alias shortcut: when a running instance opted into share_queue_group
@@ -572,32 +572,11 @@ def _ensure_model_running(
         inst, err = launch_instance(
             model_path=model["path"],
             port=port,
-            n_gpu_layers=preset.get("n_gpu_layers", -1),
-            n_cpu_moe_layers=int(preset.get("n_cpu_moe_layers", 0) or 0),
-            ctx_size=preset.get("ctx_size", engine.default_ctx_size),
-            threads=preset.get("threads"),
-            memory_limit=preset.get("memory_limit") or None,
-            parallel=preset.get("parallel"),
-            extra_args=preset.get("extra_args", ""),
-            spec_enabled=preset.get("spec_enabled", False),
-            spec_type=preset.get("spec_type") or DEFAULT_SPEC_TYPE,
-            spec_draft_model=preset.get("spec_draft_model") or "",
-            spec_draft_n_max=preset.get("spec_draft_n_max"),
-            gpu_devices=preset.get("gpu_devices") or None,
-            idle_timeout_min=preset.get("idle_timeout_min", 0),
-            max_concurrent=preset.get("max_concurrent", 0),
-            max_queue_depth=preset.get("max_queue_depth", 200),
-            share_queue=preset.get("share_queue", False),
-            embedding_model=preset.get("embedding_model", False),
-            webui_enabled=preset.get("webui_enabled", True) is not False,
-            proxy_sampling_override_enabled=bool(preset.get("proxy_sampling_override_enabled", False)),
-            proxy_sampling_temperature=float(preset.get("proxy_sampling_temperature", 0.8)),
-            proxy_sampling_top_k=int(preset.get("proxy_sampling_top_k", 40)),
-            proxy_sampling_top_p=float(preset.get("proxy_sampling_top_p", 0.95)),
-            proxy_sampling_presence_penalty=float(preset.get("proxy_sampling_presence_penalty", 0.0)),
-            proxy_sampling_repeat_penalty=float(preset.get("proxy_sampling_repeat_penalty", 0.0)),
             engine=engine.name,
-            engine_options={k: preset[k] for k in engine.option_keys if k in preset},
+            # The whole preset, not a hand-picked subset: image input
+            # (mmproj), PDF, sampler and GPU-split settings all apply to
+            # an API-launched instance exactly as to a UI-launched one.
+            **launch_kwargs_from_config(preset, model["path"], engine.default_ctx_size),
         )
         if err:
             return None, err

@@ -64,5 +64,58 @@ class LlamamanEvictionTests(unittest.TestCase):
         self.assertFalse(launch_mock.call_args.kwargs["embedding_model"])
 
 
+    @patch("api.llamaman.find_available_port", return_value=8003)
+    @patch("api.llamaman._find_any_instance_for_model", return_value=None)
+    @patch("api.llamaman._find_running_instance_for_model", return_value=None)
+    @patch("api.llamaman._find_model_by_name", return_value={"path": "/models/vision.gguf"})
+    def test_auto_launch_applies_the_whole_preset(
+        self,
+        _find_model_mock,
+        _find_running_mock,
+        _find_any_mock,
+        _find_port_mock,
+    ):
+        """A fresh API launch must carry every preset field, not a subset -
+        a vision preset used to come up without its --mmproj projector."""
+        preset = {
+            "ctx_size": 16384,
+            "threads_batch": 12,
+            "mmproj_enabled": True,
+            "mmproj_path": "/models/vision-mmproj.gguf",
+            "mmproj_offload": False,
+            "pdf_input_enabled": True,
+            "pdf_dpi": 150,
+            "split_mode": "layer",
+            "tensor_split": "3,2",
+            "flash_attn": "on",
+            "reasoning_format": "deepseek",
+            "load_mode": "mlock",
+            "cache_type_k": "q8_0",
+            "cache_type_v": "q8_0",
+            "spec_draft_n_min": 2,
+            "share_queue": True,
+            "share_queue_group": "vision",
+            "share_queue_fallback": True,
+            "auto_restart_on_crash": True,
+            "dry_enabled": True,
+            "dry_multiplier": 0.8,
+            "loop_detect_enabled": True,
+            "loop_detect_min_repetitions": 5,
+        }
+        storage = Mock()
+        storage.get_preset.return_value = preset
+
+        with patch("api.llamaman.get_storage", return_value=storage), \
+             patch("api.llamaman._evict_llamaman_instances_if_needed", return_value=True), \
+             patch("api.instances.launch_instance", return_value=({"id": "inst-vision"}, None)) as launch_mock, \
+             patch.dict("api.llamaman.instances", {}, clear=True):
+            inst, err = llamaman._ensure_model_running("vision")
+
+        self.assertIsNone(err)
+        kwargs = launch_mock.call_args.kwargs
+        for key, value in preset.items():
+            self.assertEqual(kwargs[key], value, key)
+
+
 if __name__ == "__main__":
     unittest.main()
