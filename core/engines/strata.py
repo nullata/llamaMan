@@ -526,6 +526,20 @@ class StrataEngine(Engine):
             env["REINSTALL"] = "1"
         return env
 
+    def container_spec(self, **kw) -> dict:
+        kwargs = super().container_spec(**kw)
+        # Without an API key Strata refuses any Host header that isn't an IP,
+        # localhost or a name it knows (DNS-rebinding check, serve/server.py
+        # host_allowed). llamaman reaches the container by its name on the
+        # Docker network, and bare-metal by LLAMA_HOST_ADDR, so allow both.
+        # Read at every server start: no REINSTALL needed.
+        from config import LLAMA_HOST_ADDR
+        hosts = [kw["container_name"]]
+        if LLAMA_HOST_ADDR and LLAMA_HOST_ADDR not in hosts:
+            hosts.append(LLAMA_HOST_ADDR)
+        kwargs.setdefault("environment", {})["STRATA_ALLOWED_HOSTS"] = ",".join(hosts)
+        return kwargs
+
     def data_mount_source(self) -> str:
         from config import HOST_STRATA_DATA_DIR, STRATA_DATA_VOLUME
         return HOST_STRATA_DATA_DIR or STRATA_DATA_VOLUME

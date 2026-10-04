@@ -154,6 +154,15 @@ class StrataContainerSpecTests(_TmpDirs):
         self.assertEqual(json.loads(kw["labels"]["llamaman.config"])["engine"], "strata")
         self.assertEqual(kw["labels"]["llamaman.model_path"], QWEN)
 
+    def test_container_name_allowed_as_host(self):
+        # Strata's Host check would otherwise refuse llamaman's requests to
+        # http://<container-name>:8080 on the Docker network.
+        env = self._spec()["environment"]
+        self.assertEqual(env["STRATA_ALLOWED_HOSTS"].split(",")[0], "llamaman-inst-1")
+        with patch("config.LLAMA_HOST_ADDR", "gpu-box.lan"):
+            env = self._spec()["environment"]
+        self.assertEqual(env["STRATA_ALLOWED_HOSTS"], "llamaman-inst-1,gpu-box.lan")
+
     def test_memlock_unlimited_always(self):
         (ul,) = self._spec()["ulimits"]
         self.assertEqual((ul["Name"], ul["Soft"], ul["Hard"]), ("memlock", -1, -1))
