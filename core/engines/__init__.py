@@ -59,6 +59,25 @@ def available_virtual_models(vendor: str | None) -> list[dict]:
     return out
 
 
+def virtual_model_key(name: str) -> str | None:
+    """The lowercase model id (what cluster groups are keyed by, see
+    core.helpers.model_name_from_path) of the virtual model a request's
+    `model` names by one of its engine's served names - e.g. Strata's
+    "qwen3.8-flash-next-iq3_s" -> "strata/qwen-iq3_s". None when `name`
+    isn't one. Uses the static catalogue, not this node's availability: the
+    model may only run on a peer."""
+    req = (name or "").split(":")[0].strip().lower()
+    if not req:
+        return None
+    for eng in ENGINES.values():
+        if not eng.capabilities.get("virtual_models"):
+            continue
+        for m in eng.virtual_models():
+            if req in eng.served_model_names(m["path"]):
+                return eng.display_name(m["path"]).lower()
+    return None
+
+
 def parse_engine(body: dict | None, model_path: str | None = None) -> tuple[str, str | None]:
     """Validate an API body's `engine` field. Returns (engine_name, error).
 

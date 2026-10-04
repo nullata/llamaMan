@@ -733,6 +733,10 @@ def dispatch_inference(model_name: str):
     # worse, substring-match the wrong one. Non-alias names pass through as-is.
     from core.model_alias import canonical_name
     model_name = canonical_name(model_name)
+    # Likewise an engine's own served name for a virtual model (Strata's
+    # "qwen3.8-flash-next-iq3_s") -> the model id its group is keyed by.
+    from core.engines import virtual_model_key
+    model_name = virtual_model_key(model_name) or model_name
 
     candidates = _group_candidates(model_name)
     if not candidates or not any(not c["is_self"] for c in candidates):
