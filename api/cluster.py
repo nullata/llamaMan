@@ -19,7 +19,7 @@ from flask import Blueprint, Response, jsonify, request
 from config import REQUEST_TIMEOUT, logger
 from core import cluster as cl
 from core.perf import phase
-from core.helpers import model_name_from_path
+from core.helpers import iter_response_chunks, model_name_from_path
 from core.proxy_sampling import PROXY_SAMPLING_OVERRIDE_KEYS
 from core.spec_decoding import SPEC_CONFIG_KEYS
 from core.timeutil import now_iso, now_utc, parse_iso
@@ -660,7 +660,7 @@ def _forward_inference(node: dict, path: str, body: bytes, content_type: str | N
 
     def relay():
         try:
-            for chunk in resp.iter_content(chunk_size=None):
+            for chunk in iter_response_chunks(resp):
                 yield chunk
         except Exception as e:
             # Log the abort so the next time a client hangs we can see where

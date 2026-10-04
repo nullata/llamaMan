@@ -21,6 +21,7 @@ from config import (
     logger,
 )
 from core.helpers import (
+    iter_response_chunks, iter_response_lines,
     find_available_port,
     is_container_running,
     model_name_from_path,
@@ -1081,7 +1082,7 @@ def _stream_llamaman(host: str, port: int, openai_body: dict, model_name: str,
             return
         resp.encoding = "utf-8"
 
-        for line in resp.iter_lines(decode_unicode=True):
+        for line in iter_response_lines(resp):
             if not line:
                 continue
             if line.startswith("data: "):
@@ -1661,7 +1662,7 @@ def llamaman_v1_chat():
             def _relay():
                 acc = SSEAccumulator() if handle else None
                 try:
-                    for chunk in resp.iter_content(chunk_size=None):
+                    for chunk in iter_response_chunks(resp):
                         if acc is not None:
                             acc.feed(chunk)
                         if handle and chunk:
@@ -1850,7 +1851,7 @@ def _proxy_passthrough(upstream_path: str, endpoint_label: str):
             def _relay():
                 acc = SSEAccumulator() if handle else None
                 try:
-                    for chunk in resp.iter_content(chunk_size=None):
+                    for chunk in iter_response_chunks(resp):
                         if acc is not None:
                             acc.feed(chunk)
                         if handle and chunk:

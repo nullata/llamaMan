@@ -9,7 +9,7 @@ from werkzeug.serving import make_server
 from werkzeug.wrappers import Request as WerkzeugRequest
 
 from config import REQUEST_TIMEOUT, logger
-from core.helpers import model_name_from_path, request_local_worker
+from core.helpers import iter_response_chunks, model_name_from_path, request_local_worker
 from core.loop_detect import (
     SSETextExtractor as _LoopDetectSSEExtractor,
     attach as _loop_detect_attach,
@@ -615,7 +615,7 @@ def make_proxy_app(inst_id: str, internal_port: int, proxy_port: int):
                 buf: bytearray | None = bytearray() if (handle and not is_sse) else None
                 BUF_CAP = 256 * 1024
                 try:
-                    for chunk in resp.iter_content(chunk_size=None):
+                    for chunk in iter_response_chunks(resp):
                         if acc is not None:
                             acc.feed(chunk)
                             if handle and chunk:

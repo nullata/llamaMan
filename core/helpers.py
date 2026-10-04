@@ -115,6 +115,54 @@ def request_local_worker(url, *, method="POST", json=None, data=None,
     raise last_err
 
 
+def _streams_to_eof(resp) -> bool:
+    """True for a response body that has neither chunked framing nor a
+    length - it just streams until the server closes the connection
+    (Strata's HTTP/1.0 SSE). requests' iter_content(chunk_size=None) reads
+    such a body to EOF before yielding anything, i.e. it buffers the whole
+    stream. llama-server answers chunked, so it never takes this path."""
+    if "chunked" in (resp.headers.get("Transfer-Encoding") or "").lower():
+        return False
+    if resp.headers.get("Content-Length"):
+        return False
+    # Only a real urllib3 body (not a test double or a custom adapter).
+    from urllib3.response import HTTPResponse
+    return isinstance(resp.raw, HTTPResponse)
+
+
+def iter_response_chunks(resp):
+    """resp.iter_content(chunk_size=None), except that a body streamed to EOF
+    is yielded as it arrives instead of all at once (see _streams_to_eof)."""
+    if not _streams_to_eof(resp):
+        yield from resp.iter_content(chunk_size=None)
+        return
+    while True:
+        data = resp.raw.read1(65536, decode_content=True)
+        if not data or not isinstance(data, (bytes, bytearray)):
+            return
+        yield data
+
+
+def iter_response_lines(resp):
+    """resp.iter_lines(decode_unicode=True), except that a body streamed to
+    EOF is split into lines as it arrives (iter_lines reads 512-byte blocks,
+    which holds back short SSE events until 512 bytes have accumulated)."""
+    if not _streams_to_eof(resp):
+        yield from resp.iter_lines(decode_unicode=True)
+        return
+    import codecs
+    decoder = codecs.getincrementaldecoder(resp.encoding or "utf-8")(errors="replace")
+    pending = ""
+    for data in iter_response_chunks(resp):
+        pending += decoder.decode(data)
+        *lines, pending = pending.split("\n")
+        for line in lines:
+            yield line.rstrip("\r")
+    pending += decoder.decode(b"", final=True)
+    if pending:
+        yield pending.rstrip("\r")
+
+
 def format_size(size_bytes: int) -> str:
     if size_bytes >= 1024**3:
         return f"{size_bytes / (1024**3):.1f} GB"
