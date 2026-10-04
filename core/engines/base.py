@@ -235,6 +235,11 @@ class Engine:
         """A reason this model can't be launched right now, or None."""
         return None
 
+    def image_input_enabled(self, body: dict) -> bool | None:
+        """Whether a launch/preset body turns this engine's own image input
+        on, for engines that don't use llama.cpp's mmproj; None = mmproj."""
+        return None
+
     def served_model_names(self, model_path: str) -> list[str]:
         """Lowercase names a request's `model` field may carry for this
         instance, beyond the llamaman-wide filename rules."""

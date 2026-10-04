@@ -102,7 +102,16 @@ function applyEngineToLaunchForm(engine, model) {
     if (ctx) ctx.removeAttribute('list');
   }
   if (typeof populateLaunchImageSelect === 'function') populateLaunchImageSelect();
+  // Sections shared by both engines whose state depends on which one it is.
+  if (typeof updateMmprojState === 'function') updateMmprojState();
+  if (typeof updateGpuSettingsState === 'function') updateGpuSettingsState();
+  if (typeof updateModelSettingsState === 'function') updateModelSettingsState();
 }
+
+const strataVisionSelect = document.getElementById('f-strata-vision');
+if (strataVisionSelect) strataVisionSelect.addEventListener('change', () => {
+  if (typeof updateMmprojState === 'function') updateMmprojState();
+});
 
 // The launch form's image dropdown for a non-llama.cpp engine: just that
 // engine's image (Strata's is built locally, never pulled).
@@ -229,6 +238,9 @@ function applyStrataPresetToLaunchForm(p) {
   if (kv) kv.value = ['', 'int8', 'q4_0', 'k8v4'].includes(p.strata_kv || '') ? (p.strata_kv || '') : '';
   const lr = document.getElementById('f-strata-low-ram');
   if (lr) lr.value = ['auto', 'on', 'off'].includes(p.strata_low_ram) ? p.strata_low_ram : 'auto';
+  const ls = document.getElementById('f-strata-layer-split');
+  if (ls) ls.value = p.strata_layer_split || '';
+  if (typeof updateMmprojState === 'function') updateMmprojState();
   if (launchEngine === 'strata') {
     const mc = document.getElementById('f-max-concurrent');
     if (mc) mc.value = 1;
@@ -271,6 +283,11 @@ function readStrataLaunchForm() {
     strata_vision: val('f-strata-vision').value,
     strata_kv: val('f-strata-kv').value,
     strata_low_ram: val('f-strata-low-ram').value,
+    strata_layer_split: val('f-strata-layer-split')?.value.trim() || '',
+    pdf_input_enabled: val('f-pdf-input-enabled')?.checked || false,
+    pdf_extract_text_first: val('f-pdf-extract-text-first')?.checked || false,
+    pdf_dpi: parseInt(val('f-pdf-dpi')?.value, 10) || 200,
+    pdf_max_pages: parseInt(val('f-pdf-max-pages')?.value, 10) || 20,
   };
   if (typeof validateProxySamplingBody === 'function') validateProxySamplingBody(body);
   const memoryLimit = val('f-memory-limit').value.trim();

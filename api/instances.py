@@ -1159,7 +1159,8 @@ def api_instances_create():
     spec_config, spec_err = parse_spec_config(body)
     if spec_err:
         return jsonify({"error": spec_err}), 400
-    mmproj_config, mmproj_err = parse_mmproj_config(body)
+    mmproj_config, mmproj_err = parse_mmproj_config(
+        body, get_engine(body, model_path).image_input_enabled(body))
     if mmproj_err:
         return jsonify({"error": mmproj_err}), 400
     dry_config, dry_err = parse_dry_config(body)

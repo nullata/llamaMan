@@ -2759,6 +2759,10 @@ body.login-page {
   color: var(--accent);
   border: 1px solid var(--border);
 }
+/* Strata's model summary, download row and warnings, at the top of Model Settings. */
+.strata-model-info {
+  margin-bottom: 12px;
+}
 .strata-download-row {
   display: flex;
   align-items: center;

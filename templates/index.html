@@ -161,6 +161,19 @@
                     <h3>Model Settings</h3>
                     <span id="model-settings-hint" class="text-meta"></span>
                   </div>
+                  <!-- Strata (core/engines/strata.py): the model, its download and
+                       warnings; its options sit beside their llama.cpp counterparts. -->
+                  <div class="strata-model-info" data-engine-only="strata" hidden>
+                    <span id="strata-model-summary" class="text-meta"></span>
+                    <div class="strata-download-row">
+                      <span id="strata-download-status" class="text-meta"></span>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-strata-download" hidden>
+                        <i class="fa-solid fa-download"></i> Pre-download with llamaMan
+                      </button>
+                    </div>
+                    <ul id="strata-warnings" class="strata-warnings"></ul>
+                    <datalist id="strata-context-options"></datalist>
+                  </div>
                   <div class="launch-section-grid">
                     <div class="form-group">
                       <span class="label-row">
@@ -247,29 +260,7 @@
                         <option value="dio">Dio (Direct I/O)</option>
                       </select>
                     </div>
-                  </div>
-                </div>
-                <!-- Strata engine (core/engines/strata.py). Shown instead of the
-                     llama.cpp-only fields (data-engine-only="llamacpp") when a
-                     strata/... model is selected; see static/js/engines.js. -->
-                <div class="form-group full launch-settings-section" id="strata-settings-section" data-engine-only="strata" hidden>
-                  <div class="launch-settings-section-header">
-                    <h3>Strata</h3>
-                    <span id="strata-model-summary" class="text-meta"></span>
-                  </div>
-                  <div class="launch-section-grid">
-                    <div class="form-group">
-                      <span class="label-row">
-                        <label for="f-strata-vision">Image Input</label>
-                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Image Input help" data-tip="Strata VISION. No = text only. Yes = the image encoder runs on the GPU (about 1.2 GB of VRAM). CPU = the image encoder runs on the CPU. Recorded in the model&#39;s Strata setup: changing it re-runs Strata&#39;s setup pass on the next start (the downloaded files are reused)."><i class="fa-solid fa-circle-info"></i></span>
-                      </span>
-                      <select id="f-strata-vision">
-                        <option value="no" selected>No (text only)</option>
-                        <option value="yes">Yes (GPU)</option>
-                        <option value="cpu">Yes (CPU)</option>
-                      </select>
-                    </div>
-                    <div class="form-group">
+                    <div class="form-group" data-engine-only="strata" hidden>
                       <span class="label-row">
                         <label for="f-strata-kv">KV Cache</label>
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="KV Cache help" data-tip="Strata KV. Precision of the KV cache. Default = Strata&#39;s own choice (int8). k8v4 = INT8 K with 4-bit V; keeps its KV in VRAM from 64K context up. Recorded in the model&#39;s setup like Image Input."><i class="fa-solid fa-circle-info"></i></span>
@@ -281,7 +272,7 @@
                         <option value="k8v4">k8v4</option>
                       </select>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" data-engine-only="strata" hidden>
                       <span class="label-row">
                         <label for="f-strata-low-ram">Low-RAM Mode</label>
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Low-RAM Mode help" data-tip="Strata LOW_RAM. Auto = Strata decides from the host&#39;s RAM. On = the experts are mapped from the prepared pack instead of held in RAM (slower, far less RAM). Off = held in RAM (32-62 GB). Forced On when System Memory Limit is set: Strata&#39;s setup reads the host&#39;s RAM and cannot see a container limit."><i class="fa-solid fa-circle-info"></i></span>
@@ -293,14 +284,6 @@
                       </select>
                     </div>
                   </div>
-                  <div class="strata-download-row">
-                    <span id="strata-download-status" class="text-meta"></span>
-                    <button type="button" class="btn btn-secondary btn-sm" id="btn-strata-download" hidden>
-                      <i class="fa-solid fa-download"></i> Pre-download with llamaMan
-                    </button>
-                  </div>
-                  <ul id="strata-warnings" class="strata-warnings"></ul>
-                  <datalist id="strata-context-options"></datalist>
                 </div>
                 <div class="form-group full launch-settings-section" id="container-proxy-settings-section">
                   <div class="launch-settings-section-header">
@@ -399,6 +382,13 @@
                         <option value="layer" selected>Layer</option>
                         <option value="row">Row</option>
                       </select>
+                    </div>
+                    <div class="form-group" id="f-strata-layer-split-group" data-engine-only="strata" hidden>
+                      <span class="label-row">
+                        <label for="f-strata-layer-split">Layer Split (optional)</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Layer Split help" data-tip="Strata LAYER_SPLIT, with 2+ GPUs: the layer each later GPU starts at, e.g. 18 (two GPUs) or 16,32 (three). Empty = auto, placed from each GPU&#39;s free VRAM. Applied at every start - no setup pass."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-strata-layer-split" type="text" placeholder="(auto)  e.g. 18  or 16,32" />
                     </div>
                     <div class="form-group" id="f-tensor-split-group" data-engine-only="llamacpp">
                       <span class="label-row">
@@ -646,10 +636,10 @@
                     </div>
                   </div>
                 </div>
-                <div class="form-group full launch-settings-section" data-engine-only="llamacpp">
+                <div class="form-group full launch-settings-section" id="image-pdf-section">
                   <div class="launch-settings-section-header">
                     <h3>Image &amp; PDF Input</h3>
-                    <label class="toggle-switch" for="f-mmproj-enabled"
+                    <label class="toggle-switch" for="f-mmproj-enabled" data-engine-only="llamacpp"
                       aria-label="Enable image and PDF input">
                       <input id="f-mmproj-enabled" type="checkbox" />
                       <span class="toggle-slider"></span>
@@ -658,8 +648,22 @@
                   <!-- Collapsed until Image &amp; PDF Input is toggled on; expands with a height transition. -->
                   <div class="launch-settings-reveal" id="mmproj-reveal">
                     <div class="launch-settings-reveal-inner">
-                      <p class="hint-text">When enabled, loads a multimodal projector (<code>--mmproj</code>) so a vision model can accept image inputs. Point it at the model's mmproj GGUF alongside the main weights. Optionally accept PDF uploads: pages are rasterized to images before the vision model sees them.</p>
-                      <div class="form-group">
+                      <p class="hint-text" data-engine-only="strata" hidden>Strata has its own image encoder: turn Image Input on to accept images. PDF uploads need it too (pages are rasterized to images), except born-digital PDFs read through the text layer.</p>
+                      <div class="launch-section-grid" data-engine-only="strata" hidden>
+                      <div class="form-group" data-engine-only="strata" hidden>
+                        <span class="label-row">
+                          <label for="f-strata-vision">Image Input</label>
+                          <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Image Input help" data-tip="Strata VISION. No = text only. Yes = the image encoder runs on the GPU (about 1.2 GB of VRAM). CPU = the image encoder runs on the CPU. Recorded in the model&#39;s Strata setup: changing it re-runs Strata&#39;s setup pass on the next start (the downloaded files are reused)."><i class="fa-solid fa-circle-info"></i></span>
+                        </span>
+                        <select id="f-strata-vision">
+                          <option value="no" selected>No (text only)</option>
+                          <option value="yes">Yes (GPU)</option>
+                          <option value="cpu">Yes (CPU)</option>
+                        </select>
+                      </div>
+                      </div>
+                      <p class="hint-text" data-engine-only="llamacpp">When enabled, loads a multimodal projector (<code>--mmproj</code>) so a vision model can accept image inputs. Point it at the model's mmproj GGUF alongside the main weights. Optionally accept PDF uploads: pages are rasterized to images before the vision model sees them.</p>
+                      <div class="form-group" data-engine-only="llamacpp">
                         <span class="label-row">
                           <label for="f-mmproj-path">MMPROJ Model</label>
                           <span class="info-tip" tabindex="0" role="button" aria-label="MMPROJ Model help" data-tip="Path to the multimodal projector passed as --mmproj. Pick a downloaded GGUF from the list or type a path under the models directory."><i class="fa-solid fa-circle-info"></i></span>
@@ -681,7 +685,7 @@
                            its labels+toggles (like Queue sharing / Auto Restart
                            / Embedding below) while the hints wrap at the full
                            reveal-inner width. -->
-                      <div class="launch-toggle-table mmproj-toggle-table">
+                      <div class="launch-toggle-table mmproj-toggle-table" data-engine-only="llamacpp">
                         <div class="launch-toggle-pair">
                           <label for="f-mmproj-offload">Offload mmproj to GPU</label>
                           <label class="toggle-switch" for="f-mmproj-offload" aria-label="Offload mmproj to GPU">
@@ -690,7 +694,7 @@
                           </label>
                         </div>
                       </div>
-                      <p class="hint-text">Offload: off passes <code>--no-mmproj-offload</code> and runs the projector on CPU — useful when VRAM is tight (the encoder pins a few GB on big vision models) or when a backend's vision kernels are slow. On (llama.cpp default) omits the flag entirely.</p>
+                      <p class="hint-text" data-engine-only="llamacpp">Offload: off passes <code>--no-mmproj-offload</code> and runs the projector on CPU — useful when VRAM is tight (the encoder pins a few GB on big vision models) or when a backend's vision kernels are slow. On (llama.cpp default) omits the flag entirely.</p>
                       <div class="launch-toggle-table mmproj-toggle-table">
                         <div class="launch-toggle-pair">
                           <label for="f-pdf-input-enabled">Accept PDF uploads</label>

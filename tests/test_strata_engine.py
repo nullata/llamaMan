@@ -188,6 +188,15 @@ class StrataContainerSpecTests(_TmpDirs):
             self.assertNotIn("GPU", env)
             self.assertNotIn("GPUS", env)
 
+    def test_layer_split_only_across_several_gpus(self):
+        env = self._spec({"gpu_devices": "0,1", "strata_layer_split": "18"})["environment"]
+        self.assertEqual(env["LAYER_SPLIT"], "18")
+        for devices in ("0", "", "all"):
+            env = self._spec({"gpu_devices": devices, "strata_layer_split": "18"})["environment"]
+            self.assertNotIn("LAYER_SPLIT", env, devices)
+        env = self._spec({"gpu_devices": "0,1", "strata_layer_split": ""})["environment"]
+        self.assertNotIn("LAYER_SPLIT", env)
+
     def test_memory_limit_forces_low_ram(self):
         kw = self._spec({"memory_limit": "48g", "strata_low_ram": "off"})
         self.assertEqual(kw["mem_limit"], "48g")
@@ -253,6 +262,14 @@ class ReinstallFingerprintTests(_TmpDirs):
         STRATA.on_ready({"model_path": QWEN, "config": self._cfg()})
         self.assertEqual(STRATA.environment(QWEN, self._cfg(ctx_size=65536)).get("REINSTALL"), "1")
 
+    def test_layer_split_change_needs_no_reinstall(self):
+        # The entrypoint passes LAYER_SPLIT at every start.
+        cfg = self._cfg(gpu_devices="0,1")
+        STRATA.on_ready({"model_path": QWEN, "config": cfg})
+        env = STRATA.environment(QWEN, {**cfg, "strata_layer_split": "20"})
+        self.assertNotIn("REINSTALL", env)
+        self.assertEqual(env["LAYER_SPLIT"], "20")
+
     def test_fingerprint_is_per_model_and_per_volume(self):
         STRATA.on_ready({"model_path": QWEN, "config": self._cfg()})
         self.assertEqual(STRATA.environment("/strata/qwen-Q2_0", self._cfg()).get("REINSTALL"), "1")
@@ -295,7 +312,17 @@ class ValidateLaunchTests(unittest.TestCase):
         name, opts, err = validate_launch({"ctx_size": 32768}, QWEN, "cuda")
         self.assertIsNone(err)
         self.assertEqual(name, "strata")
-        self.assertEqual(opts, {"strata_vision": "no", "strata_kv": "", "strata_low_ram": "auto"})
+        self.assertEqual(opts, {"strata_vision": "no", "strata_kv": "", "strata_low_ram": "auto",
+                                "strata_layer_split": ""})
+
+    def test_layer_split_validated(self):
+        for raw, want in (("", ""), ("auto", ""), ("AUTO", ""), ("18", "18"), (" 16, 32 ", "16,32")):
+            name, opts, err = validate_launch({"ctx_size": 1, "strata_layer_split": raw}, QWEN, "cuda")
+            self.assertIsNone(err, raw)
+            self.assertEqual(opts["strata_layer_split"], want, raw)
+        for raw in ("x", "16,", "1.5", "-4", "16;32"):
+            err = validate_launch({"ctx_size": 1, "strata_layer_split": raw}, QWEN, "cuda")[2]
+            self.assertIn("strata_layer_split", err, raw)
 
     def test_llamacpp_form_defaults_accepted(self):
         # What the launch form sends for fields it hides: their defaults.

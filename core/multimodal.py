@@ -21,17 +21,21 @@ MMPROJ_CONFIG_KEYS = (
 )
 
 
-def parse_mmproj_config(body: dict) -> tuple[dict, str | None]:
-    """Validate the image+PDF-input fields of a launch/preset payload."""
+def parse_mmproj_config(body: dict, image_input: bool | None = None) -> tuple[dict, str | None]:
+    """Validate the image+PDF-input fields of a launch/preset payload.
+
+    `image_input` is an engine's own image switch (Strata's strata_vision,
+    see Engine.image_input_enabled); None means llama.cpp's mmproj."""
     enabled = bool(body.get("mmproj_enabled", False))
     path = (body.get("mmproj_path") or "").strip()
     if enabled and not path:
         return {}, "mmproj_path is required when image input is enabled"
 
     pdf_enabled = bool(body.get("pdf_input_enabled", False))
-    if pdf_enabled and not enabled:
+    if pdf_enabled and not (enabled if image_input is None else image_input):
         # No vision model = the rasterized PDF pages have nowhere to go.
-        return {}, "pdf_input_enabled requires mmproj_enabled"
+        return {}, ("pdf_input_enabled requires mmproj_enabled" if image_input is None
+                    else "pdf_input_enabled requires image input to be on")
 
     # GPU offload for the projector. llama.cpp's default is ENABLED
     # (--mmproj-offload / --no-mmproj-offload pair, default true), so the

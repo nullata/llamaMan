@@ -324,7 +324,7 @@ class StrataEngine(Engine):
         "single_instance_per_model": True,
         "nvidia_only": True,
     }
-    option_keys = ("strata_vision", "strata_kv", "strata_low_ram")
+    option_keys = ("strata_vision", "strata_kv", "strata_low_ram", "strata_layer_split")
     launch_fields = frozenset({
         "ctx_size", "memory_limit", "gpu_devices", "image",
         "idle_timeout_min", "max_concurrent", "max_queue_depth",
@@ -337,7 +337,7 @@ class StrataEngine(Engine):
         "loop_detect_min_repetitions", "loop_detect_max_buffer_chars",
         "loop_detect_scan_interval_s", "loop_detect_scan_every_n_tokens",
         "pdf_input_enabled", "pdf_extract_text_first", "pdf_dpi", "pdf_max_pages",
-        "strata_vision", "strata_kv", "strata_low_ram",
+        "strata_vision", "strata_kv", "strata_low_ram", "strata_layer_split",
     })
 
     # ------------------------------------------------------------- paths/ids
@@ -460,7 +460,17 @@ class StrataEngine(Engine):
         low_ram = str(body.get("strata_low_ram") or "auto").strip().lower()
         if low_ram not in LOW_RAM_CHOICES:
             return {}, f"strata_low_ram must be one of {', '.join(LOW_RAM_CHOICES)}"
-        return {"strata_vision": vision, "strata_kv": kv, "strata_low_ram": low_ram}, None
+        split = str(body.get("strata_layer_split") or "").strip().lower().replace(" ", "")
+        if split == "auto":
+            split = ""
+        if split and not re.fullmatch(r"\d+(,\d+)*", split):
+            return {}, ("strata_layer_split must be empty (auto) or the layer each later GPU "
+                        "starts at, e.g. 18 or 16,32")
+        return {"strata_vision": vision, "strata_kv": kv, "strata_low_ram": low_ram,
+                "strata_layer_split": split}, None
+
+    def image_input_enabled(self, body: dict) -> bool | None:
+        return str(body.get("strata_vision") or "no").strip().lower() != "no"
 
     # ------------------------------------------------------------ container
     def command(self, model_path: str, config: dict) -> list[str]:
@@ -522,6 +532,12 @@ class StrataEngine(Engine):
         if s["kv"]:
             env["KV"] = s["kv"]
         env.update(s["gpus"])
+        # Where each later card's layers start; only means something across
+        # several cards. The entrypoint passes it at every start, so it is not
+        # part of the setup fingerprint (no REINSTALL to change it).
+        split = (config.get("strata_layer_split") or "").strip()
+        if split and "GPUS" in s["gpus"]:
+            env["LAYER_SPLIT"] = split
         if self.needs_reinstall(model_path, config):
             env["REINSTALL"] = "1"
         return env

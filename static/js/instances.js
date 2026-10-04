@@ -562,10 +562,20 @@ function updateSpecState() {
 }
 
 function updateMmprojState() {
-  const enabled = !!document.getElementById('f-mmproj-enabled')?.checked;
-  toggleLaunchSectionReveal(document.getElementById('mmproj-reveal'), enabled);
+  // Strata has no mmproj: its Image Input select (f-strata-vision) is the
+  // gate, and the section is always open so that select is reachable.
+  const strata = (typeof currentLaunchEngine === 'function') && currentLaunchEngine() === 'strata';
+  const mmprojOn = !!document.getElementById('f-mmproj-enabled')?.checked;
+  const enabled = strata
+    ? (document.getElementById('f-strata-vision')?.value || 'no') !== 'no'
+    : mmprojOn;
+  toggleLaunchSectionReveal(document.getElementById('mmproj-reveal'), strata || mmprojOn);
   const input = document.getElementById('f-mmproj-path');
-  if (input) input.disabled = !enabled;
+  if (input) input.disabled = !mmprojOn;
+  ['f-pdf-input-enabled', 'f-pdf-extract-text-first'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = strata && !enabled;
+  });
   // The master toggle IS the gate for the whole group (mmproj load + PDF
   // endpoint). Clear the PDF sub-toggles on toggle-off so a checked
   // "Accept PDF uploads" can't hide inside the collapsed reveal and trip
@@ -614,7 +624,10 @@ async function updateGpuSettingsState() {
 
   const layersRaw = document.getElementById('f-gpu-layers')?.value;
   const layers = parseInt(layersRaw, 10);
-  const cpuOnly = layers === 0;
+  const strata = (typeof currentLaunchEngine === 'function') && currentLaunchEngine() === 'strata';
+  // GPU Layers is a hidden llama.cpp field for Strata; a 0 left over from
+  // another model must not read as CPU-only.
+  const cpuOnly = !strata && layers === 0;
   const isIntel = vendor === 'intel';
 
   const devicesField  = document.getElementById('f-gpu-devices')?.closest('.form-group');
@@ -655,7 +668,17 @@ async function updateGpuSettingsState() {
 
   // Header hint: honest one-liner about why the section is greyed. Empty when
   // everything is in play so we don't add visual noise for the common case.
-  if (hint) {
+  // Strata: Layer Split is its only placement knob, and only across 2+ GPUs.
+  const lsInput = document.getElementById('f-strata-layer-split');
+  const lsGroup = document.getElementById('f-strata-layer-split-group');
+  if (lsInput) lsInput.disabled = !splitMeaningful;
+  if (lsGroup) lsGroup.classList.toggle('gpu-field-disabled', !splitMeaningful);
+
+  if (hint && strata) {
+    hint.textContent = visibleCount === 0
+      ? 'No GPUs detected on the target node.'
+      : visibleCount === 1 ? 'Strata places the model on this GPU and RAM itself.' : '';
+  } else if (hint) {
     if (isIntel) hint.textContent = 'Per-instance GPU selection is not supported on Intel.';
     else if (cpuOnly) hint.textContent = 'CPU-only (GPU Layers = 0) — no GPU placement to configure.';
     else if (visibleCount < 2) hint.textContent = visibleCount === 1
@@ -739,6 +762,11 @@ function updateModelSettingsState() {
   const ctvGroup = document.getElementById('f-cache-type-v-group');
   const hint = document.getElementById('model-settings-hint');
   if (!flashAttnEl || !ctvEl) return;
+  if ((typeof currentLaunchEngine === 'function') && currentLaunchEngine() === 'strata') {
+    // The Flash Attention / V cache rule is llama-server's; those fields are hidden.
+    if (hint) hint.textContent = '';
+    return;
+  }
 
   const flashOn = flashAttnEl.value === 'on';
   ctvEl.disabled = !flashOn;
