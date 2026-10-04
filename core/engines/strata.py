@@ -111,10 +111,36 @@ MEMORY_WARN_GB = 64
 _SETUPS_LOCK = threading.Lock()
 
 
+def model_for_file(path: str | None) -> tuple[str, str] | None:
+    """A downloaded shard of a catalogue model, recognized by its file name
+    (any folder) -> (family, size); else None."""
+    if not isinstance(path, str) or not path.lower().endswith(".gguf"):
+        return None
+    name = os.path.basename(path)
+    for family, fam in FAMILIES.items():
+        for size, meta in SIZES.items():
+            if family in meta["families"] and name in shard_files(family, size):
+                return family, size
+    return None
+
+
+def shards_dir_for_file(path: str | None) -> str | None:
+    """The folder of a downloaded shard when every shard of its model is
+    there (what gets mounted into the container), else None."""
+    parsed = model_for_file(path)
+    if not parsed:
+        return None
+    d = os.path.dirname(path)
+    if all(os.path.isfile(os.path.join(d, n)) for n in shard_files(*parsed)):
+        return d
+    return None
+
+
 def parse_model_path(model_path: str | None) -> tuple[str, str] | None:
-    """'/strata/qwen-IQ2_XS' (or the id 'strata/qwen-IQ2_XS') ->
-    ('qwen', 'IQ2_XS'). None when it isn't a Strata model in the catalogue.
-    Family names have no '-', sizes may ('UD-Q4_K_XL'), so split once."""
+    """'/strata/qwen-IQ2_XS' (or the id 'strata/qwen-IQ2_XS', or a downloaded
+    shard file of it) -> ('qwen', 'IQ2_XS'). None when it isn't a Strata
+    model in the catalogue. Family names have no '-', sizes may
+    ('UD-Q4_K_XL'), so split once."""
     if not isinstance(model_path, str):
         return None
     p = model_path.strip()
@@ -123,7 +149,7 @@ def parse_model_path(model_path: str | None) -> tuple[str, str] | None:
     elif p.lower().startswith(ID_PREFIX):
         rest = p[len(ID_PREFIX):]
     else:
-        return None
+        return model_for_file(p)
     family, sep, size = rest.partition("-")
     if not sep:
         return None
@@ -342,7 +368,13 @@ class StrataEngine(Engine):
 
     # ------------------------------------------------------------- paths/ids
     def owns_model_path(self, model_path: str | None) -> bool:
+        # Only the ids: a downloaded shard file is a plain file (llama.cpp by
+        # default) that Strata can run when the engine is picked for it.
         return parse_model_path(model_path) is not None and str(model_path).startswith(PATH_PREFIX)
+
+    def file_model_id(self, path: str) -> str | None:
+        parsed = model_for_file(path)
+        return model_id_for(*parsed) if parsed else None
 
     def display_name(self, model_path: str) -> str:
         parsed = parse_model_path(model_path)
@@ -397,16 +429,23 @@ class StrataEngine(Engine):
         }
 
     def launch_blocker(self, model_path: str) -> str | None:
-        # Starting now would make the container download the same ~70 GB
-        # into its own volume while llamaman is still fetching them.
+        """Strata runs only models llamaman has downloaded: never let the
+        container fetch ~70 GB into its own volume. `model_path` is the
+        file it is launched from, or a model id."""
         parsed = parse_model_path(model_path)
         if not parsed:
             return None
         dl = model_download(*parsed)
         if dl and dl.get("status") in ("downloading", "paused"):
-            return (f"{model_id_for(*parsed)} is still being downloaded by llamaman "
-                    f"(download {dl['id'][:8]}, {dl['status']}); launch it when the download "
-                    f"finishes, or cancel the download to let Strata fetch the files itself")
+            return (f"{model_id_for(*parsed)} is still being downloaded "
+                    f"(download {dl['id'][:8]}, {dl['status']}); launch it when the download finishes")
+        if model_for_file(model_path):
+            if not shards_dir_for_file(model_path):
+                return (f"not every shard of {model_id_for(*parsed)} is next to {os.path.basename(model_path)} "
+                        f"(expected {', '.join(shard_files(*parsed))})")
+        elif not local_shard_dir(*parsed):
+            return (f"{model_id_for(*parsed)} is not downloaded: download it from Recommended "
+                    f"models in the Strata settings, then launch it from the model library")
         return None
 
     def model_metadata(self, model_path: str) -> dict:
@@ -567,7 +606,9 @@ class StrataEngine(Engine):
             HOST_LOGS_DIR: {"bind": LOGS_DIR, "mode": "rw"},
         }
         family, size = parse_model_path(model_path)
-        shards = local_shard_dir(family, size)
+        # The file it was launched from (launch_instance), else llamaman's
+        # own download folder for it.
+        shards = shards_dir_for_file(config.get("engine_source_path")) or local_shard_dir(family, size)
         if shards:
             # rw: setup writes a <shard>.done mark beside each file it accepts.
             vols[_host_path_for_models_subdir(shards)] = {

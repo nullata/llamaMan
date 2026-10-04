@@ -259,12 +259,53 @@ class ShardReadinessTests(_Isolated):
         self.assertIn("still being downloaded", err)
         run_mock.assert_not_called()
 
-    def test_launch_allowed_after_completion_or_without_download(self):
+    def test_launch_needs_the_files_locally(self):
+        # Strata never downloads into its own volume any more.
+        self.assertIn("not downloaded", STRATA.launch_blocker(QWEN))
+        self._write_shards()
         self.assertIsNone(STRATA.launch_blocker(QWEN))
         self._add_download("completed")
         self.assertIsNone(STRATA.launch_blocker(QWEN))
-        self._add_download("failed")  # failed: Strata may fetch the files itself
-        self.assertIsNone(STRATA.launch_blocker(QWEN))
+        self._add_download("failed")              # files may be partial
+        self.assertIn("not downloaded", STRATA.launch_blocker(QWEN))
+
+    def test_launch_from_a_file_needs_its_sibling_shards(self):
+        d = self._write_shards()
+        first, second = S.shard_files("qwen", "IQ2_XS")
+        self.assertIsNone(STRATA.launch_blocker(os.path.join(d, first)))
+        os.remove(os.path.join(d, second))
+        self.assertIn(second, STRATA.launch_blocker(os.path.join(d, first)))
+
+    def test_launch_from_file_records_source_and_mounts_its_folder(self):
+        d = os.path.join(self.models_dir, "elsewhere")      # any folder, not strata/<tag>
+        os.makedirs(d)
+        for name in S.shard_files("qwen", "IQ2_XS"):
+            open(os.path.join(d, name), "w").close()
+        src = os.path.join(d, S.shard_files("qwen", "IQ2_XS")[0])
+        fake = Mock()
+        fake.id = "cid"
+        with patch("api.instances._run_container", return_value=(fake, None)) as run_mock, \
+             patch("api.instances.is_port_available", return_value=True), \
+             patch("api.instances.find_available_port", return_value=9005), \
+             patch("api.instances.save_state"), patch("api.instances.start_idle_proxy"), \
+             patch("api.instances.create_gate"), patch("api.instances._publish_cluster_heartbeat_safe"):
+            inst, err = instances_api.launch_instance(model_path=src, port=8001, ctx_size=32768,
+                                                      engine="strata")
+        self.assertIsNone(err)
+        self.assertEqual(inst["model_path"], QWEN)
+        self.assertEqual(inst["config"]["engine_source_path"], src)
+        cfg = run_mock.call_args.args[4]
+        with patch("config.HOST_MODELS_DIR", self.models_dir):
+            vols = STRATA.volumes(QWEN, cfg)
+        self.assertEqual(vols[d], {"bind": "/data/models/IQ2_XS", "mode": "rw"})
+
+    def test_plain_file_cannot_run_on_strata(self):
+        plain = os.path.join(self.models_dir, "chat-Q4_K_M.gguf")
+        open(plain, "w").close()
+        inst, err = instances_api.launch_instance(model_path=plain, port=8001, ctx_size=4096,
+                                                  engine="strata")
+        self.assertIsNone(inst)
+        self.assertIn("cannot run", err)
 
 
 if __name__ == "__main__":

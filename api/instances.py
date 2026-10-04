@@ -580,6 +580,15 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
     # llama.cpp): Strata serves one request at a time, so its gate is forced
     # to 1 and queueing happens in llamaman's RequestGate.
     eng = get_engine(engine, model_path)
+    # A local file run on another engine (a downloaded Strata shard): the
+    # instance is that engine's model, the file is remembered as its source
+    # (mounted into the container, matched by the API's model lookup).
+    source_path = None
+    if eng.capabilities.get("virtual_models") and not eng.owns_model_path(model_path):
+        canonical = eng.canonical_model_path(model_path)
+        if not canonical:
+            return None, f"{eng.label} cannot run '{model_path}'"
+        source_path, model_path = model_path, canonical
     clamped = eng.enforce_capabilities({
         "max_concurrent": max_concurrent,
         "embedding_model": embedding_model,
@@ -594,7 +603,7 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
                            if i["status"] not in ("stopped",) and i.get("model_path") == model_path]
     if port in used_ports:
         return None, f"Port {port} is already in use"
-    blocker = eng.launch_blocker(model_path)
+    blocker = eng.launch_blocker(source_path or model_path)
     if blocker:
         return None, blocker
     from core.archive import busy_reason as archive_busy_reason
@@ -735,6 +744,8 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
     # llamaman.config label.
     if eng.name != DEFAULT_ENGINE:
         config["engine"] = eng.name
+        if source_path:
+            config["engine_source_path"] = source_path
         for key in eng.option_keys:
             if key in (engine_options or {}):
                 config[key] = engine_options[key]

@@ -268,14 +268,9 @@ function _modelSets() {
 
   const target = _launchNode();
   const targetNode = (cs.nodes || []).find(n => n.node_id === target);
-  // A peer's snapshot lists only its files; its engines' virtual models
-  // (e.g. Strata, only on capable nodes) come from snapshot.system.engines.
   const present = (target === cs.self_id)
     ? allModels
-    : [
-      ...((targetNode && targetNode.snapshot && targetNode.snapshot.models) || []),
-      ...((typeof engineModelsFromSnapshot === 'function') ? engineModelsFromSnapshot(targetNode) : []),
-    ];
+    : ((targetNode && targetNode.snapshot && targetNode.snapshot.models) || []);
 
   // An archived model isn't launchable here, so it doesn't hide a peer's copy.
   const presentKeys = new Set(present.filter(m => !m.archived).map(m => m.name.toLowerCase()));
@@ -332,16 +327,12 @@ function renderModels() {
     // too; the filename stays visible on the path line below.
     const pretty = getModelPrettyName(m.path);
     const displayName = pretty || m.name;
-    // Virtual models (an engine's catalogue, e.g. Strata) have no file to
-    // delete; show what they need instead.
-    const isVirtual = !!m.engine;
-    const virtualBadges = isVirtual
-      ? `${m.ram_gb ? `<span class="badge" title="System RAM Strata needs">${m.ram_gb} GB RAM</span>` : ''}`
-        + `${m.local_shards ? '<span class="badge badge-ok" title="Files downloaded by llamaMan">files local</span>' : ''}`
-        + `${m.download && m.download.status !== 'completed' ? `<span class="badge badge-warn">download ${escHtml(m.download.status)}</span>` : ''}`
-        + `${m.experimental ? '<span class="badge badge-warn">experimental</span>' : ''}`
+    // A file another engine can run (a downloaded Strata model).
+    const isVirtual = false;
+    const virtualBadges = (m.engine_models && m.engine_models.strata)
+      ? '<span class="badge badge-engine" title="A Strata model: pick Strata as the Inference Engine to run it">Strata</span>'
       : '';
-    const deleteBtn = (isVirtual || m.archived)
+    const deleteBtn = m.archived
       ? ''
       : '<button class="btn-delete-model" title="Delete model from disk"><i class="fa-solid fa-trash"></i></button>';
     // Archive / Restore (static/js/archive.js): only when ARCHIVE_DIR is set.
@@ -362,7 +353,7 @@ function renderModels() {
             ${virtualBadges}
             ${archivedBadge}
           </div>
-          <span class="path">${escHtml(isVirtual && m.title ? m.title : m.path)}</span>
+          <span class="path">${escHtml(m.path)}</span>
         </div>
       </div>
       ${archiveBtn}
@@ -622,9 +613,10 @@ async function selectModel(model, el) {
   if (typeof setActiveTab === 'function') setActiveTab('settings', 'launch');
   updatePortSuggestion();
   if (ctxField) ctxField.value = '';
-  // Show the selected engine's fields before its preset fills them.
+  // llama.cpp until the model's preset says otherwise; the Inference Engine
+  // dropdown offers the engines this file can run on.
   if (typeof applyEngineToLaunchForm === 'function') {
-    applyEngineToLaunchForm(engineForModel(model), model);
+    applyEngineToLaunchForm('llamacpp', model);
     if (typeof applyStrataPresetToLaunchForm === 'function') applyStrataPresetToLaunchForm({});
   }
   // Load preset if one exists
@@ -636,6 +628,11 @@ async function selectModel(model, el) {
       const p = await res.json();
       _loadedPreset = p;
       _loadedPresetPath = model.path;
+      // The preset remembers the engine: show its fields before filling them.
+      const presetEngine = p.engine || 'llamacpp';
+      if (typeof applyEngineToLaunchForm === 'function' && presetEngine !== currentLaunchEngine()) {
+        applyEngineToLaunchForm(presetEngine, model);
+      }
       applyPresetToLaunchForm(p);
       toast('Preset loaded', 'info');
     }
@@ -755,7 +752,7 @@ function resetLaunchForm() {
   _loadedPreset = null;
   _loadedPresetPath = null;
   currentModelMeta = null;
-  if (typeof applyEngineToLaunchForm === 'function') applyEngineToLaunchForm('llamacpp');
+  if (typeof applyEngineToLaunchForm === 'function') applyEngineToLaunchForm('llamacpp', null);
   // form.reset() doesn't fire change events, so the share-queue cluster row
   // (which hides + clears its inputs on toggle-off) needs a manual nudge.
   if (typeof updateShareQueueClusterRow === 'function') updateShareQueueClusterRow();

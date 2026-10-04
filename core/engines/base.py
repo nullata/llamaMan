@@ -226,6 +226,11 @@ class Engine:
         """A virtual model's path from its id or path, or None."""
         return None
 
+    def file_model_id(self, path: str) -> str | None:
+        """The model id of a local file this engine can run (e.g. a
+        downloaded Strata shard), or None."""
+        return None
+
     def download_plan(self, model_path: str) -> dict | None:
         """How llamaman's downloader can pre-fetch this model's files:
         {"repo_id", "filename", "revision", "dest_path"}, or None."""

@@ -12,15 +12,46 @@
 // -------------------------------------------------------------------------
 
 let launchEngine = 'llamacpp';
-let launchEngineModel = null;      // library entry of the selected virtual model
+let launchSelectedModel = null;    // library entry of the selected file
+let launchEngineModel = null;      // its entry in the engine's catalogue (Strata)
 let _enginesCache = {};            // nodeId -> {at, data} from /api/engines
 const _ENGINES_TTL_MS = 15000;
 
 function currentLaunchEngine() { return launchEngine; }
 
 function engineForModel(m) {
-  return (m && m.engine) || 'llamacpp';
+  return 'llamacpp';
 }
+
+// The Inference Engine dropdown: Strata only for a file Strata can run
+// (engine_models.strata, a downloaded recommended model) on a node that can
+// run Strata.
+async function updateEngineSelect() {
+  const sel = document.getElementById('f-engine');
+  if (!sel) return;
+  sel.value = launchEngine;
+  const opt = sel.querySelector('option[value="strata"]');
+  if (!opt) return;
+  const m = launchSelectedModel;
+  let reason = '';
+  if (!m) reason = 'Select a model first';
+  else if (!(m.engine_models && m.engine_models.strata)) reason = 'Strata runs only its recommended models (download one from the Strata settings)';
+  else {
+    const info = _engineInfo(await fetchEnginesForNode(_launchNode()), 'strata');
+    if (!info) reason = 'Strata is unknown on the target node';
+    else if (!info.available) reason = info.reason || 'Strata is unavailable on the target node';
+  }
+  // Keep the current engine selectable even if it became unavailable, so the
+  // form never shows a value it can't hold; the server re-checks on launch.
+  opt.disabled = !!reason && launchEngine !== 'strata';
+  opt.title = reason;
+  sel.title = reason && launchEngine !== 'strata' ? reason : '';
+}
+
+const engineSelectEl = document.getElementById('f-engine');
+if (engineSelectEl) engineSelectEl.addEventListener('change', () => {
+  applyEngineToLaunchForm(engineSelectEl.value, launchSelectedModel);
+});
 
 async function fetchEnginesForNode(nodeId, force = false) {
   const key = nodeId || 'local';
@@ -84,7 +115,9 @@ function instanceLoadStageLine(inst) {
 
 function applyEngineToLaunchForm(engine, model) {
   launchEngine = engine || 'llamacpp';
-  launchEngineModel = (launchEngine !== 'llamacpp') ? (model || null) : null;
+  if (model !== undefined) launchSelectedModel = model || null;
+  launchEngineModel = null;          // resolved from the catalogue in refreshStrataSection
+  updateEngineSelect();
   document.querySelectorAll('[data-engine-only]').forEach(el => {
     el.hidden = el.dataset.engineOnly !== launchEngine;
   });
@@ -152,6 +185,9 @@ async function refreshStrataSection() {
   if (launchEngine !== 'strata') return;
   const data = await fetchEnginesForNode(_launchNode());
   const info = _engineInfo(data, 'strata') || {};
+  const modelId = launchSelectedModel && launchSelectedModel.engine_models
+    ? launchSelectedModel.engine_models.strata : null;
+  launchEngineModel = (info.models || []).find(x => x.name === modelId) || null;
   const m = launchEngineModel || {};
 
   const summary = document.getElementById('strata-model-summary');
@@ -187,22 +223,11 @@ async function refreshStrataSection() {
 }
 
 function updateStrataDownloadRow() {
-  const m = launchEngineModel || {};
+  // The selected model is a local file: nothing to download here.
   const status = document.getElementById('strata-download-status');
   const btn = document.getElementById('btn-strata-download');
-  if (!status || !btn) return;
-  const d = m.download;
-  btn.hidden = true;
-  if (m.local_shards) {
-    status.textContent = 'Model files are in llamaMan\'s models folder: the first start skips the download.';
-  } else if (d && (d.status === 'downloading' || d.status === 'paused')) {
-    status.textContent = `llamaMan is downloading the model files (${d.status}) - see the Downloads tab. Launch is blocked until it finishes.`;
-  } else {
-    status.textContent = (d && d.status === 'failed')
-      ? 'The llamaMan download failed - retry it in the Downloads tab, or launch and let Strata download into its volume.'
-      : 'Not downloaded by llamaMan. Launching lets Strata download into its own volume (progress shows on the instance card), or pre-download here to track it in the Downloads tab.';
-    btn.hidden = !!(d && d.status === 'failed');
-  }
+  if (status) status.textContent = '';
+  if (btn) btn.hidden = true;
 }
 
 function updateStrataWarnings() {
@@ -223,9 +248,6 @@ function updateStrataWarnings() {
   const idle = parseInt(document.getElementById('f-idle-timeout')?.value, 10) || 0;
   if (idle > 0) {
     warn.push('Idle timeout works, but a cold start loads 32-62 GB and takes minutes; the request that wakes it waits that long.');
-  }
-  if (!m.local_shards && !(m.download && m.download.status === 'completed')) {
-    warn.push(`The first start downloads ${m.size_display || '~70 GB'} and prepares the model before the server answers (up to STRATA_LOAD_TIMEOUT).`);
   }
   ul.innerHTML = warn.map(w => `<li><i class="fa-solid fa-triangle-exclamation"></i> ${escHtml(w)}</li>`).join('');
 }

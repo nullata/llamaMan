@@ -78,6 +78,18 @@ def virtual_model_key(name: str) -> str | None:
     return None
 
 
+def file_engine_models(path: str) -> dict:
+    """{engine name: model id} for every non-default engine that can run this
+    local file - tagged onto library entries so the launch form knows which
+    engines to offer for it."""
+    out = {}
+    for name, eng in ENGINES.items():
+        mid = eng.file_model_id(path)
+        if mid:
+            out[name] = mid
+    return out
+
+
 def parse_engine(body: dict | None, model_path: str | None = None) -> tuple[str, str | None]:
     """Validate an API body's `engine` field. Returns (engine_name, error).
 
@@ -99,8 +111,9 @@ def parse_engine(body: dict | None, model_path: str | None = None) -> tuple[str,
     if model_path and (owner or DEFAULT_ENGINE) != name:
         if owner:
             return name, f"'{model_path}' is a {ENGINES[owner].label} model, not {ENGINES[name].label}"
-        if ENGINES[name].capabilities.get("virtual_models"):
-            return name, f"{ENGINES[name].label} cannot run '{model_path}'; pick one of its models"
+        if ENGINES[name].capabilities.get("virtual_models") and not ENGINES[name].file_model_id(model_path):
+            return name, (f"{ENGINES[name].label} cannot run '{model_path}': it runs only its "
+                          f"recommended models (download one from the {ENGINES[name].label} settings)")
     return name, None
 
 

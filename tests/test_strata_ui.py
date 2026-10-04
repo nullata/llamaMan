@@ -141,6 +141,12 @@ class LaunchFormMarkupTests(unittest.TestCase):
             self.assertEqual(self._section_of(marker), "model-settings-section", marker)
         self.assertIn("js/engines.js", self.html)
 
+    def test_engine_picker_between_target_node_and_image(self):
+        self.assertLess(self.html.index('id="f-node"'), self.html.index('id="f-engine"'))
+        self.assertLess(self.html.index('id="f-engine"'), self.html.index('id="f-image"'))
+        self.assertRegex(self.html, r'<option value="llamacpp" selected>llama\.cpp</option>\s*'
+                                    r'<option value="strata">Strata</option>')
+
     def test_dry_explanations_llamacpp_only(self):
         self.assertIn('<p class="hint-text" data-engine-only="llamacpp">Two independent controls.', self.html)
         self.assertIn('<span class="text-meta" data-engine-only="llamacpp">Two-tier defense', self.html)

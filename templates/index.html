@@ -133,6 +133,16 @@
                   </div>
                   <div class="form-group">
                     <span class="label-row">
+                      <label for="f-engine">Inference Engine</label>
+                      <span class="info-tip" tabindex="0" role="button" aria-label="Inference Engine help" data-tip="What runs the selected model. llama.cpp runs any GGUF. Strata runs only its recommended models (download them from the Strata settings) and needs an NVIDIA GPU with STRATA_ENABLED on the target node. The choice is saved in the model&#39;s preset."><i class="fa-solid fa-circle-info"></i></span>
+                    </span>
+                    <select id="f-engine">
+                      <option value="llamacpp" selected>llama.cpp</option>
+                      <option value="strata">Strata</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <span class="label-row">
                       <label for="f-image">Docker Image</label>
                       <span class="info-tip" tabindex="0" role="button" aria-label="Docker Image help" data-tip="Which llama.cpp image runs this instance. Defaults to the target node's configured image; pick another local image to run a different CUDA/ROCm/CPU build. Manage images in the Docker Images tab."><i class="fa-solid fa-circle-info"></i></span>
                     </span>

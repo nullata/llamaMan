@@ -353,6 +353,16 @@ class ValidateLaunchTests(unittest.TestCase):
                               "/strata/unsloth-UD-Q4_K_XL", "cuda")[2]
         self.assertIn("image encoder", err)
 
+    def test_explicit_strata_accepts_its_downloaded_file(self):
+        shard = "/models/strata/iq2_xs/IQ2_XS/Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf"
+        name, opts, err = validate_launch({"ctx_size": 32768, "engine": "strata"}, shard, "cuda")
+        self.assertIsNone(err)
+        self.assertEqual(name, "strata")
+        # Without an explicit engine a file stays llama.cpp.
+        self.assertEqual(validate_launch({"ctx_size": 4096}, shard, "cuda")[0], "llamacpp")
+        err = validate_launch({"ctx_size": 1, "engine": "strata"}, "/models/chat.gguf", "cuda")[2]
+        self.assertIn("recommended models", err)
+
     def test_unknown_strata_model(self):
         _, _, err = validate_launch({"ctx_size": 1, "engine": "strata"}, "/strata/qwen-IQ9", "cuda")
         self.assertIsNotNone(err)
@@ -375,6 +385,13 @@ class _Instances(unittest.TestCase):
 
 
 class CapabilityEnforcementTests(_Instances):
+
+    def setUp(self):
+        super().setUp()
+        # These launch by model id: pretend its files are downloaded.
+        p = patch("core.engines.strata.local_shard_dir", return_value="/models/strata/iq2_xs/IQ2_XS")
+        p.start()
+        self.addCleanup(p.stop)
 
     def _launch(self, **kw):
         fake = Mock()

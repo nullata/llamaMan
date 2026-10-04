@@ -17,7 +17,7 @@ def _instance_paths(inst: dict) -> list[str]:
     and - for Strata - the shard folder mounted into its container."""
     cfg = inst.get("config") or {}
     paths = [inst.get("model_path", ""), cfg.get("spec_draft_model") or "",
-             cfg.get("mmproj_path") or ""]
+             cfg.get("mmproj_path") or "", cfg.get("engine_source_path") or ""]
     if cfg.get("engine") == "strata":
         from core.engines import strata
         parsed = strata.parse_model_path(inst.get("model_path"))

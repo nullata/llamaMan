@@ -1,12 +1,13 @@
 # Copyright (c) llamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
-"""Strata models in discovery (/api/models, /api/tags, /v1/models, /api/show,
-/api/ps), Ollama/OpenAI name resolution and auto-launch, per-instance proxy
-model-name matching, /api/engines and the cluster snapshot.
+"""Strata models in discovery (/api/models, /api/tags, /v1/models, /api/ps),
+Ollama/OpenAI name resolution and auto-launch, per-instance proxy model-name
+matching, /api/engines and the cluster snapshot.
 
-Strata models are virtual (no file): they're listed only when STRATA_ENABLED
-is set and the node is NVIDIA, after the files on disk so filename lookups
-keep precedence. GGUF matching must be unchanged.
+The library lists only files on disk. Strata's catalogue is offered for
+download in the Strata settings, not listed; a downloaded shard is an
+ordinary file tagged with the engine that runs it (engine_models), and
+answers to Strata's names for it. GGUF matching must be unchanged.
 """
 
 import os
@@ -31,6 +32,11 @@ from proxy import _model_matches
 QWEN = "/strata/qwen-IQ2_XS"
 GGUF = {"name": "alpha", "path": "/models/alpha-Q4_K_M.gguf", "type": "gguf",
         "quant": "Q4_K_M", "size_bytes": 99, "size_display": "99 B"}
+# A downloaded shard of strata/qwen-IQ2_XS, as discover_models lists it.
+SHARD_NAME = "Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002"
+SHARD = {"name": SHARD_NAME, "path": f"/models/strata/iq2_xs/IQ2_XS/{SHARD_NAME}.gguf", "type": "gguf",
+         "quant": "IQ2_XS", "size_bytes": 50, "size_display": "50 B",
+         "engine_models": {"strata": "strata/qwen-IQ2_XS"}}
 
 
 def strata_on(vendor="cuda"):
@@ -63,38 +69,32 @@ class ModelNameTests(unittest.TestCase):
 
 class ListModelsTests(unittest.TestCase):
 
-    def _list(self):
-        with patch("api.models.discover_models", return_value=[dict(GGUF)]):
-            return models_api.list_models("/models")
+    def test_library_is_files_only(self):
+        for vendor in ("cuda", "rocm"):
+            with strata_on(vendor), patch("api.models.discover_models", return_value=[dict(GGUF)]):
+                self.assertEqual([m["path"] for m in models_api.list_models("/models")], [GGUF["path"]])
 
-    def test_disabled_lists_files_only(self):
-        with patch("config.STRATA_ENABLED", False), patch("core.gpu.get_vendor", return_value="cuda"):
-            self.assertEqual([m["path"] for m in self._list()], [GGUF["path"]])
-
-    def test_enabled_nvidia_appends_catalogue_after_files(self):
-        with strata_on():
-            models = self._list()
-        self.assertEqual(models[0]["path"], GGUF["path"])
-        virtual = models[1:]
-        self.assertEqual(len(virtual), 8)
-        q = next(m for m in virtual if m["path"] == QWEN)
-        self.assertEqual((q["name"], q["type"], q["engine"], q["quant"]),
-                         ("strata/qwen-IQ2_XS", "strata", "strata", "IQ2_XS"))
-        self.assertFalse(q["local_shards"])
-
-    def test_non_nvidia_lists_no_virtual_models(self):
-        for vendor in ("rocm", "intel", "vulkan", None):
-            with strata_on(vendor):
-                self.assertEqual(len(self._list()), 1, vendor)
+    def test_downloaded_shard_tagged_with_its_engine(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            sub = os.path.join(d, "strata", "iq2_xs", "IQ2_XS")
+            os.makedirs(sub)
+            for i in (1, 2):
+                open(os.path.join(sub, f"Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-0000{i}-of-00002.gguf"), "wb").close()
+            open(os.path.join(d, "plain-Q4_K_M.gguf"), "wb").close()
+            models = {m["name"]: m for m in models_api.discover_models(d)}
+        self.assertEqual(models[SHARD_NAME]["engine_models"], {"strata": "strata/qwen-IQ2_XS"})
+        self.assertNotIn("engine_models", models["plain-Q4_K_M"])
 
     def test_api_models_route(self):
         app = Flask(__name__)
         app.register_blueprint(models_api.bp)
-        with strata_on(), patch("api.models.discover_models", return_value=[]), \
+        with strata_on(), patch("api.models.discover_models", return_value=[dict(SHARD)]), \
              patch("api.models.get_storage") as st:
             st.return_value.get_settings.return_value = {}
             data = app.test_client().get("/api/models").get_json()
-        self.assertIn("strata/qwen-IQ2_XS", [m["name"] for m in data])
+        self.assertEqual([m["name"] for m in data], [SHARD_NAME])
+        self.assertNotIn("strata/qwen-IQ2_XS", [m["name"] for m in data])
 
 
 class CompatListingTests(unittest.TestCase):
@@ -112,38 +112,14 @@ class CompatListingTests(unittest.TestCase):
         for p in reversed(self._p):
             p.stop()
 
-    def test_tags_lists_strata_only_when_enabled(self):
-        with patch("config.STRATA_ENABLED", False):
-            names = [m["name"] for m in self.client.get("/api/tags").get_json()["models"]]
-        self.assertEqual(names, ["alpha-q4_k_m"])
-        with strata_on():
-            models = self.client.get("/api/tags").get_json()["models"]
-        entry = next(m for m in models if m["name"] == "strata/qwen-iq2_xs")
-        self.assertEqual(entry["details"]["family"], "qwen3.8-flash-next")
-        self.assertEqual(entry["details"]["quantization_level"], "IQ2_XS")
-
-    def test_v1_models_context_default_and_preset(self):
+    def test_tags_and_v1_models_list_files_only(self):
         storage = Mock()
         storage.get_preset.return_value = None
         with strata_on(), patch("api.llamaman.get_storage", return_value=storage):
-            data = self.client.get("/v1/models").get_json()["data"]
-        entry = next(m for m in data if m["id"] == "strata/qwen-iq2_xs")
-        self.assertEqual(entry["context_length"], 32768)
-        storage.get_preset.side_effect = lambda p: {"ctx_size": 131072} if p == QWEN else None
-        with strata_on(), patch("api.llamaman.get_storage", return_value=storage):
-            data = self.client.get("/v1/models").get_json()["data"]
-        entry = next(m for m in data if m["id"] == "strata/qwen-iq2_xs")
-        self.assertEqual(entry["context_length"], 131072)
-
-    def test_show_strata_model(self):
-        storage = Mock()
-        storage.get_preset.return_value = None
-        with strata_on(), patch("api.llamaman.get_storage", return_value=storage):
-            resp = self.client.post("/api/show", json={"model": "strata/qwen-IQ2_XS"})
-        self.assertEqual(resp.status_code, 200)
-        info = resp.get_json()["model_info"]
-        self.assertEqual(info["general.architecture"], "qwen3.8-flash-next")
-        self.assertEqual(info["qwen3.8-flash-next.context_length"], 32768)
+            tags = [m["name"] for m in self.client.get("/api/tags").get_json()["models"]]
+            ids = [m["id"] for m in self.client.get("/v1/models").get_json()["data"]]
+        self.assertEqual(tags, ["alpha-q4_k_m"])
+        self.assertEqual(ids, ["alpha-q4_k_m"])
 
     @patch("api.llamaman._probe_server_ready", return_value=True)
     @patch("api.llamaman._instance_container_alive", return_value=True)
@@ -169,31 +145,33 @@ class CompatListingTests(unittest.TestCase):
 
 class NameResolutionTests(unittest.TestCase):
 
-    def _find(self, name):
-        with strata_on(), patch("api.llamaman.discover_models", return_value=[dict(GGUF)]):
-            m = llamaman._find_model_by_name(name)
-        return m["path"] if m else None
+    def _find(self, name, files=(GGUF, SHARD)):
+        with strata_on(), patch("api.llamaman.discover_models", return_value=[dict(f) for f in files]):
+            return llamaman._find_model_by_name(name)
 
-    def test_resolves_id_case_and_tag_insensitively(self):
-        for name in ("strata/qwen-IQ2_XS", "STRATA/QWEN-iq2_xs", "strata/qwen-IQ2_XS:latest"):
-            self.assertEqual(self._find(name), QWEN, name)
+    def test_strata_names_resolve_to_the_downloaded_file(self):
+        for name in ("strata/qwen-IQ2_XS", "STRATA/QWEN-iq2_xs", "strata/qwen-IQ2_XS:latest",
+                     "qwen3.8-flash-next-iq2_xs"):
+            m = self._find(name)
+            self.assertEqual(m["path"], SHARD["path"], name)
+            self.assertEqual(m["_engine"], "strata", name)
 
-    def test_resolves_strata_served_name(self):
-        self.assertEqual(self._find("qwen3.8-flash-next-iq2_xs"), QWEN)
-        self.assertEqual(self._find("swift-1.5-iq3_xxs"), "/strata/swift-IQ3_XXS")
+    def test_file_name_resolves_without_engine_hint(self):
+        m = self._find(SHARD_NAME.lower())
+        self.assertEqual(m["path"], SHARD["path"])
+        self.assertNotIn("_engine", m)
+
+    def test_not_found_when_not_downloaded(self):
+        self.assertIsNone(self._find("strata/qwen-IQ2_XS", files=(GGUF,)))
+        self.assertIsNone(self._find("qwen3.8-flash-next-iq2_xs", files=(GGUF,)))
 
     def test_gguf_still_wins_its_names(self):
-        self.assertEqual(self._find("alpha-q4_k_m"), GGUF["path"])
-        self.assertEqual(self._find("alpha"), GGUF["path"])
+        self.assertEqual(self._find("alpha-q4_k_m")["path"], GGUF["path"])
+        self.assertEqual(self._find("alpha")["path"], GGUF["path"])
 
-    def test_not_found_when_disabled(self):
-        with patch("config.STRATA_ENABLED", False), \
-             patch("api.llamaman.discover_models", return_value=[]):
-            self.assertIsNone(llamaman._find_model_by_name("strata/qwen-IQ2_XS"))
-
-    def test_auto_launch_uses_strata_engine_and_preset_options(self):
+    def _auto_launch(self, name, preset):
         storage = Mock()
-        storage.get_preset.return_value = {"strata_vision": "cpu", "strata_kv": "int8"}
+        storage.get_preset.return_value = preset
         storage.get_settings.return_value = {}
         launched = {"id": "new", "status": "starting", "port": 8003}
         with instances_lock:
@@ -201,21 +179,45 @@ class NameResolutionTests(unittest.TestCase):
             instances.clear()
         try:
             with strata_on(), \
-                 patch("api.llamaman.discover_models", return_value=[]), \
+                 patch("api.llamaman.discover_models", return_value=[dict(SHARD)]), \
                  patch("api.llamaman.get_storage", return_value=storage), \
                  patch("api.llamaman.find_available_port", return_value=8003), \
                  patch("api.instances.launch_instance", return_value=(launched, None)) as launch:
-                inst, err = llamaman._ensure_model_running("strata/qwen-IQ2_XS")
+                inst, err = llamaman._ensure_model_running(name)
         finally:
             with instances_lock:
                 instances.clear()
                 instances.update(saved)
         self.assertIsNone(err)
-        kw = launch.call_args.kwargs
-        self.assertEqual(kw["model_path"], QWEN)
+        return launch.call_args.kwargs
+
+    def test_auto_launch_by_strata_name_runs_the_file_on_strata(self):
+        kw = self._auto_launch("strata/qwen-IQ2_XS", {"strata_vision": "cpu", "strata_kv": "int8"})
+        self.assertEqual(kw["model_path"], SHARD["path"])     # launch_instance maps it to the model id
         self.assertEqual(kw["engine"], "strata")
-        self.assertEqual(kw["ctx_size"], 32768)  # Strata's default, not llama.cpp's 4096
+        self.assertEqual(kw["ctx_size"], 32768)               # Strata's default, not llama.cpp's 4096
         self.assertEqual(kw["engine_options"], {"strata_vision": "cpu", "strata_kv": "int8"})
+
+    def test_auto_launch_by_file_name_follows_the_preset(self):
+        kw = self._auto_launch(SHARD_NAME.lower(), {"engine": "strata", "ctx_size": 65536})
+        self.assertEqual((kw["engine"], kw["ctx_size"]), ("strata", 65536))
+        kw = self._auto_launch(SHARD_NAME.lower(), {"ctx_size": 4096})
+        self.assertEqual(kw["engine"], "llamacpp")           # no engine in the preset: llama.cpp
+
+    def test_running_strata_instance_found_by_its_source_file(self):
+        with instances_lock:
+            saved = dict(instances)
+            instances.clear()
+            instances["s1"] = {"id": "s1", "model_path": QWEN, "status": "healthy", "port": 8001,
+                               "config": {"engine": "strata", "engine_source_path": SHARD["path"]}}
+        try:
+            self.assertEqual(llamaman._find_running_instance_for_model(SHARD["path"])["id"], "s1")
+            self.assertEqual(llamaman._find_any_instance_for_model(QWEN)["id"], "s1")
+            self.assertIsNone(llamaman._find_running_instance_for_model(GGUF["path"]))
+        finally:
+            with instances_lock:
+                instances.clear()
+                instances.update(saved)
 
 
 class ProxyModelMatchTests(unittest.TestCase):

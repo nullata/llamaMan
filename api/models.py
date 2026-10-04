@@ -78,18 +78,21 @@ def discover_models(models_dir: str) -> list[dict]:
         if m["path"] not in seen:
             seen.add(m["path"])
             unique.append(m)
+    # Which other engines can run each file (e.g. a downloaded Strata shard).
+    from core.engines import file_engine_models
+    for m in unique:
+        engines = file_engine_models(m["path"])
+        if engines:
+            m["engine_models"] = engines
     return unique
 
 
 def list_models(models_dir: str) -> list[dict]:
-    """The model library: files on disk (discover_models) followed by the
-    virtual models of every engine this node can launch (e.g. Strata's
-    family x size catalogue). Files come first so filename lookups keep
-    their precedence. Update scans and the cluster snapshot stay on
-    discover_models - virtual models have no file to check or download."""
-    from core.engines import available_virtual_models
-    from core.gpu import get_vendor
-    return discover_models(models_dir) + available_virtual_models(get_vendor())
+    """The model library: the model files on disk. An engine's recommended
+    models (Strata's catalogue) are not listed until downloaded; a
+    downloaded one is an ordinary file whose entry names the engines that
+    can run it (engine_models)."""
+    return discover_models(models_dir)
 
 
 def attach_model_sources(models: list[dict], sources: dict[str, str]) -> list[dict]:
