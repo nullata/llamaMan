@@ -25,7 +25,7 @@ What llamaman relies on (upstream file references are to the Strata repo):
     /proc/meminfo (the host's, not a cgroup limit), so a memory-capped
     container must ask for LOW_RAM=on itself (Dockerfile comment, INSTALL.md).
   * Shards already on disk are used instead of downloading when they sit at
-    /data/models/<tag>/<original name> (setup.py "#173: a whole file copied in
+    /data/models/<fam tag><SIZE>/<original name>, case kept (setup.py "#173: a whole file copied in
     by hand has no finish mark" - it checks them against their own tensor
     directory), so a model downloaded through llamaman's downloader into
     MODELS_DIR/strata/<tag>/ is bind-mounted there.
@@ -148,6 +148,15 @@ def setup_tag(family: str, size: str) -> str:
     """docker-entrypoint.sh's tag: qwen has an empty family prefix."""
     prefix = "" if family == "qwen" else f"{family}-"
     return f"{prefix}{size.lower()}"
+
+
+def shards_dir_tag(family: str, size: str) -> str:
+    """The folder under /data/models/ setup.py reads this model's shards from:
+    its own tag, fam["tag"] + model with the size's ORIGINAL case
+    (setup.py:3264, used at :3389) - e.g. "IQ3_S", "coder-IQ1_M". Only the
+    entrypoint's config name and the pack folder are lowercased."""
+    prefix = "" if family == "qwen" else f"{family}-"
+    return f"{prefix}{size}"
 
 
 def shard_files(family: str, size: str) -> list[str]:
@@ -532,7 +541,7 @@ class StrataEngine(Engine):
         if shards:
             # rw: setup writes a <shard>.done mark beside each file it accepts.
             vols[_host_path_for_models_subdir(shards)] = {
-                "bind": f"/data/models/{setup_tag(family, size)}", "mode": "rw",
+                "bind": f"/data/models/{shards_dir_tag(family, size)}", "mode": "rw",
             }
         return vols
 

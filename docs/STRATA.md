@@ -36,7 +36,7 @@ core/engines/
   | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `REINSTALL=1`? |
   | ulimits | `memlock=-1` |
   | GPU | NVIDIA `device_requests` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
-  | mounts | data volume → `/data`; logs; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<tag>` (rw), when llamaMan holds complete shards |
+  | mounts | data volume → `/data`; logs; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>` (`<family>-<SIZE>` for non-qwen; setup.py's case-sensitive shard folder) (rw), when llamaMan holds complete shards |
   | mem_limit | from System Memory Limit (forces `LOW_RAM=on`) |
   | network / ports / labels | as for llama-server (`llamaman-net`, `8080 → host port`, `llamaman.*`) |
 
@@ -54,7 +54,7 @@ core/engines/
    renumbers the host GPUs llamaMan attaches, so host `1,3` becomes `GPUS=0,1`. llamaMan doesn't set `API_KEY`, which
    matches how it runs llama-server (no key); its own proxy and auth sit in front.
 3. **Reusing GGUFs on disk.** `setup.py` has `--gguf-dir` (`setup.py:2954`), but the entrypoint never forwards it.
-   Setup does, however, accept whole shards that are already at `/data/models/<tag>/<original name>`: it checks each
+   Setup does, however, accept whole shards that are already at `/data/models/<fam tag><SIZE>/<original name>` (e.g. `IQ3_S`, `coder-IQ1_M`; case-sensitive): it checks each
    against its own tensor directory and marks it done (`setup.py:3389-3405`, "#173"). llamaMan therefore bind-mounts
    its copy there (read-write, for the `.done` marks), and only once its own download of those shards has completed.
    Shards are fetched from the Hugging Face revisions Strata pins (`setup.py:65-70`, mirrored in
@@ -154,7 +154,7 @@ free disk.
    - Pick another model (e.g. `strata/qwen-Q2_0`) and click *Pre-download with llamaMan*.
    - The Downloads tab shows the pinned-revision download.
    - Launching during the download is refused.
-   - After it completes, launch: `docker inspect` shows `MODELS_DIR/strata/q2_0/Q2_0 → /data/models/q2_0`, and the
+   - After it completes, launch: `docker inspect` shows `MODELS_DIR/strata/q2_0/Q2_0 → /data/models/Q2_0`, and the
      log shows no shard download (only the MTP layer and pack).
 10. **Stop / remove:** stop the instance. The container is removed, and Remove clears the card.
 11. **Restart llamaMan with a Strata instance running:**

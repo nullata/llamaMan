@@ -86,6 +86,11 @@ class CatalogueTests(unittest.TestCase):
                     "/strata/nope-IQ2_XS", "/models/qwen-IQ2_XS.gguf", None, ""):
             self.assertIsNone(S.parse_model_path(bad), bad)
 
+    def test_shards_dir_tag_matches_setup_py(self):
+        self.assertEqual(S.shards_dir_tag("qwen", "IQ3_S"), "IQ3_S")
+        self.assertEqual(S.shards_dir_tag("coder", "IQ1_M"), "coder-IQ1_M")
+        self.assertEqual(S.shards_dir_tag("unsloth", "UD-Q4_K_XL"), "unsloth-UD-Q4_K_XL")
+
     def test_setup_tag_matches_entrypoint(self):
         # docker-entrypoint.sh: qwen has an empty family prefix.
         self.assertEqual(S.setup_tag("qwen", "IQ2_XS"), "iq2_xs")
@@ -208,8 +213,9 @@ class StrataContainerSpecTests(_TmpDirs):
         for name in S.shard_files("qwen", "IQ2_XS"):
             open(os.path.join(d, name), "w").close()
         vols = self._spec()["volumes"]
+        # setup.py reads shards from /data/models/<fam tag + SIZE>, case kept.
         self.assertEqual(vols["/host/models/strata/iq2_xs/IQ2_XS"],
-                         {"bind": "/data/models/iq2_xs", "mode": "rw"})
+                         {"bind": "/data/models/IQ2_XS", "mode": "rw"})
 
     def test_partial_shard_set_not_mounted(self):
         d = os.path.join(self.models_dir, "strata", "iq2_xs")
