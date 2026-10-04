@@ -137,9 +137,16 @@ class LaunchFormMarkupTests(unittest.TestCase):
             self.assertEqual(self._group_tag(fid), ' data-engine-only="strata" hidden', fid)
             self.assertEqual(self._section_of(f'id="{fid}"'), section, fid)
         for marker in ('id="strata-model-summary"', 'id="btn-strata-download"',
-                       'id="strata-warnings"', 'id="strata-context-options"'):
+                       'id="strata-context-options"'):
             self.assertEqual(self._section_of(marker), "model-settings-section", marker)
         self.assertIn("js/engines.js", self.html)
+
+    def test_strata_warnings_under_their_fields(self):
+        self.assertNotIn('id="strata-warnings"', self.html)
+        for field, ul in (("f-memory-limit", "strata-memory-warning"), ("f-idle-timeout", "strata-idle-warning")):
+            self.assertRegex(self.html, rf'<input id="{field}"[^>]*/>\s*<ul id="{ul}" class="strata-warnings" '
+                                        r'data-engine-only="strata" hidden></ul>')
+            self.assertEqual(self._section_of(f'id="{ul}"'), "container-proxy-settings-section")
 
     def test_engine_picker_between_target_node_and_image(self):
         self.assertLess(self.html.index('id="f-node"'), self.html.index('id="f-engine"'))

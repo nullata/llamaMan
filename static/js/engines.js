@@ -230,26 +230,22 @@ function updateStrataDownloadRow() {
   if (btn) btn.hidden = true;
 }
 
+// Strata's caveats, each under the Container & Proxy field it is about.
 function updateStrataWarnings() {
-  const ul = document.getElementById('strata-warnings');
-  if (!ul) return;
-  if (launchEngine !== 'strata') { ul.innerHTML = ''; return; }
-  const m = launchEngineModel || {};
-  const warn = [];
+  const show = (id, text) => {
+    const ul = document.getElementById(id);
+    if (ul) ul.innerHTML = (launchEngine === 'strata' && text)
+      ? `<li><i class="fa-solid fa-triangle-exclamation"></i> ${escHtml(text)}</li>` : '';
+  };
   const memText = document.getElementById('f-memory-limit')?.value.trim();
   const memGb = memText ? _parseMemoryLimitGb(memText) : null;
-  if (memText) {
-    if (memGb != null && memGb < 64) {
-      warn.push(`Memory limit ${memText} is below ~64 GB: Strata loads 32-62 GB and may be OOM-killed. Low-RAM mode is forced on under a limit.`);
-    } else {
-      warn.push('A memory limit forces Strata\'s Low-RAM mode on (its setup cannot see container limits).');
-    }
-  }
+  show('strata-memory-warning', !memText ? ''
+    : (memGb != null && memGb < 64)
+      ? `Below ~64 GB: Strata loads 32-62 GB and may be OOM-killed. A memory limit also forces Low-RAM mode on.`
+      : 'A memory limit forces Strata\'s Low-RAM mode on (its setup cannot see container limits).');
   const idle = parseInt(document.getElementById('f-idle-timeout')?.value, 10) || 0;
-  if (idle > 0) {
-    warn.push('Idle timeout works, but a cold start loads 32-62 GB and takes minutes; the request that wakes it waits that long.');
-  }
-  ul.innerHTML = warn.map(w => `<li><i class="fa-solid fa-triangle-exclamation"></i> ${escHtml(w)}</li>`).join('');
+  show('strata-idle-warning', idle > 0
+    ? 'A cold start loads 32-62 GB and takes minutes; the request that wakes it waits that long.' : '');
 }
 
 function applyStrataPresetToLaunchForm(p) {
