@@ -336,7 +336,11 @@ async function renderStrataModelsList(force = true) {
     list.innerHTML = `<p class="text-meta">${escHtml(info.reason || 'Strata is unavailable on the target node.')}</p>`;
     return;
   }
-  list.innerHTML = (info.models || []).map(m => `
+  const src = info.catalogue || {};
+  const source = src.source === 'image'
+    ? '<p class="text-meta">Model list read from the installed Strata image.</p>'
+    : `<p class="text-meta">Built-in model list${src.error ? ` (${escHtml(src.error)})` : ''}.</p>`;
+  list.innerHTML = source + (info.models || []).map(m => `
     <div class="strata-model-row">
       <div class="strata-model-main">
         <div class="name">${escHtml(m.title || m.name)}</div>

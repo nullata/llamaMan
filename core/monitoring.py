@@ -48,6 +48,12 @@ _last_update_scan_at: float = 0.0
 _last_loop_detect_tick_at: float = 0.0
 _LOOP_DETECT_TICK_INTERVAL = 5
 
+# Strata's model list, read from the installed Strata image when it changes
+# (core/engines/strata.refresh_catalogue_from_image). A no-op without
+# STRATA_ENABLED; otherwise one image lookup per pass.
+_last_strata_catalogue_at: float = 0.0
+_STRATA_CATALOGUE_INTERVAL = 60
+
 
 def _run_cleanup() -> None:
     from storage import get_storage
@@ -392,7 +398,7 @@ def _maybe_auto_restart(inst_id: str) -> None:
 def _background_poller():
     global _last_cleanup_at, _last_orphan_scan_at, _last_stale_cleanup_at, _last_image_check_at
     global _last_request_log_prune_at, _last_update_scan_at, _last_db_mirror_sync_at
-    global _last_loop_detect_tick_at
+    global _last_loop_detect_tick_at, _last_strata_catalogue_at
     while True:
         time.sleep(5)
 
@@ -409,6 +415,15 @@ def _background_poller():
                 worker_tick()
             except Exception as e:
                 logger.warning("Loop-detect tick error: %s", e)
+
+        # --- Strata model list from its image ---
+        if now - _last_strata_catalogue_at >= _STRATA_CATALOGUE_INTERVAL:
+            _last_strata_catalogue_at = now
+            try:
+                from core.engines.strata import refresh_catalogue_from_image
+                refresh_catalogue_from_image()
+            except Exception as e:
+                logger.warning("strata catalogue refresh error: %s", e)
 
         # --- Periodic cleanup ---
         if now - _last_cleanup_at >= _CLEANUP_INTERVAL:

@@ -34,6 +34,7 @@ Each family x size is a virtual model with the path /strata/<family>-<SIZE>
 (id strata/<family>-<SIZE>) and is its own llamaman instance.
 """
 
+import copy
 import json
 import os
 import re
@@ -98,6 +99,155 @@ SIZES = {
 }
 
 # docker-entrypoint.sh's own default, and setup.py's CONTEXTS menu.
+# ---------------------------------------------------------------------------
+# The catalogue from the installed Strata image
+# ---------------------------------------------------------------------------
+# FAMILIES / SIZES / HF_REVISIONS above are a copy of setup.py's tables at
+# the pinned commit. The image llamaman runs carries its own setup.py, so the
+# background poller reads the tables out of it (refresh_catalogue_from_image)
+# whenever the image changes and replaces these dicts in place; everything
+# here reads them through those same names. Any failure keeps the built-in
+# copy (logged once per image).
+
+_BUILTIN_CATALOGUE = (copy.deepcopy(FAMILIES), copy.deepcopy(SIZES), dict(HF_REVISIONS))
+_CATALOGUE_LOCK = threading.Lock()
+_catalogue_state = {"image_id": None, "source": "built-in", "error": None}
+
+# Run inside the image (network off): print setup.py's tables as JSON.
+# setup.py's main() is guarded and it imports only the standard library.
+_DUMP_SCRIPT = r"""
+import json, sys
+sys.path.insert(0, "/opt/strata")
+sys.argv = ["setup.py"]
+import setup as s
+fam = {k: {"title": f.get("title"), "name": f.get("name"), "hf": f.get("hf"), "file": f.get("file"),
+           "shards": f.get("shards", 2), "vision": f.get("vision", True),
+           "experimental": f.get("experimental", False)} for k, f in s.FAMILIES.items()}
+mod = {k: {"download_gb": m.get("download_gb"), "ram_gb": m.get("ram_gb"),
+           "families": list(m.get("families", ("qwen", "swift")))} for k, m in s.MODELS.items()}
+print(json.dumps({"families": fam, "models": mod, "revisions": s.HF_REVISIONS}))
+"""
+
+
+def catalogue_from_dump(dump: dict) -> tuple[dict, dict, dict]:
+    """setup.py's tables (as _DUMP_SCRIPT prints them) -> (FAMILIES, SIZES,
+    HF_REVISIONS) in this module's shape. ValueError when they don't fit."""
+    try:
+        revisions = {str(k): str(v) for k, v in dump["revisions"].items()}
+        families = {}
+        for key, f in dump["families"].items():
+            hf = str(f["hf"] or "")
+            repo = next((r for r in revisions if r in hf), None)
+            if not repo:
+                raise ValueError(f"family {key}: no pinned revision for {hf!r}")
+            file = str(f["file"] or "")
+            if "{q}" not in file or "{i}" not in file:
+                raise ValueError(f"family {key}: unexpected file pattern {file!r}")
+            shards = int(f["shards"])
+            if shards < 1:
+                raise ValueError(f"family {key}: {shards} shards")
+            families[str(key)] = {
+                "title": str(f["title"] or key), "served": str(f["name"] or key),
+                "repo": repo, "subdir": hf.endswith("{q}/"), "file": file, "shards": shards,
+                "vision": bool(f["vision"]), "experimental": bool(f["experimental"]),
+            }
+        sizes = {}
+        for key, m in dump["models"].items():
+            fams = tuple(str(x) for x in m["families"])
+            unknown = [x for x in fams if x not in families]
+            if not fams or unknown:
+                raise ValueError(f"size {key}: unknown families {unknown or fams}")
+            sizes[str(key)] = {"families": fams, "download_gb": float(m["download_gb"]),
+                               "ram_gb": int(m["ram_gb"])}
+    except (KeyError, TypeError, AttributeError) as e:
+        raise ValueError(f"unexpected table shape ({type(e).__name__}: {e})") from e
+    if not families or not sizes:
+        raise ValueError("empty tables")
+    return families, sizes, revisions
+
+
+def _apply_catalogue(families: dict, sizes: dict, revisions: dict) -> None:
+    with _CATALOGUE_LOCK:
+        FAMILIES.clear()
+        FAMILIES.update(families)
+        SIZES.clear()
+        SIZES.update(sizes)
+        HF_REVISIONS.clear()
+        HF_REVISIONS.update(revisions)
+
+
+def _catalogue_cache_file() -> str:
+    from config import DATA_DIR
+    return os.path.join(DATA_DIR, "strata_catalogue.json")
+
+
+def catalogue_source() -> dict:
+    """Where the current tables came from, for /api/engines."""
+    return dict(_catalogue_state)
+
+
+def refresh_catalogue_from_image() -> None:
+    """Read the tables from the Strata image when its id changed (cheap when
+    it didn't: one image lookup). Called by the background poller."""
+    from config import STRATA_ENABLED, STRATA_IMAGE
+    from config import logger
+    if not STRATA_ENABLED:
+        return
+    import docker
+    from core.helpers import get_docker_client
+    try:
+        client = get_docker_client()
+        image_id = client.images.get(STRATA_IMAGE).id
+    except docker.errors.ImageNotFound:
+        image_id, why = None, f"image {STRATA_IMAGE} is not built"
+    except Exception as e:
+        image_id, why = None, f"Docker unavailable ({type(e).__name__})"
+    if image_id is None:
+        if _catalogue_state["source"] != "built-in" or _catalogue_state["error"] != why:
+            _apply_catalogue(*copy.deepcopy(_BUILTIN_CATALOGUE))
+            _catalogue_state.update(image_id=None, source="built-in", error=why)
+        return
+    if image_id == _catalogue_state["image_id"]:
+        return
+
+    try:
+        with open(_catalogue_cache_file()) as f:
+            cache = json.load(f)
+        cache = cache if isinstance(cache, dict) else {}
+    except (OSError, ValueError):
+        cache = {}
+    try:
+        dump = cache.get(image_id)
+        if dump is None:
+            out = client.containers.run(
+                STRATA_IMAGE, remove=True, network_disabled=True, stdout=True, stderr=False,
+                entrypoint=["sh", "-c", 'cd /opt/strata && { .venv/bin/python -c "$LLAMAMAN_DUMP" 2>/dev/null '
+                                        '|| python3 -c "$LLAMAMAN_DUMP"; }'],
+                environment={"LLAMAMAN_DUMP": _DUMP_SCRIPT},
+            )
+            dump = json.loads(out.decode("utf-8", "replace").strip().splitlines()[-1])
+        tables = catalogue_from_dump(dump)
+    except Exception as e:
+        why = f"could not read the model list from {STRATA_IMAGE}: {e}"
+        logger.warning("strata: %s - using the built-in list", why)
+        _apply_catalogue(*copy.deepcopy(_BUILTIN_CATALOGUE))
+        _catalogue_state.update(image_id=image_id, source="built-in", error=why)
+        return
+    _apply_catalogue(*tables)
+    _catalogue_state.update(image_id=image_id, source="image", error=None)
+    if image_id not in cache:
+        cache = {image_id: dump}                     # only the current image's
+        try:
+            tmp = _catalogue_cache_file() + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(cache, f)
+            os.replace(tmp, _catalogue_cache_file())
+        except OSError:
+            pass
+    logger.info("strata: model list read from %s (%s): %d models",
+                STRATA_IMAGE, image_id[:19], sum(len(m["families"]) for m in tables[1].values()))
+
+
 DEFAULT_CONTEXT = 32768
 CONTEXT_CHOICES = (8192, 32768, 65536, 131072, 262144, 393216, 524288)
 VISION_CHOICES = ("no", "yes", "cpu")
@@ -753,4 +903,5 @@ class StrataEngine(Engine):
         d["build_command"] = f"docker build -t {STRATA_IMAGE} ."
         d["memory_warn_gb"] = MEMORY_WARN_GB
         d["context_choices"] = list(CONTEXT_CHOICES)
+        d["catalogue"] = catalogue_source()
         return d
