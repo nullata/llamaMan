@@ -124,6 +124,28 @@ def download_source(sha: str) -> None:
                 shutil.rmtree(d, ignore_errors=True)
 
 
+# The Dockerfile llamaman uploads in place of the repository's (see
+# _build_context); kept out of the image by the .dockerignore it rewrites.
+CONTEXT_DOCKERFILE = ".llamaman.Dockerfile"
+_SYNTAX_RE = re.compile(r"^#\s*syntax\s*=.*$", re.IGNORECASE)
+
+
+def _strip_syntax_directive(text: str) -> str:
+    """Drop the "# syntax=docker/dockerfile:1" parser directive. Fetching that
+    frontend image needs a client session (registry auth), which a plain
+    Engine API build has not got ("no active sessions"); the daemon's built-in
+    Dockerfile frontend handles the heredocs on its own."""
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            break               # directives only appear before the first instruction
+        if _SYNTAX_RE.match(stripped):
+            del lines[i]
+            break
+    return "".join(lines)
+
+
 def _build_context(path: str):
     from docker import utils
     exclude = None
@@ -132,10 +154,13 @@ def _build_context(path: str):
         with open(ignore) as f:
             exclude = [ln.strip() for ln in f.read().splitlines()
                        if ln.strip() and not ln.strip().startswith("#")]
+    with open(os.path.join(path, "Dockerfile")) as f:
+        dockerfile = _strip_syntax_directive(f.read())
     # Gzipped: BuildKit decides "archive or a bare Dockerfile" from the
     # upload's first 1 KB. A plain tar whose first entry has a PAX header puts
     # the file header past that, so the whole tar was parsed as the Dockerfile.
-    return utils.tar(path, exclude=exclude, gzip=True)
+    return utils.tar(path, exclude=exclude, gzip=True,
+                     dockerfile=(CONTEXT_DOCKERFILE, dockerfile))
 
 
 def build_image() -> str:
@@ -144,7 +169,8 @@ def build_image() -> str:
     from core.helpers import get_docker_client
 
     api = get_docker_client().api
-    params = {"t": STRATA_IMAGE, "version": "2", "rm": "1", "forcerm": "1"}
+    params = {"t": STRATA_IMAGE, "version": "2", "rm": "1", "forcerm": "1",
+              "dockerfile": CONTEXT_DOCKERFILE}
     if STRATA_CUDA_ARCHITECTURES:
         params["buildargs"] = json.dumps({"CUDA_ARCHITECTURES": STRATA_CUDA_ARCHITECTURES})
     image_id = None

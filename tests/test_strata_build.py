@@ -290,7 +290,8 @@ class BuildImageTests(_SrcDirCase):
             ], cuda="89")
         self.assertEqual(image_id, "sha256:feed")
         params = api._post.call_args.kwargs["params"]
-        self.assertEqual((params["version"], params["t"]), ("2", "strata:latest"))
+        self.assertEqual((params["version"], params["t"], params["dockerfile"]),
+                         ("2", "strata:latest", strata_build.CONTEXT_DOCKERFILE))
         self.assertEqual(json.loads(params["buildargs"]), {"CUDA_ARCHITECTURES": "89"})
         self.assertIn("[2/5] RUN pip install -r requirements.txt", msgs)
 
@@ -313,8 +314,22 @@ class BuildImageTests(_SrcDirCase):
                 names = tf.getnames()
         finally:
             ctx.close()
-        self.assertIn("Dockerfile", names)
+        self.assertIn(strata_build.CONTEXT_DOCKERFILE, names)
         self.assertNotIn("engine/big.bin", names)
+
+    def test_syntax_directive_dropped(self):
+        # Resolving docker/dockerfile:1 needs a client session the API build lacks.
+        self._make_source()
+        with open(os.path.join(self.src, "Dockerfile"), "w") as f:
+            f.write("# syntax=docker/dockerfile:1\n#\n# notes\nFROM scratch\n"
+                    "RUN python3 - <<'EOF'\n# syntax=keep-in-heredoc\nEOF\n")
+        ctx = strata_build._build_context(self.src)
+        try:
+            with tarfile.open(fileobj=ctx, mode="r:gz") as tf:
+                text = tf.extractfile(strata_build.CONTEXT_DOCKERFILE).read().decode()
+        finally:
+            ctx.close()
+        self.assertEqual(text, "#\n# notes\nFROM scratch\nRUN python3 - <<'EOF'\n# syntax=keep-in-heredoc\nEOF\n")
 
     def test_no_build_args_by_default(self):
         _, api = self._build([{"id": "moby.image.id", "aux": {"ID": "sha256:feed"}}])
