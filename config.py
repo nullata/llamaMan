@@ -183,6 +183,14 @@ STRATA_LOAD_TIMEOUT = int(os.environ.get("STRATA_LOAD_TIMEOUT", 3600))
 # instance's own web app. Strata (no API key) refuses other Host / Origin
 # names; the host of CLUSTER_ADVERTISE_URL is allowed without listing it.
 STRATA_WEB_HOSTS = [h.strip() for h in os.environ.get("STRATA_WEB_HOSTS", "").split(",") if h.strip()]
+# Settings -> Docker Images can download the Strata repository (GitHub
+# owner/name at STRATA_REPO_REF) into STRATA_SRC_DIR and build STRATA_IMAGE
+# from it (core/strata_build.py). STRATA_CUDA_ARCHITECTURES narrows the build
+# to your GPUs (e.g. "89"; empty = the Dockerfile's default set, slower).
+STRATA_REPO = os.environ.get("STRATA_REPO", "").strip() or "Niko1221/Strata"
+STRATA_REPO_REF = os.environ.get("STRATA_REPO_REF", "").strip() or "main"
+STRATA_SRC_DIR = os.environ.get("STRATA_SRC_DIR", "").strip() or os.path.join(DATA_DIR, "engines", "Strata")
+STRATA_CUDA_ARCHITECTURES = os.environ.get("STRATA_CUDA_ARCHITECTURES", "").strip()
 
 # Model archive (core/archive.py): a second storage volume models can be moved
 # to and restored from in the UI. Setting ARCHIVE_DIR (the path INSIDE the

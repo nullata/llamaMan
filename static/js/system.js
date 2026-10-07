@@ -821,27 +821,126 @@ if (autoUpdateScanToggle) {
 
 let _pullStatusInterval = null;
 
-// Images of other engines that can't be pulled (Strata is built locally from
-// its repository): whether each exists on this node, and the build command.
+// Strata's image can't be pulled: it is built on the node from its repository
+// (core/strata_build.py). Shows whether it exists, the downloaded commit and
+// the build state; the section is hidden without STRATA_ENABLED.
+let _strataBuildInterval = null;
+
 function renderEngineImages(engineImages) {
+  const section = document.getElementById('strata-images-section');
   const box = document.getElementById('engine-images-list');
   if (!box) return;
-  if (!engineImages.length) { box.innerHTML = ''; return; }
-  box.innerHTML = '<h4 class="engine-images-heading">Built locally</h4>' + engineImages.map(img => {
-    const badge = img.present
-      ? '<span class="badge badge-ok">local</span>'
-      : '<span class="badge badge-warn">not built</span>';
-    const size = img.size_mb ? `${img.size_mb} MB` : '-';
-    return `<div class="dl-item">
-      <div class="dl-item-top">
-        <span class="dl-item-name"><strong>${escHtml(img.name)}</strong> <span class="badge badge-engine">${escHtml(img.label)}</span> ${badge}</span>
-        <span class="list-meta-date">${escHtml(size)}</span>
-      </div>
-      <div class="hint-text">Not published to a registry - build it from
-        <a href="${escHtml(img.source)}" target="_blank" rel="noopener">${escHtml(img.source)}</a>:
-        <code>${escHtml(img.build_command)}</code>. ${escHtml(img.note || '')}</div>
-    </div>`;
-  }).join('');
+  const img = engineImages.find(i => i.engine === 'strata');
+  if (section) section.hidden = !img;
+  if (!img) { box.innerHTML = ''; return; }
+  const badge = img.present
+    ? '<span class="badge badge-ok">local</span>'
+    : '<span class="badge badge-warn">not built</span>';
+  const size = img.size_mb ? `${img.size_mb} MB` : '-';
+  const repo = img.repo || {};
+  const short = sha => (sha ? sha.slice(0, 7) : '');
+  const when = t => (t ? new Date(t * 1000).toLocaleString() : '');
+  let src;
+  if (repo.present) {
+    src = `Repository in <code>${escHtml(repo.dir)}</code>`
+      + (repo.sha ? ` at <code>${escHtml(short(repo.sha))}</code>, downloaded ${escHtml(when(repo.fetched_at))}` : '')
+      + '.';
+  } else {
+    src = `Repository not downloaded - <code>${escHtml(repo.dir || '')}</code> is empty.`;
+  }
+  const built = img.built_sha
+    ? ` Image built from <code>${escHtml(short(img.built_sha))}</code> ${escHtml(when(img.built_at))}.`
+    : '';
+  box.innerHTML = `<div class="dl-item">
+    <div class="dl-item-top">
+      <span class="dl-item-name"><strong>${escHtml(img.name)}</strong> ${badge}</span>
+      <span class="list-meta-date">${escHtml(size)}</span>
+    </div>
+    <div class="hint-text">Built on this node from
+      <a href="${escHtml(img.source)}" target="_blank" rel="noopener">${escHtml(img.source)}</a>. ${src}${built}
+      A build takes a long time and several GB of disk. ${escHtml(img.note || '')}</div>
+  </div>`;
+  const auto = document.getElementById('s-strata-auto-update');
+  if (auto) auto.checked = !!img.auto_update_enabled;
+  const interval = document.getElementById('s-strata-update-interval');
+  if (interval) interval.value = img.auto_update_interval_hours ?? 24;
+  showStrataBuildState(img.build || {});
+}
+
+function showStrataBuildState(state) {
+  const el = document.getElementById('strata-build-status');
+  const btn = document.getElementById('btn-strata-build');
+  const active = state.status === 'fetching' || state.status === 'building';
+  if (btn) btn.disabled = active;
+  if (el) {
+    let text = '';
+    if (active) text = `${state.status === 'fetching' ? 'Downloading' : 'Building'}: ${state.message || ''}`;
+    else if (state.status === 'error') text = `Last update failed: ${state.message}`;
+    else if (state.status === 'done' && state.message) text = state.message;
+    el.hidden = !text;
+    el.textContent = text;
+  }
+  if (active && !_strataBuildInterval) {
+    _strataBuildInterval = setInterval(pollStrataBuild, 3000);
+  }
+}
+
+async function pollStrataBuild() {
+  try {
+    const res = await nodeFetch(getImagesNode(), '/api/images/strata/status');
+    if (!res || !res.ok) return;
+    const state = await res.json();
+    showStrataBuildState(state);
+    if (state.status === 'fetching' || state.status === 'building') return;
+    clearInterval(_strataBuildInterval);
+    _strataBuildInterval = null;
+    if (state.status === 'done') toast(state.message || 'Strata image updated', 'success');
+    else if (state.status === 'error') toast(`Strata update failed: ${state.message}`, 'error');
+    await loadImages();
+  } catch (e) { /* ignore */ }
+}
+
+async function startStrataBuild() {
+  const ok = await showConfirm('Build Strata image',
+    'Download the latest Strata repository (if newer) and build the image on this node? This can take a long time.');
+  if (!ok) return;
+  try {
+    const res = await nodeFetch(getImagesNode(), '/api/images/strata/build', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(`Strata build failed: ${data.error}`, 'error');
+      return;
+    }
+    toast('Strata update started', 'info');
+    showStrataBuildState({ status: 'fetching', message: 'Checking for updates' });
+  } catch (e) {
+    toast('Error starting Strata build: ' + e.message, 'error');
+  }
+}
+
+async function saveStrataImageSettings() {
+  const auto = document.getElementById('s-strata-auto-update');
+  const interval = document.getElementById('s-strata-update-interval');
+  if (!auto || !interval) return;
+  try {
+    const res = await nodeFetch(getImagesNode(), '/api/images/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        strata_auto_update_enabled: auto.checked,
+        strata_auto_update_interval_hours: parseInt(interval.value) || 24,
+      }),
+    });
+    if (res && res.ok) {
+      const status = document.getElementById('strata-image-settings-status');
+      if (status) {
+        status.textContent = 'Saved.';
+        setTimeout(() => { status.textContent = ''; }, 2000);
+      }
+    }
+  } catch (e) {
+    toast('Error saving Strata image settings: ' + e.message, 'error');
+  }
 }
 
 async function loadImages() {
@@ -1022,6 +1121,10 @@ async function deleteImage(imageName) {
 
 const btnSaveImageSettings = document.getElementById('btn-save-image-settings');
 if (btnSaveImageSettings) btnSaveImageSettings.addEventListener('click', saveImageSettings);
+const btnStrataBuild = document.getElementById('btn-strata-build');
+if (btnStrataBuild) btnStrataBuild.addEventListener('click', startStrataBuild);
+const btnSaveStrataImageSettings = document.getElementById('btn-save-strata-image-settings');
+if (btnSaveStrataImageSettings) btnSaveStrataImageSettings.addEventListener('click', saveStrataImageSettings);
 
 const btnRestoreModelsJson = document.getElementById('btn-restore-models-json');
 const fileRestoreModels = document.getElementById('f-restore-models-file');

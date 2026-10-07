@@ -121,10 +121,11 @@ Prerequisites: an NVIDIA driver 580+, a working `docker run --gpus all`, 64 GB R
 free disk.
 
 1. **Build:** `git clone https://github.com/Niko1221/Strata && cd Strata && docker build -t strata .`. Optionally
-   add `--build-arg CUDA_ARCHITECTURES=<your arch>`.
+   add `--build-arg CUDA_ARCHITECTURES=<your arch>`. Or, after step 2, Settings → Docker Images → *Manage Strata
+   images* → **Pull repo & build latest** (`STRATA_CUDA_ARCHITECTURES` for the build arg).
 2. **Enable:** set `STRATA_ENABLED=true` and restart llamaMan.
    - `GET /api/engines` shows strata `available: true`, with 8 models.
-   - Settings → Docker Images → *Built locally* shows `strata:latest` as **local**.
+   - Settings → Docker Images → *Manage Strata images* shows `strata:latest` as **local**.
 3. **Gating:** on a non-NVIDIA node (or with `GPU_TYPE=rocm`), Strata models aren't listed, and
    `POST /api/instances` for `/strata/qwen-IQ2_XS` returns 400 with the NVIDIA reason.
 4. **Launch from the UI:** select `strata/qwen-IQ2_XS`.

@@ -485,14 +485,20 @@ def _background_poller():
         if now - _last_image_check_at >= _IMAGE_CHECK_INTERVAL:
             _last_image_check_at = now
             try:
-                from api.images import check_and_pull_if_needed
-                from config import LLAMA_IMAGE
-                if LLAMA_IMAGE:
-                    triggered = check_and_pull_if_needed(LLAMA_IMAGE)
-                    if triggered:
-                        logger.info("Image auto-update triggered for %s", LLAMA_IMAGE)
+                from api.images import check_and_pull_all_if_needed
+                triggered = check_and_pull_all_if_needed()
+                if triggered:
+                    logger.info("Image auto-update triggered for %s", ", ".join(triggered))
             except Exception as e:
                 logger.warning("Image auto-update check error: %s", e)
+            # Strata: fetch the newer commit and rebuild, only when its
+            # repository was already downloaded from the UI.
+            try:
+                from core.strata_build import check_and_update_if_needed
+                if check_and_update_if_needed():
+                    logger.info("Strata image auto-update started")
+            except Exception as e:
+                logger.warning("Strata image auto-update check error: %s", e)
 
         # --- Periodic orphan scan ---
         if now - _last_orphan_scan_at >= _ORPHAN_SCAN_INTERVAL:

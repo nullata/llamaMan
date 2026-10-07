@@ -142,44 +142,56 @@ def _get_image_local_info(image_name: str) -> dict:
 
 def _trigger_pull(image_name: str) -> bool:
     """Start an image pull in a background thread. Returns False if already pulling."""
+    return _trigger_pulls([image_name])
+
+
+def _trigger_pulls(image_names: list[str]) -> bool:
+    """Pull several images one after another in a background thread."""
     with _pull_lock:
         if _pull_state["status"] == "pulling":
             return False
-        _pull_state["image"] = image_name
-        _pull_state["status"] = "pulling"
-        _pull_state["message"] = "Starting..."
-        _pull_state["started_at"] = time.time()
-        _pull_state["finished_at"] = None
+        _mark_pulling(image_names[0])
 
-    thread = threading.Thread(target=_do_pull, args=(image_name,), daemon=True)
-    thread.start()
+    def run():
+        for i, name in enumerate(image_names):
+            if i:
+                with _pull_lock:
+                    _mark_pulling(name)
+            _do_pull(name)
+
+    threading.Thread(target=run, daemon=True).start()
     return True
 
 
-def check_and_pull_if_needed(image_name: str) -> bool:
-    """Trigger an auto-update pull if the configured interval has elapsed.
+def _mark_pulling(image_name: str) -> None:
+    _pull_state["image"] = image_name
+    _pull_state["status"] = "pulling"
+    _pull_state["message"] = "Starting..."
+    _pull_state["started_at"] = time.time()
+    _pull_state["finished_at"] = None
 
-    Called by the background monitoring poller. Returns True if a pull was started.
-    """
+
+def check_and_pull_all_if_needed() -> list[str]:
+    """Auto-update: pull LLAMA_IMAGE and every image tracked on this node
+    whose last pull is older than the interval. Called by the background
+    monitoring poller. Returns the images whose pull was started."""
     with _pull_lock:
         if _pull_state["status"] == "pulling":
-            return False
+            return []
 
     docker_images = _read_docker_images()
-
     if not docker_images.get("auto_update_enabled"):
-        return False
+        return []
 
     interval_hours = docker_images.get("auto_update_interval_hours", 24)
-    images_list = docker_images.get("images", [])
-
-    record = next((r for r in images_list if r.get("name") == image_name), {})
-    last_pulled = record.get("last_pulled_at", 0)
-
-    if time.time() - last_pulled < interval_hours * 3600:
-        return False
-
-    return _trigger_pull(image_name)
+    records = {r.get("name"): r for r in docker_images.get("images", []) if r.get("name")}
+    names = list(dict.fromkeys([n for n in (LLAMA_IMAGE, *records) if n]))
+    now = time.time()
+    due = [n for n in names
+           if now - (records.get(n) or {}).get("last_pulled_at", 0) >= interval_hours * 3600]
+    if not due or not _trigger_pulls(due):
+        return []
+    return due
 
 
 # ---------------------------------------------------------------------------
@@ -220,13 +232,16 @@ def list_images():
 
 def _engine_images() -> list[dict]:
     """Images of enabled non-llama.cpp engines that can't be pulled (Strata
-    is built locally from its repository), with whether each exists here and
-    how to build it. Kept out of `images` so they get no Pull button and are
-    never touched by auto-update."""
+    is built locally from its repository, core/strata_build.py), with whether
+    each exists here, the source download and the build state. Kept out of
+    `images` so they get no Pull button and the llama.cpp auto-update never
+    touches them."""
     from config import STRATA_ENABLED, STRATA_IMAGE
     if not STRATA_ENABLED:
         return []
+    from core import strata_build
     local = _get_image_local_info(STRATA_IMAGE)
+    rec = _read_docker_images().get("strata") or {}
     return [{
         "engine": "strata",
         "label": "Strata",
@@ -235,11 +250,35 @@ def _engine_images() -> list[dict]:
         "size_mb": local.get("size_mb"),
         "created": local.get("created"),
         "pullable": False,
-        "source": "https://github.com/Niko1221/Strata",
+        "source": f"https://github.com/{strata_build.source_info()['repo']}",
         "build_command": f"docker build -t {STRATA_IMAGE} .",
         "note": "NVIDIA driver 580+ (CUDA 13) on the host. "
                 "Optional: --build-arg CUDA_ARCHITECTURES=89 builds for one GPU generation only (faster).",
+        "repo": strata_build.source_info(),
+        "build": strata_build.get_state(),
+        "built_sha": rec.get("built_sha"),
+        "built_at": rec.get("built_at"),
+        "auto_update_enabled": bool(rec.get("auto_update_enabled")),
+        "auto_update_interval_hours": rec.get("auto_update_interval_hours", 24),
     }]
+
+
+@bp.route("/api/images/strata/build", methods=["POST"])
+def strata_build_start():
+    """Download the Strata repository (or its newer commit) and build the image."""
+    from config import STRATA_ENABLED
+    if not STRATA_ENABLED:
+        return jsonify({"error": "Strata is not enabled on this node (STRATA_ENABLED)"}), 400
+    from core import strata_build
+    if not strata_build.start("manual"):
+        return jsonify({"error": "a Strata update is already running"}), 409
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/images/strata/status", methods=["GET"])
+def strata_build_status():
+    from core import strata_build
+    return jsonify(strata_build.get_state())
 
 
 @bp.route("/api/images/pull-status", methods=["GET"])
@@ -305,17 +344,28 @@ def delete_image():
 
 @bp.route("/api/images/settings", methods=["POST"])
 def save_image_settings():
+    """Auto-update settings. Only the keys sent change: llama.cpp images
+    (auto_update_*) and Strata (strata_auto_update_*) are saved separately."""
     data = request.get_json(silent=True) or {}
 
-    auto_update_enabled = bool(data.get("auto_update_enabled", False))
-    try:
-        interval_hours = max(1, int(data.get("auto_update_interval_hours", 24)))
-    except (TypeError, ValueError):
-        interval_hours = 24
+    def hours(key):
+        try:
+            return max(1, int(data.get(key, 24)))
+        except (TypeError, ValueError):
+            return 24
 
     docker_images = _read_docker_images()
-    docker_images["auto_update_enabled"] = auto_update_enabled
-    docker_images["auto_update_interval_hours"] = interval_hours
+    if "auto_update_enabled" in data:
+        docker_images["auto_update_enabled"] = bool(data["auto_update_enabled"])
+    if "auto_update_interval_hours" in data:
+        docker_images["auto_update_interval_hours"] = hours("auto_update_interval_hours")
+    if "strata_auto_update_enabled" in data or "strata_auto_update_interval_hours" in data:
+        strata = dict(docker_images.get("strata") or {})
+        if "strata_auto_update_enabled" in data:
+            strata["auto_update_enabled"] = bool(data["strata_auto_update_enabled"])
+        if "strata_auto_update_interval_hours" in data:
+            strata["auto_update_interval_hours"] = hours("strata_auto_update_interval_hours")
+        docker_images["strata"] = strata
     _write_docker_images(docker_images)
 
     return jsonify({"ok": True})

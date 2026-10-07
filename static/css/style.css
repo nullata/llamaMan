@@ -2857,8 +2857,8 @@ body.login-page {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.engine-images-heading {
-  margin: 16px 0 8px;
+#strata-images-section .cleanup-settings-grid {
+  margin-top: 12px;
 }
 
 /* ---- Model archive (static/js/archive.js) ---- */
