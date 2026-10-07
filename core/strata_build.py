@@ -132,7 +132,10 @@ def _build_context(path: str):
         with open(ignore) as f:
             exclude = [ln.strip() for ln in f.read().splitlines()
                        if ln.strip() and not ln.strip().startswith("#")]
-    return utils.tar(path, exclude=exclude, gzip=False)
+    # Gzipped: BuildKit decides "archive or a bare Dockerfile" from the
+    # upload's first 1 KB. A plain tar whose first entry has a PAX header puts
+    # the file header past that, so the whole tar was parsed as the Dockerfile.
+    return utils.tar(path, exclude=exclude, gzip=True)
 
 
 def build_image() -> str:

@@ -298,6 +298,24 @@ class BuildImageTests(_SrcDirCase):
         with self.assertRaisesRegex(RuntimeError, "exit code 2"):
             self._build([{"errorDetail": {"message": "process exited with exit code 2"}}])
 
+    def test_context_is_gzipped(self):
+        # BuildKit only recognises the upload as an archive from its first 1 KB.
+        self._make_source()
+        with open(os.path.join(self.src, ".dockerignore"), "w") as f:
+            f.write(".git\n/engine/\n")
+        os.makedirs(os.path.join(self.src, "engine"))
+        open(os.path.join(self.src, "engine", "big.bin"), "w").close()
+        ctx = strata_build._build_context(self.src)
+        try:
+            self.assertEqual(ctx.read(3), b"\x1f\x8b\x08")
+            ctx.seek(0)
+            with tarfile.open(fileobj=ctx, mode="r:gz") as tf:
+                names = tf.getnames()
+        finally:
+            ctx.close()
+        self.assertIn("Dockerfile", names)
+        self.assertNotIn("engine/big.bin", names)
+
     def test_no_build_args_by_default(self):
         _, api = self._build([{"id": "moby.image.id", "aux": {"ID": "sha256:feed"}}])
         self.assertNotIn("buildargs", api._post.call_args.kwargs["params"])
