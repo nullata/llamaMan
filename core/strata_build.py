@@ -163,6 +163,43 @@ def _build_context(path: str):
                      dockerfile=(CONTEXT_DOCKERFILE, dockerfile))
 
 
+_FROM_RE = re.compile(r"^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE | re.MULTILINE)
+
+
+def base_images(dockerfile: str) -> list[str]:
+    """The registry images the Dockerfile's FROM lines name (not "scratch",
+    earlier stages or ARG-templated names)."""
+    stages, out = set(), []
+    for image, alias in _FROM_RE.findall(dockerfile):
+        if image.lower() != "scratch" and image.lower() not in stages and "$" not in image \
+                and image not in out:
+            out.append(image)
+        if alias:
+            stages.add(alias.lower())
+    return out
+
+
+def pull_base_images(path: str) -> None:
+    """Pull the FROM images with the plain pull API first. BuildKit resolving
+    a registry image itself needs a client session for auth, which only the
+    docker CLI sets up ("no active sessions"); an image already on the host is
+    used as is."""
+    from core.helpers import get_docker_client
+    with open(os.path.join(path, "Dockerfile")) as f:
+        images = base_images(f.read())
+    api = get_docker_client().api
+    for image in images:
+        repo, _, tag = image.rpartition(":") if ":" in image.rsplit("/", 1)[-1] else (image, "", "latest")
+        _set(message=f"Pulling {image}")
+        for line in api.pull(repo, tag=tag, stream=True, decode=True):
+            if line.get("error"):
+                raise RuntimeError(f"pulling {image}: {line['error']}")
+            detail = line.get("progressDetail") or {}
+            if detail.get("total"):
+                pct = round(detail.get("current", 0) / detail["total"] * 100)
+                _set(message=f"Pulling {image}: {line.get('status', '')} {line.get('id', '')} {pct}%")
+
+
 def build_image() -> str:
     """Build STRATA_IMAGE from STRATA_SRC_DIR with BuildKit. Returns the image id."""
     from config import STRATA_CUDA_ARCHITECTURES, STRATA_IMAGE, STRATA_SRC_DIR
@@ -174,6 +211,7 @@ def build_image() -> str:
     if STRATA_CUDA_ARCHITECTURES:
         params["buildargs"] = json.dumps({"CUDA_ARCHITECTURES": STRATA_CUDA_ARCHITECTURES})
     image_id = None
+    pull_base_images(STRATA_SRC_DIR)
     context = _build_context(STRATA_SRC_DIR)
     try:
         resp = api._post(api._url("/build"), data=context, params=params, stream=True,

@@ -275,6 +275,7 @@ class BuildImageTests(_SrcDirCase):
         api = MagicMock()
         api._url.side_effect = lambda p: "http+docker://localhost" + p
         api._stream_helper.return_value = iter(chunks)
+        api.pull.return_value = iter([{"status": "Pull complete"}])
         client = MagicMock(api=api)
         with patch("core.helpers.get_docker_client", return_value=client), \
              patch("config.STRATA_CUDA_ARCHITECTURES", cuda):
@@ -330,6 +331,36 @@ class BuildImageTests(_SrcDirCase):
         finally:
             ctx.close()
         self.assertEqual(text, "#\n# notes\nFROM scratch\nRUN python3 - <<'EOF'\n# syntax=keep-in-heredoc\nEOF\n")
+
+    def test_base_images_pulled_before_build(self):
+        _, api = self._build([{"id": "moby.image.id", "aux": {"ID": "sha256:feed"}}])
+        api.pull.assert_not_called()    # FROM scratch: nothing to pull
+        with open(os.path.join(self.src, "Dockerfile"), "w") as f:
+            f.write("FROM nvidia/cuda:13.0.0-devel-ubuntu24.04\n")
+        api.pull.reset_mock()
+        api.pull.return_value = iter([])
+        api._stream_helper.return_value = iter([{"id": "moby.image.id", "aux": {"ID": "sha256:feed"}}])
+        with patch("core.helpers.get_docker_client", return_value=MagicMock(api=api)):
+            strata_build.build_image()
+        api.pull.assert_called_once_with("nvidia/cuda", tag="13.0.0-devel-ubuntu24.04",
+                                         stream=True, decode=True)
+
+    def test_base_images_parsing(self):
+        self.assertEqual(strata_build.base_images(
+            "FROM --platform=linux/amd64 nvidia/cuda:13.0.0-devel AS build\n"
+            "FROM build AS app\nfrom scratch\nFROM ${BASE}\n"
+            "FROM localhost:5000/x/y\nFROM ubuntu\n"),
+            ["nvidia/cuda:13.0.0-devel", "localhost:5000/x/y", "ubuntu"])
+
+    def test_pull_error_raises(self):
+        self._make_source()
+        with open(os.path.join(self.src, "Dockerfile"), "w") as f:
+            f.write("FROM ubuntu:24.04\n")
+        api = MagicMock()
+        api.pull.return_value = iter([{"error": "toomanyrequests"}])
+        with patch("core.helpers.get_docker_client", return_value=MagicMock(api=api)):
+            with self.assertRaisesRegex(RuntimeError, "toomanyrequests"):
+                strata_build.pull_base_images(self.src)
 
     def test_no_build_args_by_default(self):
         _, api = self._build([{"id": "moby.image.id", "aux": {"ID": "sha256:feed"}}])
