@@ -177,8 +177,11 @@ class RunTests(_SrcDirCase):
         with r, w, patch("core.strata_build.remote_sha", return_value=remote), \
              patch("core.strata_build.download_source") as dl, \
              patch("core.strata_build.build_image", return_value="sha256:abc") as build, \
-             patch("core.strata_build._image_present", return_value=present):
+             patch("core.strata_build._image_present", return_value=present), \
+             patch("core.strata_build.cuda_architectures", return_value="86;89"), \
+             patch("core.engines.strata.refresh_catalogue_from_image") as refresh:
             strata_build._run(trigger)
+        self.refresh = refresh
         return dl, build, store.data
 
     def test_auto_up_to_date_does_not_build(self):
@@ -192,9 +195,10 @@ class RunTests(_SrcDirCase):
         self._make_source(SHA1)
         dl, build, data = self._run("auto", SHA2, {"built_sha": SHA1})
         dl.assert_called_once_with(SHA2)
-        build.assert_called_once()
-        self.assertEqual(data["strata"]["built_sha"], SHA2)
+        build.assert_called_once_with("86;89")       # this node's GPU generations
+        self.assertEqual((data["strata"]["built_sha"], data["strata"]["built_archs"]), (SHA2, "86;89"))
         self.assertEqual(strata_build.get_state()["status"], "done")
+        self.refresh.assert_called_once()            # launch form sees the image at once
 
     def test_auto_rebuilds_missing_image(self):
         self._make_source(SHA1)
@@ -277,9 +281,8 @@ class BuildImageTests(_SrcDirCase):
         api._stream_helper.return_value = iter(chunks)
         api.pull.return_value = iter([{"status": "Pull complete"}])
         client = MagicMock(api=api)
-        with patch("core.helpers.get_docker_client", return_value=client), \
-             patch("config.STRATA_CUDA_ARCHITECTURES", cuda):
-            return strata_build.build_image(), api
+        with patch("core.helpers.get_docker_client", return_value=client):
+            return strata_build.build_image(cuda), api
 
     def test_buildkit_build_with_progress(self):
         trace = base64.b64encode(b"\x0a\x10junk[2/5] RUN pip install -r requirements.txt\x12\x00").decode()
@@ -361,6 +364,18 @@ class BuildImageTests(_SrcDirCase):
         with patch("core.helpers.get_docker_client", return_value=MagicMock(api=api)):
             with self.assertRaisesRegex(RuntimeError, "toomanyrequests"):
                 strata_build.pull_base_images(self.src)
+
+    def test_cuda_architectures_from_driver(self):
+        caps = {0: (8, 9), 1: (8, 6), 2: (8, 9), 3: (6, 1)}     # a Pascal card: below Strata's floor
+        nvml = MagicMock()
+        nvml.nvmlDeviceGetCount.return_value = 4
+        nvml.nvmlDeviceGetHandleByIndex.side_effect = lambda i: i
+        nvml.nvmlDeviceGetCudaComputeCapability.side_effect = lambda h: caps[h]
+        with patch.dict("sys.modules", {"pynvml": nvml}):
+            self.assertEqual(strata_build.cuda_architectures(), "86;89")
+        nvml.nvmlInit.side_effect = RuntimeError("no driver")
+        with patch.dict("sys.modules", {"pynvml": nvml}):
+            self.assertEqual(strata_build.cuda_architectures(), "")   # the Dockerfile's default set
 
     def test_no_build_args_by_default(self):
         _, api = self._build([{"id": "moby.image.id", "aux": {"ID": "sha256:feed"}}])

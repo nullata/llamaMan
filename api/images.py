@@ -252,12 +252,11 @@ def _engine_images() -> list[dict]:
         "pullable": False,
         "source": f"https://github.com/{strata_build.source_info()['repo']}",
         "build_command": f"docker build -t {STRATA_IMAGE} .",
-        "note": "NVIDIA driver 580+ (CUDA 13) on the host. "
-                "Optional: --build-arg CUDA_ARCHITECTURES=89 builds for one GPU generation only (faster).",
         "repo": strata_build.source_info(),
         "build": strata_build.get_state(),
         "built_sha": rec.get("built_sha"),
         "built_at": rec.get("built_at"),
+        "built_archs": rec.get("built_archs"),
         "auto_update_enabled": bool(rec.get("auto_update_enabled")),
         "auto_update_interval_hours": rec.get("auto_update_interval_hours", 24),
     }]

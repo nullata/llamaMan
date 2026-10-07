@@ -200,16 +200,35 @@ def pull_base_images(path: str) -> None:
                 _set(message=f"Pulling {image}: {line.get('status', '')} {line.get('id', '')} {pct}%")
 
 
-def build_image() -> str:
-    """Build STRATA_IMAGE from STRATA_SRC_DIR with BuildKit. Returns the image id."""
-    from config import STRATA_CUDA_ARCHITECTURES, STRATA_IMAGE, STRATA_SRC_DIR
+def cuda_architectures() -> str:
+    """This node's NVIDIA GPU generations as CUDA_ARCHITECTURES ("86;89"),
+    so the build compiles for them only. Empty when they can't be read: the
+    Dockerfile's default set (every supported generation, much slower)."""
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        archs = set()
+        for i in range(pynvml.nvmlDeviceGetCount()):
+            major, minor = pynvml.nvmlDeviceGetCudaComputeCapability(
+                pynvml.nvmlDeviceGetHandleByIndex(i))
+            if major * 10 + minor >= 75:          # Strata's CMakeLists refuses older
+                archs.add(major * 10 + minor)
+        return ";".join(str(a) for a in sorted(archs))
+    except Exception:
+        return ""
+
+
+def build_image(archs: str = "") -> str:
+    """Build STRATA_IMAGE from STRATA_SRC_DIR with BuildKit, for the CUDA
+    architectures `archs` (empty: the Dockerfile's default). Returns the image id."""
+    from config import STRATA_IMAGE, STRATA_SRC_DIR
     from core.helpers import get_docker_client
 
     api = get_docker_client().api
     params = {"t": STRATA_IMAGE, "version": "2", "rm": "1", "forcerm": "1",
               "dockerfile": CONTEXT_DOCKERFILE}
-    if STRATA_CUDA_ARCHITECTURES:
-        params["buildargs"] = json.dumps({"CUDA_ARCHITECTURES": STRATA_CUDA_ARCHITECTURES})
+    if archs:
+        params["buildargs"] = json.dumps({"CUDA_ARCHITECTURES": archs})
     image_id = None
     pull_base_images(STRATA_SRC_DIR)
     context = _build_context(STRATA_SRC_DIR)
@@ -243,11 +262,11 @@ def build_image() -> str:
     return image_id
 
 
-def _record_build(sha: str | None, image_id: str) -> None:
+def _record_build(sha: str | None, image_id: str, archs: str) -> None:
     from api.images import _read_docker_images, _write_docker_images
     di = _read_docker_images()
     rec = dict(di.get("strata") or {})
-    rec.update(built_sha=sha, built_at=time.time(), image_id=image_id)
+    rec.update(built_sha=sha, built_at=time.time(), image_id=image_id, built_archs=archs)
     di["strata"] = rec
     _write_docker_images(di)
 
@@ -288,8 +307,16 @@ def _run(trigger: str) -> None:
                 return
         _set(status="building", message=f"Building {STRATA_IMAGE}")
         logger.info("Strata: building %s from %s (%s)", STRATA_IMAGE, src["repo"], (sha or "?")[:7])
-        image_id = build_image()
-        _record_build(sha, image_id)
+        archs = cuda_architectures()
+        image_id = build_image(archs)
+        _record_build(sha, image_id, archs)
+        # Strata shows in the launch form once its image exists: re-read now,
+        # not on the poller's next pass.
+        try:
+            from core.engines.strata import refresh_catalogue_from_image
+            refresh_catalogue_from_image()
+        except Exception as e:
+            logger.warning("Strata: could not read the new image's model list: %s", e)
         _set(status="done", message=f"Built {STRATA_IMAGE}", finished_at=time.time())
         logger.info("Strata: built %s (%s)", STRATA_IMAGE, image_id[:19])
     except Exception as e:

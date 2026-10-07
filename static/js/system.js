@@ -822,44 +822,33 @@ if (autoUpdateScanToggle) {
 let _pullStatusInterval = null;
 
 // Strata's image can't be pulled: it is built on the node from its repository
-// (core/strata_build.py). Shows whether it exists, the downloaded commit and
-// the build state; the section is hidden without STRATA_ENABLED.
+// (core/strata_build.py) for the node's GPU generations. Shows whether it
+// exists, the downloaded and built commits and the build state; the section is
+// hidden without STRATA_ENABLED.
 let _strataBuildInterval = null;
 
 function renderEngineImages(engineImages) {
   const section = document.getElementById('strata-images-section');
-  const box = document.getElementById('engine-images-list');
-  if (!box) return;
   const img = engineImages.find(i => i.engine === 'strata');
   if (section) section.hidden = !img;
-  if (!img) { box.innerHTML = ''; return; }
-  const badge = img.present
-    ? '<span class="badge badge-ok">local</span>'
-    : '<span class="badge badge-warn">not built</span>';
-  const size = img.size_mb ? `${img.size_mb} MB` : '-';
+  if (!img) return;
+  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  const short = sha => `<code>${escHtml((sha || '').slice(0, 7))}</code>`;
+  const when = t => escHtml(t ? new Date(t * 1000).toLocaleString() : '');
   const repo = img.repo || {};
-  const short = sha => (sha ? sha.slice(0, 7) : '');
-  const when = t => (t ? new Date(t * 1000).toLocaleString() : '');
-  let src;
-  if (repo.present) {
-    src = `Repository in <code>${escHtml(repo.dir)}</code>`
-      + (repo.sha ? ` at <code>${escHtml(short(repo.sha))}</code>, downloaded ${escHtml(when(repo.fetched_at))}` : '')
-      + '.';
-  } else {
-    src = `Repository not downloaded - <code>${escHtml(repo.dir || '')}</code> is empty.`;
-  }
-  const built = img.built_sha
-    ? ` Image built from <code>${escHtml(short(img.built_sha))}</code> ${escHtml(when(img.built_at))}.`
-    : '';
-  box.innerHTML = `<div class="dl-item">
-    <div class="dl-item-top">
-      <span class="dl-item-name"><strong>${escHtml(img.name)}</strong> ${badge}</span>
-      <span class="list-meta-date">${escHtml(size)}</span>
-    </div>
-    <div class="hint-text">Built on this node from
-      <a href="${escHtml(img.source)}" target="_blank" rel="noopener">${escHtml(img.source)}</a>. ${src}${built}
-      A build takes a long time and several GB of disk. ${escHtml(img.note || '')}</div>
-  </div>`;
+  set('strata-image-name', escHtml(img.name));
+  set('strata-image-badge', img.present
+    ? '<span class="badge badge-ok">local</span>'
+    : '<span class="badge badge-warn">not built</span>');
+  set('strata-image-size', escHtml(img.size_mb ? `${img.size_mb} MB` : ''));
+  const link = `<a href="${escHtml(img.source)}" target="_blank" rel="noopener">${escHtml(repo.repo || img.source)}</a>`;
+  set('strata-image-source', repo.present
+    ? `${link} ${repo.sha ? short(repo.sha) + ' · ' + when(repo.fetched_at) : ''}`
+    : `${link} · not downloaded`);
+  set('strata-image-built', img.built_sha
+    ? `${short(img.built_sha)} · ${when(img.built_at)}`
+      + (img.built_archs ? ` · CUDA ${escHtml(img.built_archs.replace(/;/g, ', '))}` : ' · all GPU generations')
+    : (img.present ? 'outside llamaMan' : '-'));
   const auto = document.getElementById('s-strata-auto-update');
   if (auto) auto.checked = !!img.auto_update_enabled;
   const interval = document.getElementById('s-strata-update-interval');

@@ -25,7 +25,7 @@ function engineForModel(m) {
 
 // The Inference Engine dropdown: Strata only for a file Strata can run
 // (engine_models.strata, a downloaded recommended model) on a node that can
-// run Strata.
+// run Strata and has its image.
 async function updateEngineSelect() {
   updateStrataModelsButton();
   const sel = document.getElementById('f-engine');
@@ -33,12 +33,15 @@ async function updateEngineSelect() {
   sel.value = launchEngine;
   const opt = sel.querySelector('option[value="strata"]');
   if (!opt) return;
+  // Not offered at all until the target node has the Strata image (an older
+  // peer without image_built counts as built).
+  const info = _engineInfo(await fetchEnginesForNode(_launchNode()), 'strata');
+  opt.hidden = !strataReady(info) && launchEngine !== 'strata';
   const m = launchSelectedModel;
   let reason = '';
   if (!m) reason = 'Select a model first';
   else if (!(m.engine_models && m.engine_models.strata)) reason = 'Strata runs only its recommended models (download one from the Strata settings)';
   else {
-    const info = _engineInfo(await fetchEnginesForNode(_launchNode()), 'strata');
     if (!info) reason = 'Strata is unknown on the target node';
     else if (!info.available) reason = info.reason || 'Strata is unavailable on the target node';
   }
@@ -405,13 +408,18 @@ function closeStrataModelsModal() {
   document.getElementById('strata-models-modal')?.classList.remove('open');
 }
 
+// Strata is offered only on a node that can run it and has its image built
+// (an older peer without image_built counts as built).
+function strataReady(info) {
+  return !!(info && info.available && info.image_built !== false);
+}
+
 // The button beside the Inference Engine dropdown: whenever the target node
-// can run Strata, so a first model can be downloaded before any is local.
+// is Strata-ready, so a first model can be downloaded before any is local.
 async function updateStrataModelsButton() {
   const btn = document.getElementById('btn-strata-models-open');
   if (!btn) return;
-  const info = _engineInfo(await fetchEnginesForNode(_launchNode()), 'strata');
-  btn.hidden = !(info && info.available);
+  btn.hidden = !strataReady(_engineInfo(await fetchEnginesForNode(_launchNode()), 'strata'));
 }
 
 document.getElementById('btn-strata-models-open')?.addEventListener('click', openStrataModelsModal);

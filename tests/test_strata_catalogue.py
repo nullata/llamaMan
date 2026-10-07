@@ -138,10 +138,12 @@ class RefreshTests(unittest.TestCase):
 
     def test_no_image_or_no_docker_keeps_builtin(self):
         S.refresh_catalogue_from_image()                   # image tables in place
+        self.assertTrue(S.StrataEngine().describe("cuda")["image_built"])
         self.client.images.get.side_effect = docker.errors.ImageNotFound("x")
         S.refresh_catalogue_from_image()
         self.assertEqual(S.SIZES, S._BUILTIN_CATALOGUE[1])
         self.assertIn("not built", S.catalogue_source()["error"])
+        self.assertFalse(S.StrataEngine().describe("cuda")["image_built"])   # hidden in the launch form
         self.client.images.get.side_effect = RuntimeError("socket")
         S.refresh_catalogue_from_image()
         self.assertIn("Docker unavailable", S.catalogue_source()["error"])

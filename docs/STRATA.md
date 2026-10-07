@@ -122,7 +122,7 @@ free disk.
 
 1. **Build:** `git clone https://github.com/Niko1221/Strata && cd Strata && docker build -t strata .`. Optionally
    add `--build-arg CUDA_ARCHITECTURES=<your arch>`. Or, after step 2, Settings → Docker Images → *Manage Strata
-   images* → **Pull repo & build latest** (`STRATA_CUDA_ARCHITECTURES` for the build arg).
+   images* → **Pull repo & build latest** It builds for this node's GPU generations only.
 2. **Enable:** set `STRATA_ENABLED=true` and restart llamaMan.
    - `GET /api/engines` shows strata `available: true`, with 8 models.
    - Settings → Docker Images → *Manage Strata images* shows `strata:latest` as **local**.

@@ -2860,6 +2860,23 @@ body.login-page {
 #strata-images-section .cleanup-settings-grid {
   margin-top: 12px;
 }
+.strata-image-rows {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 8px 0;
+  font-size: 0.85rem;
+}
+.strata-image-rows dt {
+  color: var(--muted);
+}
+.strata-image-rows dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.strata-image-card .form-actions {
+  margin-top: 8px;
+}
 
 /* ---- Model archive (static/js/archive.js) ---- */
 .model-item .btn-archive-model,

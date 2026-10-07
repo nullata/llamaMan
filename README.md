@@ -437,7 +437,7 @@ Other details:
 
 *(opt-in, NVIDIA only)* [Strata](https://github.com/Niko1221/Strata) runs the Qwen3.8-Flash-Next mixture-of-experts family (and its Coder, Swift 1.5 and Unsloth variants) on consumer NVIDIA GPUs plus system RAM. llamaMan can launch, monitor, proxy, sleep/wake and stop Strata instances next to llama.cpp ones. llama.cpp behaviour does not change: the engine layer (`core/engines/`) keeps the llama.cpp launch byte-for-byte identical (snapshot-tested).
 
-**1. Build the image** (not published to a registry; the host needs NVIDIA driver **580+**, i.e. CUDA 13, and the NVIDIA Container Toolkit). Either enable Strata (step 2) and use **Settings → Docker Images → Manage Strata images → Pull repo & build latest**, which downloads the repository into `STRATA_SRC_DIR` and builds `STRATA_IMAGE` through the Docker socket, or build it by hand:
+**1. Build the image** (not published to a registry; the host needs NVIDIA driver **580+**, i.e. CUDA 13, and the NVIDIA Container Toolkit). Either enable Strata (step 2) and use **Settings → Docker Images → Manage Strata images → Pull repo & build latest**, which downloads the repository into `STRATA_SRC_DIR` and builds `STRATA_IMAGE` through the Docker socket for the node's GPU generations (read from the driver; all supported ones if that fails), or build it by hand:
 
 ```bash
 git clone https://github.com/Niko1221/Strata && cd Strata
@@ -739,7 +739,6 @@ Optional; see [Strata Engine](#strata-engine).
 | `STRATA_REPO` | `Niko1221/Strata` | GitHub repository (owner/name) *Pull repo & build latest* downloads |
 | `STRATA_REPO_REF` | `main` | Branch, tag or commit of `STRATA_REPO` to build |
 | `STRATA_SRC_DIR` | `$DATA_DIR/engines/Strata` | Where the downloaded repository is kept (the build context). Its commit is recorded next to it in `Strata.source.json` |
-| `STRATA_CUDA_ARCHITECTURES` | *(unset)* | `CUDA_ARCHITECTURES` build arg for the UI build, e.g. `89` (RTX 40) or `86;89`. Unset builds every supported generation (much slower) |
 | `STRATA_WEB_HOSTS` | *(unset)* | Extra host names / IPs (comma-separated) you open a Strata instance's own web app by (`http://<host>:<instance port>/`). Without an API key Strata refuses chat requests from pages on other names; the host of `CLUSTER_ADVERTISE_URL` is always allowed. Applies to instances started afterwards |
 
 ### Clustering

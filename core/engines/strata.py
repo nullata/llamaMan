@@ -933,4 +933,6 @@ class StrataEngine(Engine):
         d["memory_warn_gb"] = MEMORY_WARN_GB
         d["context_choices"] = list(CONTEXT_CHOICES)
         d["catalogue"] = catalogue_source()
+        # The launch form offers Strata only once its image is on the node.
+        d["image_built"] = bool(d["catalogue"].get("image_id"))
         return d

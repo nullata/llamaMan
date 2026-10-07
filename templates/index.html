@@ -1076,13 +1076,22 @@
               <p aria-hidden="true">&nbsp;</p>
               <div class="cleanup-section-divider" aria-hidden="true"></div>
               <div class="cluster-section-label">Manage Strata images</div>
-              <div id="engine-images-list"></div>
-              <div class="form-actions">
-                <button class="btn btn-secondary" type="button" id="btn-strata-build">
-                  <i class="fa-solid fa-hammer"></i> Pull repo &amp; build latest
-                </button>
+              <div class="dl-item strata-image-card">
+                <div class="dl-item-top">
+                  <span class="dl-item-name"><strong id="strata-image-name"></strong> <span id="strata-image-badge"></span></span>
+                  <span class="list-meta-date" id="strata-image-size"></span>
+                </div>
+                <dl class="strata-image-rows">
+                  <dt>Source</dt><dd id="strata-image-source"></dd>
+                  <dt>Built</dt><dd id="strata-image-built"></dd>
+                </dl>
+                <div class="form-actions">
+                  <button class="btn btn-secondary" type="button" id="btn-strata-build">
+                    <i class="fa-solid fa-hammer"></i> Pull repo &amp; build latest
+                  </button>
+                </div>
+                <div id="strata-build-status" class="hint-text" hidden></div>
               </div>
-              <div id="strata-build-status" class="hint-text" hidden></div>
               <div class="cleanup-settings-grid">
                 <div class="form-group cleanup-toggle-grid">
                   <label for="s-strata-auto-update">Auto-update Strata images periodically</label>
