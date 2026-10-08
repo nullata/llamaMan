@@ -2865,7 +2865,7 @@ body.login-page {
   grid-template-columns: max-content 1fr;
   gap: 4px 12px;
   margin: 8px 0;
-  font-size: 0.85rem;
+  font-size: 12px;
 }
 .strata-image-rows dt {
   color: var(--muted);

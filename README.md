@@ -506,7 +506,7 @@ Under **Settings → Download Settings**:
 
 ```yaml
     volumes:
-      - /mnt/user/backup/llms:/archive
+      - /opt/backup/llms:/archive
     environment:
       - ARCHIVE_DIR=/archive
 ```
