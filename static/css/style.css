@@ -2951,3 +2951,7 @@ body.login-page {
   flex: 0 0 auto;
   width: auto;
 }
+/* the built card follows the pulled list's container, not its rows */
+#strata-pulled-list:not(:empty) + .strata-image-card {
+  margin-top: 6px;
+}

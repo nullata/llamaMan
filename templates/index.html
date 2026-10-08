@@ -1053,6 +1053,7 @@
               </button>
             </div>
             <div id="image-pull-status" class="hint-text" hidden></div>
+            <p aria-hidden="true">&nbsp;</p>
             <div class="cleanup-section-divider" aria-hidden="true"></div>
             <div class="cluster-section-label">Manage llama.cpp Docker images</div>
             <div class="cleanup-settings-grid">
@@ -1111,6 +1112,10 @@
                 <div class="form-actions">
                   <button class="btn btn-secondary" type="button" id="btn-strata-build">
                     <i class="fa-solid fa-hammer"></i> Pull repo &amp; build latest
+                  </button>
+                  <button class="btn btn-danger" type="button" id="btn-strata-build-delete"
+                    title="Delete the built image and the downloaded repository">
+                    <i class="fa-solid fa-trash"></i> Delete image &amp; repo
                   </button>
                 </div>
                 <div id="strata-build-status" class="hint-text" hidden></div>

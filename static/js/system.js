@@ -855,6 +855,8 @@ function renderEngineImages(engineImages) {
     ? `${short(img.built_sha)} · ${when(img.built_at)}`
       + (img.built_archs ? ` · CUDA ${escHtml(img.built_archs.replace(/;/g, ', '))}` : ' · all GPU generations')
     : (img.present ? 'outside llamaMan' : '-'));
+  const del = document.getElementById('btn-strata-build-delete');
+  if (del) del.hidden = !(img.present || repo.present);
   const auto = document.getElementById('s-strata-auto-update');
   if (auto) auto.checked = !!img.auto_update_enabled;
   const interval = document.getElementById('s-strata-update-interval');
@@ -867,6 +869,8 @@ function showStrataBuildState(state) {
   const btn = document.getElementById('btn-strata-build');
   const active = state.status === 'fetching' || state.status === 'building';
   if (btn) btn.disabled = active;
+  const del = document.getElementById('btn-strata-build-delete');
+  if (del) del.disabled = active;
   if (el) {
     let text = '';
     if (active) text = `${state.status === 'fetching' ? 'Downloading' : 'Building'}: ${state.message || ''}`;
@@ -910,6 +914,24 @@ async function startStrataBuild() {
     showStrataBuildState({ status: 'fetching', message: 'Checking for updates' });
   } catch (e) {
     toast('Error starting Strata build: ' + e.message, 'error');
+  }
+}
+
+async function deleteStrataBuild() {
+  const ok = await showConfirm('Delete built Strata image',
+    'Delete the image built from the repository and the downloaded repository on this node? Pulled Strata images are kept.');
+  if (!ok) return;
+  try {
+    const res = await nodeFetch(getImagesNode(), '/api/images/strata/build', { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(`Delete failed: ${data.error}`, 'error');
+      return;
+    }
+    toast('Built Strata image and repository deleted', 'success');
+    await loadImages();
+  } catch (e) {
+    toast('Error deleting the Strata build: ' + e.message, 'error');
   }
 }
 
@@ -1131,6 +1153,8 @@ const btnSaveImageSettings = document.getElementById('btn-save-image-settings');
 if (btnSaveImageSettings) btnSaveImageSettings.addEventListener('click', saveImageSettings);
 const btnStrataBuild = document.getElementById('btn-strata-build');
 if (btnStrataBuild) btnStrataBuild.addEventListener('click', startStrataBuild);
+const btnStrataBuildDelete = document.getElementById('btn-strata-build-delete');
+if (btnStrataBuildDelete) btnStrataBuildDelete.addEventListener('click', deleteStrataBuild);
 const btnSaveStrataImageSettings = document.getElementById('btn-save-strata-image-settings');
 if (btnSaveStrataImageSettings) btnSaveStrataImageSettings.addEventListener('click', saveStrataImageSettings);
 

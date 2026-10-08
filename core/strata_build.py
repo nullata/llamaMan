@@ -146,6 +146,16 @@ def _strip_syntax_directive(text: str) -> str:
     return "".join(lines)
 
 
+def remove_source() -> None:
+    """Delete the downloaded repository and its commit record."""
+    from config import STRATA_SRC_DIR
+    shutil.rmtree(STRATA_SRC_DIR, ignore_errors=True)
+    try:
+        os.remove(_source_meta_path())
+    except FileNotFoundError:
+        pass
+
+
 def _build_context(path: str):
     from docker import utils
     exclude = None

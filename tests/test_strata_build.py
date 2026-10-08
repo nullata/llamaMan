@@ -284,6 +284,50 @@ class RunTests(_SrcDirCase):
         self.assertEqual((st["status"], st["message"]), ("error", "nvcc failed"))
 
 
+class DeleteBuildTests(_SrcDirCase):
+
+    def _delete(self, initial, removed=(True, None), in_use=None):
+        store = _Store(initial)
+        r, w = _store_patches(store)
+        app = Flask(__name__)
+        app.register_blueprint(images_api.bp)
+        with r, w, patch("config.STRATA_BUILD_IMAGE", "strata:latest"), \
+             patch("api.images._image_in_use", return_value=in_use), \
+             patch("api.images._remove_docker_image", return_value=removed) as rm, \
+             patch("core.engines.strata.refresh_catalogue_from_image"):
+            resp = app.test_client().delete("/api/images/strata/build")
+        return resp, rm, store.data
+
+    def test_removes_image_repository_and_record(self):
+        self._make_source(SHA1)
+        resp, rm, data = self._delete({"strata": {"auto_update_enabled": True, "built_sha": SHA1,
+                                                  "built_at": 1.0, "built_archs": "89"}})
+        self.assertEqual(resp.status_code, 200)
+        rm.assert_called_once_with("strata:latest")
+        self.assertFalse(os.path.exists(self.src))
+        self.assertFalse(os.path.exists(self.src + ".source.json"))
+        self.assertEqual(data["strata"], {"auto_update_enabled": True})   # settings kept
+
+    def test_in_use_keeps_everything(self):
+        self._make_source(SHA1)
+        resp, rm, _ = self._delete({}, in_use="image is in use by an instance on port 8000")
+        self.assertEqual(resp.status_code, 409)
+        rm.assert_not_called()
+        self.assertTrue(os.path.isfile(os.path.join(self.src, "Dockerfile")))
+
+    def test_docker_refusal_keeps_repository(self):
+        self._make_source(SHA1)
+        resp, _, _ = self._delete({}, removed=(False, "conflict: image has dependent child images"))
+        self.assertEqual(resp.status_code, 409)
+        self.assertTrue(os.path.isfile(os.path.join(self.src, "Dockerfile")))
+
+    def test_refused_while_building(self):
+        strata_build._state.update(status="building")
+        resp, rm, _ = self._delete({})
+        self.assertEqual(resp.status_code, 409)
+        rm.assert_not_called()
+
+
 class DownloadSourceTests(_SrcDirCase):
 
     def _tarball(self, files):

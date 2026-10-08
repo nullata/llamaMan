@@ -306,6 +306,38 @@ def strata_build_start():
     return jsonify({"ok": True})
 
 
+@bp.route("/api/images/strata/build", methods=["DELETE"])
+def strata_build_delete():
+    """Delete the image built from the repository, the downloaded repository
+    and the build record (for a node that runs a pulled Strata image)."""
+    from config import STRATA_BUILD_IMAGE
+    from core import strata_build
+    if strata_build.get_state()["status"] in ("fetching", "building"):
+        return jsonify({"error": "a Strata update is running"}), 409
+    if STRATA_BUILD_IMAGE in tracked_images("strata"):
+        return jsonify({"error": f"{STRATA_BUILD_IMAGE} is also a pulled image: delete it from the list"}), 409
+    in_use = _image_in_use(STRATA_BUILD_IMAGE)
+    if in_use:
+        return jsonify({"error": in_use}), 409
+    removed, err = _remove_docker_image(STRATA_BUILD_IMAGE)
+    if err:
+        return jsonify({"error": err}), 409
+    strata_build.remove_source()
+    di = _read_docker_images()
+    rec = dict(di.get("strata") or {})
+    for k in ("built_sha", "built_at", "built_archs", "image_id"):
+        rec.pop(k, None)
+    di["strata"] = rec
+    _write_docker_images(di)
+    try:
+        from core.engines.strata import refresh_catalogue_from_image
+        refresh_catalogue_from_image()
+    except Exception:
+        pass
+    logger.info("Strata: removed the built image %s (docker=%s) and its repository", STRATA_BUILD_IMAGE, removed)
+    return jsonify({"ok": True, "removed_from_docker": removed})
+
+
 @bp.route("/api/images/strata/status", methods=["GET"])
 def strata_build_status():
     from core import strata_build
@@ -348,15 +380,8 @@ def _engine_default_image(engine: str | None) -> str:
     return LLAMA_IMAGE
 
 
-@bp.route("/api/images", methods=["DELETE"])
-def delete_image():
-    data = request.get_json(silent=True) or {}
-    image_name = (data.get("image") or "").strip()
-    if not image_name:
-        return jsonify({"error": "no image specified"}), 400
-
-    # Any image may be deleted (including the node default) unless a running
-    # instance on this node is using it.
+def _image_in_use(image_name: str) -> str | None:
+    """Why `image_name` can't be deleted: a running instance on this node uses it."""
     from core.state import instances, instances_lock
     with instances_lock:
         for inst in instances.values():
@@ -365,20 +390,36 @@ def delete_image():
             cfg = inst.get("config", {}) or {}
             inst_image = cfg.get("image") or _engine_default_image(cfg.get("engine"))
             if inst_image == image_name:
-                return jsonify({"error": f"image is in use by an instance on port {inst['port']}  stop it first"}), 409
+                return f"image is in use by an instance on port {inst['port']}  stop it first"
+    return None
 
+
+def _remove_docker_image(image_name: str) -> tuple[bool, str | None]:
+    """(removed from Docker, error). A missing image is not an error."""
     from core.helpers import get_docker_client
     import docker
-
-    client = get_docker_client()
-    removed_from_docker = False
     try:
-        client.images.remove(image_name, force=False)
-        removed_from_docker = True
+        get_docker_client().images.remove(image_name, force=False)
+        return True, None
     except docker.errors.ImageNotFound:
-        pass
+        return False, None
     except docker.errors.APIError as e:
-        return jsonify({"error": str(e)}), 409
+        return False, str(e)
+
+
+@bp.route("/api/images", methods=["DELETE"])
+def delete_image():
+    data = request.get_json(silent=True) or {}
+    image_name = (data.get("image") or "").strip()
+    if not image_name:
+        return jsonify({"error": "no image specified"}), 400
+
+    in_use = _image_in_use(image_name)
+    if in_use:
+        return jsonify({"error": in_use}), 409
+    removed_from_docker, err = _remove_docker_image(image_name)
+    if err:
+        return jsonify({"error": err}), 409
 
     # Remove from tracked list (node-scoped)
     docker_images = _read_docker_images()
