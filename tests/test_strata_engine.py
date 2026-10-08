@@ -253,7 +253,7 @@ class StrataContainerSpecTests(_TmpDirs):
 
     def test_missing_image_message_says_build(self):
         msg = STRATA.image_missing_message("strata:latest")
-        self.assertIn("docker build -t strata:latest .", msg)
+        self.assertIn("build or pull a Strata image in Settings", msg)
 
 
 class ReinstallFingerprintTests(_TmpDirs):

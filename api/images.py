@@ -34,7 +34,19 @@ _pull_state: dict = {
 }
 
 
-def _do_pull(image_name: str) -> None:
+def _record_engine(record: dict) -> str:
+    """Which engine a tracked image is for (records from before Strata
+    images could be pulled are llama.cpp's)."""
+    return record.get("engine") or "llamacpp"
+
+
+def tracked_images(engine: str) -> list[str]:
+    """Names of the images pulled for `engine` on this node."""
+    return [r["name"] for r in _read_docker_images().get("images", [])
+            if r.get("name") and _record_engine(r) == engine]
+
+
+def _do_pull(image_name: str, engine: str = "llamacpp") -> None:
     """Background thread: pull image via Docker SDK and update stored metadata."""
     from core.helpers import get_docker_client
 
@@ -80,7 +92,14 @@ def _do_pull(image_name: str) -> None:
             pass
 
         _update_image_record(image_name, pulled_at=now, checked_at=now,
-                              digest=digest, size_bytes=size_bytes)
+                              digest=digest, size_bytes=size_bytes, engine=engine)
+        if engine == "strata":
+            # Strata may now have an image to launch (or a newer one).
+            try:
+                from core.engines.strata import refresh_catalogue_from_image
+                refresh_catalogue_from_image()
+            except Exception as e:
+                logger.warning("Strata: could not read the pulled image's model list: %s", e)
 
         with _pull_lock:
             _pull_state["status"] = "done"
@@ -99,7 +118,8 @@ def _do_pull(image_name: str) -> None:
 def _update_image_record(image_name: str, pulled_at: float | None = None,
                           checked_at: float | None = None,
                           digest: str | None = None,
-                          size_bytes: int | None = None) -> None:
+                          size_bytes: int | None = None,
+                          engine: str | None = None) -> None:
     docker_images = _read_docker_images()
     images_list = docker_images.setdefault("images", [])
 
@@ -116,6 +136,10 @@ def _update_image_record(image_name: str, pulled_at: float | None = None,
         record["digest"] = digest
     if size_bytes is not None:
         record["size_mb"] = round(size_bytes / (1024 * 1024))
+    if engine and engine != "llamacpp":
+        record["engine"] = engine
+    elif engine:
+        record.pop("engine", None)
 
     _write_docker_images(docker_images)
 
@@ -140,12 +164,12 @@ def _get_image_local_info(image_name: str) -> dict:
         return {"present": False}
 
 
-def _trigger_pull(image_name: str) -> bool:
+def _trigger_pull(image_name: str, engine: str = "llamacpp") -> bool:
     """Start an image pull in a background thread. Returns False if already pulling."""
-    return _trigger_pulls([image_name])
+    return _trigger_pulls([image_name], engine)
 
 
-def _trigger_pulls(image_names: list[str]) -> bool:
+def _trigger_pulls(image_names: list[str], engine: str = "llamacpp") -> bool:
     """Pull several images one after another in a background thread."""
     with _pull_lock:
         if _pull_state["status"] == "pulling":
@@ -157,7 +181,7 @@ def _trigger_pulls(image_names: list[str]) -> bool:
             if i:
                 with _pull_lock:
                     _mark_pulling(name)
-            _do_pull(name)
+            _do_pull(name, engine)
 
     threading.Thread(target=run, daemon=True).start()
     return True
@@ -172,8 +196,9 @@ def _mark_pulling(image_name: str) -> None:
 
 
 def check_and_pull_all_if_needed() -> list[str]:
-    """Auto-update: pull LLAMA_IMAGE and every image tracked on this node
-    whose last pull is older than the interval. Called by the background
+    """Auto-update: pull LLAMA_IMAGE and every llama.cpp image tracked on
+    this node whose last pull is older than the interval (Strata's are
+    core/strata_build.check_and_update_if_needed's). Called by the background
     monitoring poller. Returns the images whose pull was started."""
     with _pull_lock:
         if _pull_state["status"] == "pulling":
@@ -184,7 +209,8 @@ def check_and_pull_all_if_needed() -> list[str]:
         return []
 
     interval_hours = docker_images.get("auto_update_interval_hours", 24)
-    records = {r.get("name"): r for r in docker_images.get("images", []) if r.get("name")}
+    records = {r.get("name"): r for r in docker_images.get("images", [])
+               if r.get("name") and _record_engine(r) == "llamacpp"}
     names = list(dict.fromkeys([n for n in (LLAMA_IMAGE, *records) if n]))
     now = time.time()
     due = [n for n in names
@@ -201,25 +227,14 @@ def check_and_pull_all_if_needed() -> list[str]:
 @bp.route("/api/images", methods=["GET"])
 def list_images():
     docker_images = _read_docker_images()
-    images_list = list(docker_images.get("images", []))
+    images_list = [r for r in docker_images.get("images", []) if _record_engine(r) == "llamacpp"]
 
     # Always show the currently configured LLAMA_IMAGE first
     known_names = {r["name"] for r in images_list}
     if LLAMA_IMAGE and LLAMA_IMAGE not in known_names:
         images_list.insert(0, {"name": LLAMA_IMAGE})
 
-    result = []
-    for record in images_list:
-        name = record.get("name", "")
-        local = _get_image_local_info(name)
-        result.append({
-            "name": name,
-            "present": local.get("present", False),
-            "digest": record.get("digest") or local.get("digest"),
-            "size_mb": record.get("size_mb") or local.get("size_mb"),
-            "created": local.get("created"),
-            "last_pulled_at": record.get("last_pulled_at"),
-        })
+    result = [_image_row(record) for record in images_list]
 
     return jsonify({
         "images": result,
@@ -230,28 +245,45 @@ def list_images():
     })
 
 
+def _image_row(record: dict) -> dict:
+    name = record.get("name", "")
+    local = _get_image_local_info(name)
+    return {
+        "name": name,
+        "present": local.get("present", False),
+        "digest": record.get("digest") or local.get("digest"),
+        "size_mb": record.get("size_mb") or local.get("size_mb"),
+        "created": local.get("created"),
+        "last_pulled_at": record.get("last_pulled_at"),
+    }
+
+
 def _engine_images() -> list[dict]:
-    """Images of enabled non-llama.cpp engines that can't be pulled (Strata
-    is built locally from its repository, core/strata_build.py), with whether
-    each exists here, the source download and the build state. Kept out of
-    `images` so they get no Pull button and the llama.cpp auto-update never
-    touches them."""
-    from config import STRATA_ENABLED, STRATA_IMAGE
+    """Strata's images when it is enabled: the ones pulled for it (`pulled`,
+    auto-updated by core/strata_build.check_and_update_if_needed, never by
+    the llama.cpp auto-update), the one built from its repository (`name`,
+    with the source download and the build state) and which of them launches
+    use by default."""
+    from config import STRATA_BUILD_IMAGE, STRATA_ENABLED
     if not STRATA_ENABLED:
         return []
     from core import strata_build
-    local = _get_image_local_info(STRATA_IMAGE)
-    rec = _read_docker_images().get("strata") or {}
+    from core.engines.strata import resolve_image
+    local = _get_image_local_info(STRATA_BUILD_IMAGE)
+    di = _read_docker_images()
+    rec = di.get("strata") or {}
+    pulled = [_image_row(r) for r in di.get("images", []) if _record_engine(r) == "strata"]
     return [{
         "engine": "strata",
         "label": "Strata",
-        "name": STRATA_IMAGE,
+        "name": STRATA_BUILD_IMAGE,
         "present": local.get("present", False),
         "size_mb": local.get("size_mb"),
         "created": local.get("created"),
-        "pullable": False,
+        "default_image": resolve_image(),
+        "pulled": pulled,
         "source": f"https://github.com/{strata_build.source_info()['repo']}",
-        "build_command": f"docker build -t {STRATA_IMAGE} .",
+        "build_command": f"docker build -t {STRATA_BUILD_IMAGE} .",
         "repo": strata_build.source_info(),
         "build": strata_build.get_state(),
         "built_sha": rec.get("built_sha"),
@@ -290,14 +322,30 @@ def get_pull_status():
 @bp.route("/api/images/pull", methods=["POST"])
 def pull_image():
     data = request.get_json(silent=True) or {}
-    image_name = (data.get("image") or "").strip() or LLAMA_IMAGE
+    engine = (data.get("engine") or "llamacpp").strip()
+    if engine not in ("llamacpp", "strata"):
+        return jsonify({"error": f"unknown engine {engine!r}"}), 400
+    if engine == "strata":
+        from config import STRATA_ENABLED
+        if not STRATA_ENABLED:
+            return jsonify({"error": "Strata is not enabled on this node (STRATA_ENABLED)"}), 400
+        image_name = (data.get("image") or "").strip()
+    else:
+        image_name = (data.get("image") or "").strip() or LLAMA_IMAGE
     if not image_name:
         return jsonify({"error": "no image specified"}), 400
 
-    if not _trigger_pull(image_name):
+    if not _trigger_pull(image_name, engine):
         return jsonify({"error": "a pull is already in progress"}), 409
 
     return jsonify({"ok": True, "image": image_name})
+
+
+def _engine_default_image(engine: str | None) -> str:
+    if engine == "strata":
+        from core.engines.strata import resolve_image
+        return resolve_image()
+    return LLAMA_IMAGE
 
 
 @bp.route("/api/images", methods=["DELETE"])
@@ -314,7 +362,8 @@ def delete_image():
         for inst in instances.values():
             if inst.get("status") in ("stopped",):
                 continue
-            inst_image = (inst.get("config", {}) or {}).get("image") or LLAMA_IMAGE
+            cfg = inst.get("config", {}) or {}
+            inst_image = cfg.get("image") or _engine_default_image(cfg.get("engine"))
             if inst_image == image_name:
                 return jsonify({"error": f"image is in use by an instance on port {inst['port']}  stop it first"}), 409
 
@@ -336,6 +385,11 @@ def delete_image():
     images_list = docker_images.get("images", [])
     docker_images["images"] = [r for r in images_list if r.get("name") != image_name]
     _write_docker_images(docker_images)
+    try:                                   # Strata's default image may have changed
+        from core.engines.strata import refresh_catalogue_from_image
+        refresh_catalogue_from_image()
+    except Exception:
+        pass
 
     logger.info("Image removed: %s (docker=%s)", image_name, removed_from_docker)
     return jsonify({"ok": True, "removed_from_docker": removed_from_docker})

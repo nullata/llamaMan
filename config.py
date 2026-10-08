@@ -167,10 +167,13 @@ HOST_LOGS_DIR = os.environ.get("HOST_LOGS_DIR", LOGS_DIR)
 
 # Strata (core/engines/strata.py): a second inference engine for the
 # Qwen3.8-Flash-Next family on NVIDIA GPUs. Off unless STRATA_ENABLED is set.
-# The image is not published upstream - it is built locally from
-# https://github.com/Niko1221/Strata with `docker build -t strata .`.
+# Its image is built on the node from the repository (STRATA_BUILD_IMAGE) or
+# pulled by name in Settings -> Docker Images. STRATA_IMAGE is the preferred
+# image for launches; when it isn't on the node, the built image, then a
+# pulled one, is used instead (core/engines/strata.resolve_image).
 STRATA_ENABLED = os.environ.get("STRATA_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
 STRATA_IMAGE = os.environ.get("STRATA_IMAGE", "").strip() or "strata:latest"
+STRATA_BUILD_IMAGE = os.environ.get("STRATA_BUILD_IMAGE", "").strip() or "strata:latest"
 # What is mounted at /data in every Strata container (model files, prepared
 # packs, the MTP layer, per-model setup configs: 70-120 GB per model). A host
 # path in HOST_STRATA_DATA_DIR wins over the named volume.
@@ -184,8 +187,8 @@ STRATA_LOAD_TIMEOUT = int(os.environ.get("STRATA_LOAD_TIMEOUT", 3600))
 # names; the host of CLUSTER_ADVERTISE_URL is allowed without listing it.
 STRATA_WEB_HOSTS = [h.strip() for h in os.environ.get("STRATA_WEB_HOSTS", "").split(",") if h.strip()]
 # Settings -> Docker Images can download the Strata repository (GitHub
-# owner/name at STRATA_REPO_REF) into STRATA_SRC_DIR and build STRATA_IMAGE
-# from it (core/strata_build.py), for this node's GPU generations.
+# owner/name at STRATA_REPO_REF) into STRATA_SRC_DIR and build
+# STRATA_BUILD_IMAGE from it (core/strata_build.py), for this node's GPU generations.
 STRATA_REPO = os.environ.get("STRATA_REPO", "").strip() or "Niko1221/Strata"
 STRATA_REPO_REF = os.environ.get("STRATA_REPO_REF", "").strip() or "main"
 STRATA_SRC_DIR = os.environ.get("STRATA_SRC_DIR", "").strip() or os.path.join(DATA_DIR, "engines", "Strata")

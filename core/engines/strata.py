@@ -111,7 +111,7 @@ SIZES = {
 
 _BUILTIN_CATALOGUE = (copy.deepcopy(FAMILIES), copy.deepcopy(SIZES), dict(HF_REVISIONS))
 _CATALOGUE_LOCK = threading.Lock()
-_catalogue_state = {"image_id": None, "source": "built-in", "error": None}
+_catalogue_state = {"image": None, "image_id": None, "source": "built-in", "error": None}
 
 # Run inside the image (network off): print setup.py's tables as JSON.
 # setup.py's main() is guarded and it imports only the standard library.
@@ -186,28 +186,56 @@ def catalogue_source() -> dict:
     return dict(_catalogue_state)
 
 
+def image_candidates() -> list[str]:
+    """Strata images this node may launch, preferred first: STRATA_IMAGE, the
+    image built from the repository, then the ones pulled in Settings."""
+    from config import STRATA_BUILD_IMAGE, STRATA_IMAGE
+    names = [STRATA_IMAGE, STRATA_BUILD_IMAGE]
+    try:
+        from api.images import tracked_images
+        names += tracked_images("strata")
+    except Exception:
+        pass
+    return list(dict.fromkeys(n for n in names if n))
+
+
+def resolve_image() -> str:
+    """The image Strata launches use by default: the first candidate on the
+    node, as of the poller's last pass (STRATA_IMAGE when none is)."""
+    from config import STRATA_IMAGE
+    return _catalogue_state.get("image") or STRATA_IMAGE
+
+
 def refresh_catalogue_from_image() -> None:
-    """Read the tables from the Strata image when its id changed (cheap when
-    it didn't: one image lookup). Called by the background poller."""
-    from config import STRATA_ENABLED, STRATA_IMAGE
+    """Find the Strata image to use (resolve_image) and read the tables from
+    it when its id changed (cheap when it didn't: one lookup per candidate).
+    Called by the background poller, and after a build or pull."""
+    from config import STRATA_ENABLED
     from config import logger
     if not STRATA_ENABLED:
         return
     import docker
     from core.helpers import get_docker_client
+    image_name = image_id = None
+    why = "Strata image not built or pulled on this node"
     try:
         client = get_docker_client()
-        image_id = client.images.get(STRATA_IMAGE).id
-    except docker.errors.ImageNotFound:
-        image_id, why = None, f"image {STRATA_IMAGE} is not built"
+        for name in image_candidates():
+            try:
+                image_id = client.images.get(name).id
+                image_name = name
+                break
+            except docker.errors.ImageNotFound:
+                continue
     except Exception as e:
-        image_id, why = None, f"Docker unavailable ({type(e).__name__})"
+        why = f"Docker unavailable ({type(e).__name__})"
     if image_id is None:
-        if _catalogue_state["source"] != "built-in" or _catalogue_state["error"] != why:
+        if _catalogue_state["source"] != "built-in" or _catalogue_state["error"] != why \
+                or _catalogue_state["image"] is not None:
             _apply_catalogue(*copy.deepcopy(_BUILTIN_CATALOGUE))
-            _catalogue_state.update(image_id=None, source="built-in", error=why)
+            _catalogue_state.update(image=None, image_id=None, source="built-in", error=why)
         return
-    if image_id == _catalogue_state["image_id"]:
+    if image_id == _catalogue_state["image_id"] and image_name == _catalogue_state["image"]:
         return
 
     try:
@@ -220,7 +248,7 @@ def refresh_catalogue_from_image() -> None:
         dump = cache.get(image_id)
         if dump is None:
             out = client.containers.run(
-                STRATA_IMAGE, remove=True, network_disabled=True, stdout=True, stderr=False,
+                image_name, remove=True, network_disabled=True, stdout=True, stderr=False,
                 entrypoint=["sh", "-c", 'cd /opt/strata && { .venv/bin/python -c "$LLAMAMAN_DUMP" 2>/dev/null '
                                         '|| python3 -c "$LLAMAMAN_DUMP"; }'],
                 environment={"LLAMAMAN_DUMP": _DUMP_SCRIPT},
@@ -228,13 +256,13 @@ def refresh_catalogue_from_image() -> None:
             dump = json.loads(out.decode("utf-8", "replace").strip().splitlines()[-1])
         tables = catalogue_from_dump(dump)
     except Exception as e:
-        why = f"could not read the model list from {STRATA_IMAGE}: {e}"
+        why = f"could not read the model list from {image_name}: {e}"
         logger.warning("strata: %s - using the built-in list", why)
         _apply_catalogue(*copy.deepcopy(_BUILTIN_CATALOGUE))
-        _catalogue_state.update(image_id=image_id, source="built-in", error=why)
+        _catalogue_state.update(image=image_name, image_id=image_id, source="built-in", error=why)
         return
     _apply_catalogue(*tables)
-    _catalogue_state.update(image_id=image_id, source="image", error=None)
+    _catalogue_state.update(image=image_name, image_id=image_id, source="image", error=None)
     if image_id not in cache:
         cache = {image_id: dump}                     # only the current image's
         try:
@@ -245,7 +273,7 @@ def refresh_catalogue_from_image() -> None:
         except OSError:
             pass
     logger.info("strata: model list read from %s (%s): %d models",
-                STRATA_IMAGE, image_id[:19], sum(len(m["families"]) for m in tables[1].values()))
+                image_name, image_id[:19], sum(len(m["families"]) for m in tables[1].values()))
 
 
 DEFAULT_CONTEXT = 32768
@@ -667,13 +695,11 @@ class StrataEngine(Engine):
 
     # ----------------------------------------------------------------- image
     def default_image(self) -> str:
-        from config import STRATA_IMAGE
-        return STRATA_IMAGE
+        return resolve_image()
 
     def image_missing_message(self, image_name: str) -> str:
-        return (f"Docker image '{image_name}' not found. Strata is not published to a registry: "
-                f"build it from https://github.com/Niko1221/Strata with "
-                f"`docker build -t {image_name} .` (NVIDIA driver 580+ needed to run it)")
+        return (f"Docker image '{image_name}' not found: build or pull a Strata image in "
+                f"Settings → Docker Images (NVIDIA driver 580+ needed to run it)")
 
     # ------------------------------------------------------------- options
     def parse_options(self, body: dict, model_path: str) -> tuple[dict, str | None]:
@@ -926,13 +952,13 @@ class StrataEngine(Engine):
 
     def describe(self, vendor: str | None) -> dict:
         d = super().describe(vendor)
-        from config import STRATA_IMAGE
-        d["image"] = STRATA_IMAGE
+        from config import STRATA_BUILD_IMAGE
+        d["image"] = resolve_image()
         d["data"] = self.data_mount_source()
-        d["build_command"] = f"docker build -t {STRATA_IMAGE} ."
+        d["build_command"] = f"docker build -t {STRATA_BUILD_IMAGE} ."
         d["memory_warn_gb"] = MEMORY_WARN_GB
         d["context_choices"] = list(CONTEXT_CHOICES)
         d["catalogue"] = catalogue_source()
-        # The launch form offers Strata only once its image is on the node.
+        # The launch form offers Strata only once an image is on the node.
         d["image_built"] = bool(d["catalogue"].get("image_id"))
         return d

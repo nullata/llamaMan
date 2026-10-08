@@ -1036,11 +1036,25 @@
 
           <div class="tab-panel" id="settings-tab-images" role="tabpanel"
             aria-labelledby="settings-tab-btn-images" data-tab-panel="images" hidden>
-            <p class="hint-text">Manage the llama.cpp server Docker images used to launch model instances. The active image is set via the <code>LLAMA_IMAGE</code> environment variable.</p>
+            <p class="hint-text">Docker images instances are launched from. The defaults are set by <code>LLAMA_IMAGE</code> (llama.cpp) and <code>STRATA_IMAGE</code> (Strata).</p>
             <div class="form-group node-select-row" hidden>
               <label for="images-node">Node</label>
               <select id="images-node" class="node-select"></select>
             </div>
+            <div class="form-actions image-pull-row">
+              <select id="f-image-pull-engine" class="form-input" aria-label="Engine the image is for">
+                <option value="llamacpp">llama.cpp</option>
+                <option value="strata" hidden>Strata</option>
+              </select>
+              <input id="f-image-pull-name" class="form-input" type="text"
+                placeholder="ghcr.io/ggml-org/llama.cpp:server-cuda" style="flex:1" />
+              <button class="btn btn-secondary" type="button" id="btn-pull-by-name">
+                <i class="fa-solid fa-arrow-down"></i> Pull image
+              </button>
+            </div>
+            <div id="image-pull-status" class="hint-text" hidden></div>
+            <div class="cleanup-section-divider" aria-hidden="true"></div>
+            <div class="cluster-section-label">Manage llama.cpp Docker images</div>
             <div class="cleanup-settings-grid">
               <div class="form-group cleanup-toggle-grid">
                 <label for="s-image-auto-update">Auto-update llama.cpp images periodically</label>
@@ -1060,22 +1074,31 @@
               <span id="image-settings-status" class="status-text"></span>
             </div>
             <p class="hint-text" style="margin-top: 12px;">Changes take effect on the next instance launch.</p>
-            <div class="cleanup-section-divider" aria-hidden="true"></div>
-            <div class="cluster-section-label">Manage llama.cpp Docker images</div>
-            <div class="form-actions">
-              <input id="f-image-pull-name" class="form-input" type="text"
-                placeholder="ghcr.io/ggml-org/llama.cpp:server-cuda" style="flex:1" />
-              <button class="btn btn-secondary" type="button" id="btn-pull-by-name">
-                <i class="fa-solid fa-arrow-down"></i> Pull image
-              </button>
-            </div>
-            <div id="image-pull-status" class="hint-text" hidden></div>
-            <p class="hint-text">Locally cached images.</p>
             <div id="images-list"><div class="list-empty-state">Loading…</div></div>
             <div id="strata-images-section" hidden>
               <p aria-hidden="true">&nbsp;</p>
               <div class="cleanup-section-divider" aria-hidden="true"></div>
               <div class="cluster-section-label">Manage Strata images</div>
+              <div class="cleanup-settings-grid">
+                <div class="form-group cleanup-toggle-grid">
+                  <label for="s-strata-auto-update">Auto-update Strata images periodically</label>
+                  <label class="toggle-switch" for="s-strata-auto-update" aria-label="Auto-update Strata images periodically">
+                    <input id="s-strata-auto-update" type="checkbox" />
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                <div class="form-group cleanup-input-row">
+                  <label for="s-strata-update-interval">Update interval (hours)</label>
+                  <input id="s-strata-update-interval" class="cleanup-settings-input" type="number" value="24" min="1" />
+                </div>
+              </div>
+              <div class="form-actions">
+                <button class="btn btn-secondary" type="button" id="btn-save-strata-image-settings"><i
+                    class="fa-solid fa-floppy-disk"></i> Save</button>
+                <span id="strata-image-settings-status" class="status-text"></span>
+              </div>
+              <p class="hint-text" style="margin-top: 12px;">Pulled images are pulled again; the built image is rebuilt when its repository has a newer commit. The repository is only downloaded by the build button.</p>
+              <div id="strata-pulled-list"></div>
               <div class="dl-item strata-image-card">
                 <div class="dl-item-top">
                   <span class="dl-item-name"><strong id="strata-image-name"></strong> <span id="strata-image-badge"></span></span>
@@ -1091,25 +1114,6 @@
                   </button>
                 </div>
                 <div id="strata-build-status" class="hint-text" hidden></div>
-              </div>
-              <div class="cleanup-settings-grid">
-                <div class="form-group cleanup-toggle-grid">
-                  <label for="s-strata-auto-update">Auto-update Strata images periodically</label>
-                  <label class="toggle-switch" for="s-strata-auto-update" aria-label="Auto-update Strata images periodically">
-                    <input id="s-strata-auto-update" type="checkbox" />
-                    <span class="toggle-slider"></span>
-                  </label>
-                </div>
-                <div class="form-group cleanup-input-row">
-                  <label for="s-strata-update-interval">Update interval (hours)</label>
-                  <input id="s-strata-update-interval" class="cleanup-settings-input" type="number" value="24" min="1" />
-                </div>
-              </div>
-              <p class="hint-text">Fetches the newest commit and rebuilds only when it changed. Needs the repository downloaded once with the button above; it is never downloaded automatically.</p>
-              <div class="form-actions">
-                <button class="btn btn-secondary" type="button" id="btn-save-strata-image-settings"><i
-                    class="fa-solid fa-floppy-disk"></i> Save</button>
-                <span id="strata-image-settings-status" class="status-text"></span>
               </div>
             </div>
           </div>

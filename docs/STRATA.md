@@ -31,7 +31,7 @@ core/engines/
 
   | | |
   |---|---|
-  | image | `STRATA_IMAGE` |
+  | image | `STRATA_IMAGE` (else the built, then a pulled Strata image) |
   | command | none (the entrypoint reads env vars only) |
   | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `REINSTALL=1`? |
   | ulimits | `memlock=-1` |

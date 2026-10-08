@@ -2947,3 +2947,7 @@ body.login-page {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.image-pull-row select {
+  flex: 0 0 auto;
+  width: auto;
+}

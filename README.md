@@ -437,7 +437,7 @@ Other details:
 
 *(opt-in, NVIDIA only)* [Strata](https://github.com/Niko1221/Strata) runs the Qwen3.8-Flash-Next mixture-of-experts family (and its Coder, Swift 1.5 and Unsloth variants) on consumer NVIDIA GPUs plus system RAM. llamaMan can launch, monitor, proxy, sleep/wake and stop Strata instances next to llama.cpp ones. llama.cpp behaviour does not change: the engine layer (`core/engines/`) keeps the llama.cpp launch byte-for-byte identical (snapshot-tested).
 
-**1. Build the image** (not published to a registry; the host needs NVIDIA driver **580+**, i.e. CUDA 13, and the NVIDIA Container Toolkit). Either enable Strata (step 2) and use **Settings → Docker Images → Manage Strata images → Pull repo & build latest**, which downloads the repository into `STRATA_SRC_DIR` and builds `STRATA_IMAGE` through the Docker socket for the node's GPU generations (read from the driver; all supported ones if that fails), or build it by hand:
+**1. Get an image** (upstream publishes none; the host needs NVIDIA driver **580+**, i.e. CUDA 13, and the NVIDIA Container Toolkit). After enabling Strata (step 2), either pull one you trust by name in **Settings → Docker Images** (engine *Strata* in the pull row), or use **Manage Strata images → Pull repo & build latest**, which downloads the repository into `STRATA_SRC_DIR` and builds `STRATA_BUILD_IMAGE` through the Docker socket for the node's GPU generations (read from the driver; all supported ones if that fails), or build it by hand:
 
 ```bash
 git clone https://github.com/Niko1221/Strata && cd Strata
@@ -445,7 +445,7 @@ docker build -t strata .                                        # all supported 
 docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (faster build)
 ```
 
-**2. Enable it** on the llamaMan node: `STRATA_ENABLED=true` (see [Strata variables](#strata)). Settings → Docker Images then shows the image under *Manage Strata images* (present / not built, the downloaded commit, the build button and its auto-update).
+**2. Enable it** on the llamaMan node: `STRATA_ENABLED=true` (see [Strata variables](#strata)). Settings → Docker Images then shows *Manage Strata images*: the pulled Strata images, the built one (downloaded and built commits, the build button) and their auto-update. The launch form offers Strata once one of them is on the node.
 
 **3. Launch.** The model library gains one virtual entry per family × size: `strata/qwen-Q2_0`, `strata/qwen-IQ2_XS`, `strata/qwen-IQ3_XXS`, `strata/qwen-IQ3_S`, `strata/swift-IQ2_XS`, `strata/swift-IQ3_XXS`, `strata/coder-IQ1_M`, `strata/unsloth-UD-Q4_K_XL` *(experimental)*. Each is its own instance and container, so switching models works like llama.cpp: launch or wake another instance, with the usual [eviction](#model-eviction) rules (a Strata instance is one chat model). The entries also appear in `/api/tags` and `/v1/models`, and requests may use the id (`strata/qwen-IQ2_XS`, any case, `:tag` ignored) or Strata's own served name (`qwen3.8-flash-next-iq2_xs`).
 
@@ -496,7 +496,7 @@ Under **Settings → Download Settings**:
 
 ## Docker Image Management
 
-**Settings → Docker Images**: pull any llama.cpp image by name, delete old local images (disabled for the active `LLAMA_IMAGE`, and returns an error if Docker refuses because a container is using it), and optionally auto-update the node's llama.cpp images (`LLAMA_IMAGE` and every image pulled there) on a schedule. With `STRATA_ENABLED`, *Manage Strata images* shows the Strata image; **Pull repo & build latest** downloads the newest commit of the Strata repository (a GitHub tarball, into `STRATA_SRC_DIR`) and builds the image with BuildKit through the Docker socket. Its own auto-update fetches the newest commit on a schedule and rebuilds when it changed (or the image is missing); it only runs once the repository has been downloaded with the button, and never downloads it on its own.
+**Settings → Docker Images**: pull any llama.cpp image by name, delete old local images (disabled for the active `LLAMA_IMAGE`, and returns an error if Docker refuses because a container is using it), and optionally auto-update the node's llama.cpp images (`LLAMA_IMAGE` and every image pulled there) on a schedule. The pull row has an engine select: with `STRATA_ENABLED`, an image pulled as *Strata* goes to *Manage Strata images* (there is no default Strata source; type the name). **Pull repo & build latest** downloads the newest commit of the Strata repository (a GitHub tarball, into `STRATA_SRC_DIR`) and builds `STRATA_BUILD_IMAGE` with BuildKit through the Docker socket. Strata's own auto-update re-pulls the pulled Strata images and, when the repository was downloaded, fetches its newest commit and rebuilds when it changed (or the image is missing); it never downloads the repository on its own. Strata launches use `STRATA_IMAGE` when it is on the node, else the built image, else a pulled one.
 
 ## Model Archive
 
@@ -732,7 +732,8 @@ Optional; see [Strata Engine](#strata-engine).
 | Variable | Default | Description |
 |---|---|---|
 | `STRATA_ENABLED` | `false` | Offer Strata models on this node. Also needs an NVIDIA GPU (`GPU_TYPE=cuda` or detected) |
-| `STRATA_IMAGE` | `strata:latest` | Locally built Strata image (`docker build -t strata .` in the Strata repo) |
+| `STRATA_IMAGE` | `strata:latest` | Preferred Strata image for launches. When it isn't on the node, the built image, then a pulled one, is used |
+| `STRATA_BUILD_IMAGE` | `strata:latest` | Tag *Pull repo & build latest* builds |
 | `STRATA_DATA_VOLUME` | `llamaman-strata-data` | Named Docker volume mounted at `/data` in every Strata container (model files, packs, MTP layer, per-model setup; 70-120 GB per model). Created by Docker on first use |
 | `HOST_STRATA_DATA_DIR` | *(unset)* | Host path to mount at `/data` instead of the named volume. Wins over `STRATA_DATA_VOLUME` |
 | `STRATA_LOAD_TIMEOUT` | `3600` | Seconds a request (or relaunch) waits for a Strata instance to become ready. High because a first start downloads and prepares the model before the port opens |
@@ -847,7 +848,7 @@ OpenAI: `/v1/models`, `/v1/chat/completions` (chat auto-starts).
 | GPU stats unavailable | NVIDIA: uncomment the `deploy.resources.reservations` block. AMD/Intel: ensure `/sys/class/drm:ro` is mounted |
 | Wrong GPU vendor detected | Set `GPU_TYPE=cuda`/`rocm`/`intel` to override |
 | Instance stuck on **starting** running bare-metal | The container is healthy but llamaman can't reach it. Set `LLAMAMAN_IN_DOCKER=false`/`true` explicitly if auto-detection is wrong for your runtime |
-| Strata: _"Docker image 'strata:latest' not found"_ | Build it: `docker build -t strata .` in a clone of the Strata repo (or set `STRATA_IMAGE` to your tag) |
+| Strata: _"Docker image 'strata:latest' not found"_ | Pull or build a Strata image in Settings → Docker Images (or `docker build -t strata .` in a clone of the Strata repo) |
 | Strata models not listed | Set `STRATA_ENABLED=true`; the node must be NVIDIA (`GPU_TYPE=cuda` if detection fails). `GET /api/engines` shows the reason |
 | Strata instance stuck on **starting** | Normal for minutes on a first start (download + pack). The card shows the stage; the log shows Strata's setup. "setup failed" means its setup stopped - read the log's `[X]` line |
 | Stats modal is empty | Enable **Settings → App Settings → Request recording** |

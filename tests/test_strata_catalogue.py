@@ -75,15 +75,38 @@ class RefreshTests(unittest.TestCase):
         self.client.containers.run.return_value = json.dumps(dump_with_new_size()).encode()
         self._dc = patch("core.helpers.get_docker_client", return_value=self.client)
         self._dc.start()
-        S._catalogue_state.update(image_id=None, source="built-in", error=None)
+        S._catalogue_state.update(image=None, image_id=None, source="built-in", error=None)
 
     def tearDown(self):
         self._dc.stop()
         for p in reversed(self._p):
             p.stop()
         S._apply_catalogue(*copy.deepcopy(S._BUILTIN_CATALOGUE))
-        S._catalogue_state.update(image_id=None, source="built-in", error=None)
+        S._catalogue_state.update(image=None, image_id=None, source="built-in", error=None)
         self._tmp.cleanup()
+
+    def test_falls_back_to_built_then_pulled_image(self):
+        import docker
+        have = {"ghcr.io/someone/strata:latest": Mock(id="sha256:bbb")}
+
+        def get(name):
+            if name in have:
+                return have[name]
+            raise docker.errors.ImageNotFound(name)
+        self.client.images.get.side_effect = get
+        with patch("config.STRATA_IMAGE", "ghcr.io/me/strata:1"), \
+             patch("config.STRATA_BUILD_IMAGE", "strata:latest"), \
+             patch("api.images.tracked_images", return_value=["ghcr.io/someone/strata:latest"]):
+            S.refresh_catalogue_from_image()
+            self.assertEqual(S.resolve_image(), "ghcr.io/someone/strata:latest")
+            self.assertEqual(self.client.containers.run.call_args.args[0], "ghcr.io/someone/strata:latest")
+            have["strata:latest"] = Mock(id="sha256:ccc")       # built later: preferred over pulled
+            S.refresh_catalogue_from_image()
+            self.assertEqual(S.resolve_image(), "strata:latest")
+            have["ghcr.io/me/strata:1"] = Mock(id="sha256:ddd")  # STRATA_IMAGE first
+            S.refresh_catalogue_from_image()
+            self.assertEqual(S.resolve_image(), "ghcr.io/me/strata:1")
+            self.assertEqual(S.StrataEngine().default_image(), "ghcr.io/me/strata:1")
 
     def test_image_tables_applied_in_place(self):
         sizes_ref = S.SIZES                          # other modules hold these names
@@ -105,7 +128,7 @@ class RefreshTests(unittest.TestCase):
         self.assertEqual(self.client.containers.run.call_count, 1)
         # A restart (state reset) reads the per-image cache, not the image.
         S._apply_catalogue(*copy.deepcopy(S._BUILTIN_CATALOGUE))
-        S._catalogue_state.update(image_id=None, source="built-in", error=None)
+        S._catalogue_state.update(image=None, image_id=None, source="built-in", error=None)
         S.refresh_catalogue_from_image()
         self.assertEqual(self.client.containers.run.call_count, 1)
         self.assertIn("IQ4_XS", S.SIZES)

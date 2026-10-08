@@ -81,6 +81,37 @@ class LlamaCppAutoUpdateAllTests(unittest.TestCase):
         self.assertEqual(started, ["ghcr.io/ggml-org/llama.cpp:server-cuda"])
 
 
+class StrataPullTests(unittest.TestCase):
+
+    def _post(self, body, enabled=True):
+        app = Flask(__name__)
+        app.register_blueprint(images_api.bp)
+        with patch("config.STRATA_ENABLED", enabled), \
+             patch("api.images._trigger_pull", return_value=True) as trig:
+            resp = app.test_client().post("/api/images/pull", json=body)
+        return resp, trig
+
+    def test_strata_pull_tagged_with_engine(self):
+        resp, trig = self._post({"image": "ghcr.io/someone/strata:latest", "engine": "strata"})
+        self.assertEqual(resp.status_code, 200)
+        trig.assert_called_once_with("ghcr.io/someone/strata:latest", "strata")
+
+    def test_strata_pull_needs_a_name_and_strata(self):
+        self.assertEqual(self._post({"engine": "strata"})[0].status_code, 400)     # no default source
+        self.assertEqual(self._post({"image": "x/strata", "engine": "strata"}, enabled=False)[0].status_code, 400)
+
+    def test_record_keeps_engine_and_llamacpp_autoupdate_skips_it(self):
+        store = _Store({"auto_update_enabled": True})
+        r, w = _store_patches(store)
+        with r, w, patch("api.images.LLAMA_IMAGE", "ghcr.io/ggml-org/llama.cpp:server-cuda"), \
+             patch("api.images._trigger_pulls", return_value=True):
+            images_api._update_image_record("reg/strata:1", pulled_at=1.0, engine="strata")
+            self.assertEqual(images_api.tracked_images("strata"), ["reg/strata:1"])
+            self.assertEqual(images_api.tracked_images("llamacpp"), [])
+            self.assertEqual(images_api.check_and_pull_all_if_needed(),
+                             ["ghcr.io/ggml-org/llama.cpp:server-cuda"])
+
+
 class ImageSettingsRouteTests(unittest.TestCase):
 
     def _post(self, initial, body):
@@ -136,11 +167,31 @@ class _SrcDirCase(unittest.TestCase):
 
 class AutoUpdateGateTests(_SrcDirCase):
 
-    def _check(self, rec):
-        store = _Store({"strata": rec})
+    def _check(self, rec, images=None):
+        store = _Store({"strata": rec, "images": images or []})
         r, w = _store_patches(store)
-        with r, w, patch("core.strata_build.start", return_value=True) as start:
+        with r, w, patch("core.strata_build.start", return_value=True) as start, \
+             patch("api.images._trigger_pulls", return_value=True) as pulls:
+            self.pulls = pulls
             return strata_build.check_and_update_if_needed(), start, store.data
+
+    def test_pulled_images_repulled_without_repository(self):
+        started, start, data = self._check(
+            {"auto_update_enabled": True, "auto_update_interval_hours": 24},
+            [{"name": "ghcr.io/ggml-org/llama.cpp:server-cuda"},
+             {"name": "ghcr.io/someone/strata:latest", "engine": "strata"}])
+        self.assertTrue(started)
+        self.pulls.assert_called_once_with(["ghcr.io/someone/strata:latest"], "strata")
+        start.assert_not_called()                   # no repository: nothing to rebuild
+        self.assertIn("last_auto_check_at", data["strata"])
+
+    def test_pulled_and_built_both_updated(self):
+        self._make_source()
+        started, start, _ = self._check({"auto_update_enabled": True},
+                                        [{"name": "reg/strata:1", "engine": "strata"}])
+        self.assertTrue(started)
+        self.pulls.assert_called_once_with(["reg/strata:1"], "strata")
+        start.assert_called_once_with("auto")
 
     def test_never_downloads_the_repository(self):
         started, start, _ = self._check({"auto_update_enabled": True})

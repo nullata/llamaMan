@@ -5,7 +5,7 @@ Strata images.
 
 Strata publishes no image, so this node downloads the repository (a GitHub
 tarball of STRATA_REPO at STRATA_REPO_REF, no git needed) into STRATA_SRC_DIR
-and builds STRATA_IMAGE from it through the Docker socket. The image lands in
+and builds STRATA_BUILD_IMAGE from it through the Docker socket. The image lands in
 the host's Docker, where Strata instances are launched from.
 
 The build goes through the Engine API with BuildKit (``/build?version=2``):
@@ -13,9 +13,9 @@ Strata's Dockerfile uses RUN heredocs, which the classic builder (all that
 docker-py's ``images.build`` speaks) rejects.
 
 Only the UI button downloads the repository the first time. The periodic
-auto-update (check_and_update_if_needed, from the monitoring poller) works on
-an existing download only: it fetches the newer commit and rebuilds, and does
-nothing while STRATA_SRC_DIR is missing.
+auto-update (check_and_update_if_needed, from the monitoring poller) re-pulls
+the Strata images pulled by name and, on an existing download only, fetches
+the newer commit and rebuilds; it never downloads the repository itself.
 """
 
 import base64
@@ -219,13 +219,13 @@ def cuda_architectures() -> str:
 
 
 def build_image(archs: str = "") -> str:
-    """Build STRATA_IMAGE from STRATA_SRC_DIR with BuildKit, for the CUDA
+    """Build STRATA_BUILD_IMAGE from STRATA_SRC_DIR with BuildKit, for the CUDA
     architectures `archs` (empty: the Dockerfile's default). Returns the image id."""
-    from config import STRATA_IMAGE, STRATA_SRC_DIR
+    from config import STRATA_BUILD_IMAGE, STRATA_SRC_DIR
     from core.helpers import get_docker_client
 
     api = get_docker_client().api
-    params = {"t": STRATA_IMAGE, "version": "2", "rm": "1", "forcerm": "1",
+    params = {"t": STRATA_BUILD_IMAGE, "version": "2", "rm": "1", "forcerm": "1",
               "dockerfile": CONTEXT_DOCKERFILE}
     if archs:
         params["buildargs"] = json.dumps({"CUDA_ARCHITECTURES": archs})
@@ -273,12 +273,12 @@ def _record_build(sha: str | None, image_id: str, archs: str) -> None:
 
 def _image_present() -> bool:
     from api.images import _get_image_local_info
-    from config import STRATA_IMAGE
-    return bool(_get_image_local_info(STRATA_IMAGE).get("present"))
+    from config import STRATA_BUILD_IMAGE
+    return bool(_get_image_local_info(STRATA_BUILD_IMAGE).get("present"))
 
 
 def _run(trigger: str) -> None:
-    from config import STRATA_IMAGE
+    from config import STRATA_BUILD_IMAGE
     try:
         src = source_info()
         if trigger == "auto" and not src["present"]:
@@ -305,8 +305,8 @@ def _run(trigger: str) -> None:
             if (_read_docker_images().get("strata") or {}).get("built_sha") == sha:
                 _set(status="done", message="Up to date", finished_at=time.time())
                 return
-        _set(status="building", message=f"Building {STRATA_IMAGE}")
-        logger.info("Strata: building %s from %s (%s)", STRATA_IMAGE, src["repo"], (sha or "?")[:7])
+        _set(status="building", message=f"Building {STRATA_BUILD_IMAGE}")
+        logger.info("Strata: building %s from %s (%s)", STRATA_BUILD_IMAGE, src["repo"], (sha or "?")[:7])
         archs = cuda_architectures()
         image_id = build_image(archs)
         _record_build(sha, image_id, archs)
@@ -317,8 +317,8 @@ def _run(trigger: str) -> None:
             refresh_catalogue_from_image()
         except Exception as e:
             logger.warning("Strata: could not read the new image's model list: %s", e)
-        _set(status="done", message=f"Built {STRATA_IMAGE}", finished_at=time.time())
-        logger.info("Strata: built %s (%s)", STRATA_IMAGE, image_id[:19])
+        _set(status="done", message=f"Built {STRATA_BUILD_IMAGE}", finished_at=time.time())
+        logger.info("Strata: built %s (%s)", STRATA_BUILD_IMAGE, image_id[:19])
     except Exception as e:
         _set(status="error", message=str(e), finished_at=time.time())
         logger.warning("Strata image update failed: %s", e)
@@ -338,12 +338,14 @@ def start(trigger: str = "manual") -> bool:
 
 
 def check_and_update_if_needed() -> bool:
-    """Monitoring poller: start an auto-update when it is on, its interval has
-    passed and the repository is already downloaded. True if one started."""
+    """Monitoring poller: when Strata's auto-update is on and its interval
+    has passed, re-pull every Strata image pulled on this node (a newer
+    version replaces it) and, when the repository was downloaded, fetch its
+    newer commit and rebuild. True if anything started."""
     from config import STRATA_ENABLED
-    if not STRATA_ENABLED or not source_info()["present"]:
+    if not STRATA_ENABLED:
         return False
-    from api.images import _read_docker_images, _write_docker_images
+    from api.images import _read_docker_images, _trigger_pulls, _write_docker_images, tracked_images
     di = _read_docker_images()
     rec = dict(di.get("strata") or {})
     if not rec.get("auto_update_enabled"):
@@ -351,8 +353,14 @@ def check_and_update_if_needed() -> bool:
     interval = rec.get("auto_update_interval_hours", 24)
     if time.time() - (rec.get("last_auto_check_at") or 0) < interval * 3600:
         return False
-    if not start("auto"):
+    pulled = tracked_images("strata")
+    started = bool(pulled) and _trigger_pulls(pulled, "strata")
+    if source_info()["present"]:
+        started = start("auto") or started
+    if not started:
         return False
+    di = _read_docker_images()                 # the pull may have written meanwhile
+    rec = dict(di.get("strata") or {})
     rec["last_auto_check_at"] = time.time()
     di["strata"] = rec
     _write_docker_images(di)

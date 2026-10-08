@@ -24,27 +24,37 @@ TEMPLATE = os.path.join(REPO_ROOT, "templates", "index.html")
 
 class EngineImagesTests(unittest.TestCase):
 
-    def _get(self, enabled, present):
+    def _get(self, enabled, present, docker_images=None):
         app = Flask(__name__)
         app.register_blueprint(images_api.bp)
         with patch("config.STRATA_ENABLED", enabled), \
              patch("config.STRATA_IMAGE", "strata:latest"), \
-             patch("api.images._read_docker_images", return_value={}), \
+             patch("config.STRATA_BUILD_IMAGE", "strata:latest"), \
+             patch("api.images._read_docker_images", return_value=docker_images or {}), \
              patch("api.images._get_image_local_info", return_value={"present": present}):
             return app.test_client().get("/api/images").get_json()
 
     def test_hidden_when_disabled(self):
         self.assertEqual(self._get(False, True)["engine_images"], [])
 
-    def test_strata_image_listed_with_build_command(self):
+    def test_strata_built_image_listed(self):
         data = self._get(True, False)
         (img,) = data["engine_images"]
         self.assertEqual(img["name"], "strata:latest")
         self.assertFalse(img["present"])
-        self.assertFalse(img["pullable"])
         self.assertEqual(img["build_command"], "docker build -t strata:latest .")
-        # Never offered for pulling / auto-update.
+        self.assertEqual(img["pulled"], [])
         self.assertNotIn("strata:latest", [i["name"] for i in data["images"]])
+
+    def test_pulled_images_split_by_engine(self):
+        data = self._get(True, True, {"images": [
+            {"name": "ghcr.io/ggml-org/llama.cpp:server-cuda"},
+            {"name": "ghcr.io/someone/strata:latest", "engine": "strata", "last_pulled_at": 5},
+        ]})
+        self.assertNotIn("ghcr.io/someone/strata:latest", [i["name"] for i in data["images"]])
+        (img,) = data["engine_images"]
+        self.assertEqual([p["name"] for p in img["pulled"]], ["ghcr.io/someone/strata:latest"])
+        self.assertEqual(img["pulled"][0]["last_pulled_at"], 5)
 
 
 class StrataPdfInputTests(unittest.TestCase):

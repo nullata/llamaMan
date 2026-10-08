@@ -165,30 +165,36 @@ if (strataVisionSelect) strataVisionSelect.addEventListener('change', () => {
   if (typeof updateMmprojState === 'function') updateMmprojState();
 });
 
-// The launch form's image dropdown for a non-llama.cpp engine: just that
-// engine's image (Strata's is built locally, never pulled).
+// The launch form's image dropdown for a non-llama.cpp engine: its images on
+// the target node (Strata: the default first, then the built and pulled ones).
 async function populateEngineImageSelect() {
   const sel = document.getElementById('f-image');
   if (!sel) return;
   const data = await fetchEnginesForNode(_launchNode());
   const info = _engineInfo(data, launchEngine);
+  const prev = sel.value;
   sel.innerHTML = '';
-  const name = (info && info.image) || '';
-  if (!name) return;
-  let present = null;
+  const def = (info && info.image) || '';
+  if (!def) return;
+  let rec = null;
   try {
     const res = await _nf(_launchNode(), '/api/images');
-    if (res && res.ok) {
-      const imgs = (await res.json()).engine_images || [];
-      const rec = imgs.find(i => i.name === name);
-      if (rec) present = !!rec.present;
-    }
+    if (res && res.ok) rec = ((await res.json()).engine_images || []).find(i => i.engine === launchEngine) || null;
   } catch (e) { /* ignore */ }
-  const opt = document.createElement('option');
-  opt.value = name;
-  opt.textContent = name + (present === false ? '  (not built)' : '');
-  sel.appendChild(opt);
-  sel.value = name;
+  const local = new Map();
+  if (rec) {
+    if (rec.present) local.set(rec.name, true);
+    (rec.pulled || []).forEach(p => local.set(p.name, !!p.present));
+  }
+  const names = [def, ...[...local.keys()].filter(n => n !== def && local.get(n))];
+  names.forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    const missing = rec && !local.get(name) && !(name === rec.name && rec.present);
+    opt.textContent = name + (name === def ? '  (default)' : '') + (missing ? '  (not on this node)' : '');
+    sel.appendChild(opt);
+  });
+  sel.value = names.includes(prev) ? prev : def;
 }
 
 function _parseMemoryLimitGb(text) {
