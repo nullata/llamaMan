@@ -253,7 +253,7 @@ class EnginesEndpointTests(unittest.TestCase):
         self.assertTrue(by["llamacpp"]["available"])
         self.assertTrue(by["strata"]["available"])
         self.assertEqual(by["strata"]["capabilities"]["max_concurrency"], 1)
-        self.assertEqual(len(by["strata"]["models"]), 8)
+        self.assertEqual(len(by["strata"]["models"]), 9)
         self.assertIn("docker build", by["strata"]["build_command"])
         self.assertNotIn("models", by["llamacpp"])
 

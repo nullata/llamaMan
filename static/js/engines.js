@@ -275,6 +275,10 @@ function applyStrataPresetToLaunchForm(p) {
   if (lr) lr.value = ['auto', 'on', 'off'].includes(p.strata_low_ram) ? p.strata_low_ram : 'auto';
   const ls = document.getElementById('f-strata-layer-split');
   if (ls) ls.value = p.strata_layer_split || '';
+  for (const [id, key] of [['f-strata-watchdog-s', 'strata_watchdog_s'], ['f-strata-watchdog-io-s', 'strata_watchdog_io_s']]) {
+    const el = document.getElementById(id);
+    if (el) el.value = p[key] ?? '';
+  }
   if (typeof updateMmprojState === 'function') updateMmprojState();
   if (launchEngine === 'strata') {
     const mc = document.getElementById('f-max-concurrent');
@@ -319,6 +323,8 @@ function readStrataLaunchForm() {
     strata_kv: val('f-strata-kv').value,
     strata_low_ram: val('f-strata-low-ram').value,
     strata_layer_split: val('f-strata-layer-split')?.value.trim() || '',
+    strata_watchdog_s: val('f-strata-watchdog-s')?.value.trim() || '',
+    strata_watchdog_io_s: val('f-strata-watchdog-io-s')?.value.trim() || '',
     pdf_input_enabled: val('f-pdf-input-enabled')?.checked || false,
     pdf_extract_text_first: val('f-pdf-extract-text-first')?.checked || false,
     pdf_dpi: parseInt(val('f-pdf-dpi')?.value, 10) || 200,

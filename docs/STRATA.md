@@ -33,7 +33,7 @@ core/engines/
   |---|---|
   | image | `STRATA_IMAGE` (else the built, then a pulled Strata image) |
   | command | none (the entrypoint reads env vars only) |
-  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `REINSTALL=1`? |
+  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`? |
   | ulimits | `memlock=-1` |
   | GPU | NVIDIA `device_requests` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
   | mounts | data volume → `/data`; logs; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>` (`<family>-<SIZE>` for non-qwen; setup.py's case-sensitive shard folder) (rw), when llamaMan holds complete shards |
@@ -124,7 +124,7 @@ free disk.
    add `--build-arg CUDA_ARCHITECTURES=<your arch>`. Or, after step 2, Settings → Docker Images → *Manage Strata
    images* → **Pull repo & build latest** It builds for this node's GPU generations only.
 2. **Enable:** set `STRATA_ENABLED=true` and restart llamaMan.
-   - `GET /api/engines` shows strata `available: true`, with 8 models.
+   - `GET /api/engines` shows strata `available: true`, with its models (9 in the built-in list).
    - Settings → Docker Images → *Manage Strata images* shows `strata:latest` as **local**.
 3. **Gating:** on a non-NVIDIA node (or with `GPU_TYPE=rocm`), Strata models aren't listed, and
    `POST /api/instances` for `/strata/qwen-IQ2_XS` returns 400 with the NVIDIA reason.

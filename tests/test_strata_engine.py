@@ -69,7 +69,7 @@ class CatalogueTests(unittest.TestCase):
             "strata/qwen-Q2_0", "strata/qwen-IQ2_XS", "strata/qwen-IQ3_XXS", "strata/qwen-IQ3_S",
             "strata/swift-IQ2_XS", "strata/swift-IQ3_XXS",
             "strata/coder-IQ1_M",
-            "strata/unsloth-UD-Q4_K_XL",
+            "strata/unsloth-UD-Q4_K_XL", "strata/unsloth-UD-IQ4_XS",
         })
 
     def test_served_name_matches_setup_py(self):
@@ -280,6 +280,16 @@ class ReinstallFingerprintTests(_TmpDirs):
         self.assertNotIn("REINSTALL", env)
         self.assertEqual(env["LAYER_SPLIT"], "20")
 
+    def test_watchdog_env_without_reinstall(self):
+        cfg = self._cfg()
+        STRATA.on_ready({"model_path": QWEN, "config": cfg})
+        env = STRATA.environment(QWEN, {**cfg, "strata_watchdog_s": "300", "strata_watchdog_io_s": "0"})
+        self.assertNotIn("REINSTALL", env)
+        self.assertEqual((env["STRATA_WATCHDOG_S"], env["STRATA_WATCHDOG_IO_S"]), ("300", "0"))
+        env = STRATA.environment(QWEN, {**cfg, "strata_watchdog_s": ""})
+        self.assertNotIn("STRATA_WATCHDOG_S", env)              # Strata's default
+        self.assertNotIn("STRATA_WATCHDOG_IO_S", env)
+
     def test_fingerprint_is_per_model_and_per_volume(self):
         STRATA.on_ready({"model_path": QWEN, "config": self._cfg()})
         self.assertEqual(STRATA.environment("/strata/qwen-Q2_0", self._cfg()).get("REINSTALL"), "1")
@@ -323,7 +333,17 @@ class ValidateLaunchTests(unittest.TestCase):
         self.assertIsNone(err)
         self.assertEqual(name, "strata")
         self.assertEqual(opts, {"strata_vision": "no", "strata_kv": "", "strata_low_ram": "auto",
-                                "strata_layer_split": ""})
+                                "strata_layer_split": "", "strata_watchdog_s": "",
+                                "strata_watchdog_io_s": ""})
+
+    def test_watchdog_validated(self):
+        for raw, want in (("", ""), (None, ""), ("300", "300"), (" 0 ", "0"), (120, "120"), ("007", "7")):
+            opts, err = STRATA.parse_options({"strata_watchdog_s": raw}, QWEN)
+            self.assertIsNone(err, raw)
+            self.assertEqual(opts["strata_watchdog_s"], want, raw)
+        for raw in ("x", "-1", "1.5"):
+            err = STRATA.parse_options({"strata_watchdog_io_s": raw}, QWEN)[1]
+            self.assertIn("strata_watchdog_io_s", err, raw)
 
     def test_layer_split_validated(self):
         for raw, want in (("", ""), ("auto", ""), ("AUTO", ""), ("18", "18"), (" 16, 32 ", "16,32")):
@@ -358,9 +378,10 @@ class ValidateLaunchTests(unittest.TestCase):
     def test_bad_options(self):
         for body in ({"strata_vision": "maybe"}, {"strata_kv": "q8"}, {"strata_low_ram": "x"}):
             self.assertIsNotNone(validate_launch({"ctx_size": 1, **body}, QWEN, "cuda")[2])
-        # The Unsloth file has no image encoder.
-        err = validate_launch({"ctx_size": 1, "strata_vision": "yes"},
-                              "/strata/unsloth-UD-Q4_K_XL", "cuda")[2]
+        # A model setup.py marks without images (per model, over its family's flag).
+        with patch.dict(S.SIZES["UD-Q4_K_XL"], {"vision": False}):
+            err = validate_launch({"ctx_size": 1, "strata_vision": "yes"},
+                                  "/strata/unsloth-UD-Q4_K_XL", "cuda")[2]
         self.assertIn("image encoder", err)
 
     def test_explicit_strata_accepts_its_downloaded_file(self):

@@ -84,19 +84,33 @@ FAMILIES = {
         "title": "Qwen3.8-Flash-Next (Unsloth)", "served": "qwen3.8-flash-next-unsloth",
         "repo": "unsloth/Qwen3.8-Flash-Next-GGUF", "subdir": True,
         "file": "Qwen3.8-Flash-Next-{q}-0000{i}-of-00004.gguf", "shards": 4,
-        "vision": False, "experimental": True,
+        "vision": False, "experimental": False,
     },
 }
 
-# setup.py MODELS: which families ship each size, and what it costs.
+# setup.py MODELS: which families ship each size, and what it costs. A size
+# may override its family's "vision", "experimental", "file" and "shards"
+# (setup.py keeps those per model for the Unsloth files): read them through
+# model_attr().
 SIZES = {
     "Q2_0": {"families": ("qwen",), "download_gb": 66.4, "ram_gb": 48},
     "IQ2_XS": {"families": ("qwen", "swift"), "download_gb": 68.0, "ram_gb": 48},
     "IQ3_XXS": {"families": ("qwen", "swift"), "download_gb": 75.8, "ram_gb": 60},
     "IQ3_S": {"families": ("qwen",), "download_gb": 83.6, "ram_gb": 62},
     "IQ1_M": {"families": ("coder",), "download_gb": 58.4, "ram_gb": 32},
-    "UD-Q4_K_XL": {"families": ("unsloth",), "download_gb": 111.3, "ram_gb": 48},
+    "UD-Q4_K_XL": {"families": ("unsloth",), "download_gb": 111.3, "ram_gb": 48,
+                   "vision": True, "experimental": True},
+    "UD-IQ4_XS": {"families": ("unsloth",), "download_gb": 93.7, "ram_gb": 48, "vision": True,
+                  "file": "Qwen3.8-Flash-Next-{q}-0000{i}-of-00003.gguf", "shards": 3},
 }
+
+_MODEL_OVERRIDES = ("vision", "experimental", "file", "shards")
+
+
+def model_attr(family: str, size: str, key: str):
+    """A size's own value for `key` (one of _MODEL_OVERRIDES), else its family's."""
+    v = SIZES.get(size, {}).get(key)
+    return FAMILIES[family][key] if v is None else v
 
 # docker-entrypoint.sh's own default, and setup.py's CONTEXTS menu.
 # ---------------------------------------------------------------------------
@@ -124,7 +138,9 @@ fam = {k: {"title": f.get("title"), "name": f.get("name"), "hf": f.get("hf"), "f
            "shards": f.get("shards", 2), "vision": f.get("vision", True),
            "experimental": f.get("experimental", False)} for k, f in s.FAMILIES.items()}
 mod = {k: {"download_gb": m.get("download_gb"), "ram_gb": m.get("ram_gb"),
-           "families": list(m.get("families", ("qwen", "swift")))} for k, m in s.MODELS.items()}
+           "families": list(m.get("families", ("qwen", "swift"))),
+           **{o: m[o] for o in ("vision", "experimental", "file", "shards") if o in m}}
+       for k, m in s.MODELS.items()}
 print(json.dumps({"families": fam, "models": mod, "revisions": s.HF_REVISIONS}))
 """
 
@@ -157,8 +173,20 @@ def catalogue_from_dump(dump: dict) -> tuple[dict, dict, dict]:
             unknown = [x for x in fams if x not in families]
             if not fams or unknown:
                 raise ValueError(f"size {key}: unknown families {unknown or fams}")
-            sizes[str(key)] = {"families": fams, "download_gb": float(m["download_gb"]),
-                               "ram_gb": int(m["ram_gb"])}
+            size = {"families": fams, "download_gb": float(m["download_gb"]),
+                    "ram_gb": int(m["ram_gb"])}
+            for o in ("vision", "experimental"):
+                if m.get(o) is not None:
+                    size[o] = bool(m[o])
+            if m.get("file") is not None:
+                if "{q}" not in str(m["file"]) or "{i}" not in str(m["file"]):
+                    raise ValueError(f"size {key}: unexpected file pattern {m['file']!r}")
+                size["file"] = str(m["file"])
+            if m.get("shards") is not None:
+                if int(m["shards"]) < 1:
+                    raise ValueError(f"size {key}: {m['shards']} shards")
+                size["shards"] = int(m["shards"])
+            sizes[str(key)] = size
     except (KeyError, TypeError, AttributeError) as e:
         raise ValueError(f"unexpected table shape ({type(e).__name__}: {e})") from e
     if not families or not sizes:
@@ -184,6 +212,15 @@ def _catalogue_cache_file() -> str:
 def catalogue_source() -> dict:
     """Where the current tables came from, for /api/engines."""
     return dict(_catalogue_state)
+
+
+# Bumped when _DUMP_SCRIPT prints more, so a cached dump of the same image is
+# read again (2: per-model vision / experimental / file / shards).
+_DUMP_VERSION = 2
+
+
+def _cache_key(image_id: str) -> str:
+    return f"{image_id}#v{_DUMP_VERSION}"
 
 
 def image_candidates() -> list[str]:
@@ -245,7 +282,7 @@ def refresh_catalogue_from_image() -> None:
     except (OSError, ValueError):
         cache = {}
     try:
-        dump = cache.get(image_id)
+        dump = cache.get(_cache_key(image_id))
         if dump is None:
             out = client.containers.run(
                 image_name, remove=True, network_disabled=True, stdout=True, stderr=False,
@@ -263,8 +300,8 @@ def refresh_catalogue_from_image() -> None:
         return
     _apply_catalogue(*tables)
     _catalogue_state.update(image=image_name, image_id=image_id, source="image", error=None)
-    if image_id not in cache:
-        cache = {image_id: dump}                     # only the current image's
+    if _cache_key(image_id) not in cache:
+        cache = {_cache_key(image_id): dump}         # only the current image's
         try:
             tmp = _catalogue_cache_file() + ".tmp"
             with open(tmp, "w") as f:
@@ -320,7 +357,7 @@ def model_for_file(path: str | None) -> tuple[str, str] | None:
     lowered = name.lower()
     family = next((f for f in families if f != "qwen" and f in lowered), None) \
         or ("qwen" if "qwen" in families else (families[0] if len(families) == 1 else None))
-    if not family or int(m.group("n")) != FAMILIES[family]["shards"]:
+    if not family or int(m.group("n")) != model_attr(family, size, "shards"):
         return None
     return family, size
 
@@ -406,8 +443,8 @@ def shards_dir_tag(family: str, size: str) -> str:
 
 
 def shard_files(family: str, size: str) -> list[str]:
-    fam = FAMILIES[family]
-    return [fam["file"].format(q=size, i=i) for i in range(1, fam["shards"] + 1)]
+    file = model_attr(family, size, "file")
+    return [file.format(q=size, i=i) for i in range(1, model_attr(family, size, "shards") + 1)]
 
 
 def repo_files(family: str, size: str) -> list[str]:
@@ -433,8 +470,8 @@ def catalogue() -> list[dict]:
                 "tag": setup_tag(family, size),
                 "download_gb": meta["download_gb"],
                 "ram_gb": meta["ram_gb"],
-                "vision": fam["vision"],
-                "experimental": fam["experimental"],
+                "vision": model_attr(family, size, "vision"),
+                "experimental": model_attr(family, size, "experimental"),
             })
     return out
 
@@ -570,7 +607,8 @@ class StrataEngine(Engine):
         "single_instance_per_model": True,
         "nvidia_only": True,
     }
-    option_keys = ("strata_vision", "strata_kv", "strata_low_ram", "strata_layer_split")
+    option_keys = ("strata_vision", "strata_kv", "strata_low_ram", "strata_layer_split",
+                   "strata_watchdog_s", "strata_watchdog_io_s")
     launch_fields = frozenset({
         "ctx_size", "memory_limit", "gpu_devices", "image",
         "idle_timeout_min", "max_concurrent", "max_queue_depth",
@@ -584,6 +622,7 @@ class StrataEngine(Engine):
         "loop_detect_scan_interval_s", "loop_detect_scan_every_n_tokens",
         "pdf_input_enabled", "pdf_extract_text_first", "pdf_dpi", "pdf_max_pages",
         "strata_vision", "strata_kv", "strata_low_ram", "strata_layer_split",
+        "strata_watchdog_s", "strata_watchdog_io_s",
     })
 
     # ------------------------------------------------------------- paths/ids
@@ -707,12 +746,12 @@ class StrataEngine(Engine):
         parsed = parse_model_path(model_path)
         if not parsed:
             return {}, f"'{model_path}' is not a Strata model (expected strata/<family>-<size>)"
-        family, _ = parsed
+        family, size = parsed
         vision = str(body.get("strata_vision") or "no").strip().lower()
         if vision not in VISION_CHOICES:
             return {}, f"strata_vision must be one of {', '.join(VISION_CHOICES)}"
-        if vision != "no" and not FAMILIES[family]["vision"]:
-            return {}, f"{FAMILIES[family]['title']} has no image encoder; strata_vision must be 'no'"
+        if vision != "no" and not model_attr(family, size, "vision"):
+            return {}, f"{FAMILIES[family]['title']} {size} has no image encoder; strata_vision must be 'no'"
         kv = str(body.get("strata_kv") or "").strip().lower()
         if kv not in KV_CHOICES:
             return {}, "strata_kv must be one of int8, q4_0, k8v4 (or empty for Strata's default)"
@@ -725,8 +764,14 @@ class StrataEngine(Engine):
         if split and not re.fullmatch(r"\d+(,\d+)*", split):
             return {}, ("strata_layer_split must be empty (auto) or the layer each later GPU "
                         "starts at, e.g. 18 or 16,32")
+        watchdog = {}
+        for key in ("strata_watchdog_s", "strata_watchdog_io_s"):
+            raw = str(body.get(key) if body.get(key) is not None else "").strip()
+            if raw and not raw.isdigit():
+                return {}, f"{key} must be empty (Strata's default) or whole seconds, 0 = off"
+            watchdog[key] = str(int(raw)) if raw else ""
         return {"strata_vision": vision, "strata_kv": kv, "strata_low_ram": low_ram,
-                "strata_layer_split": split}, None
+                "strata_layer_split": split, **watchdog}, None
 
     records_web_hosts = True
 
@@ -802,6 +847,14 @@ class StrataEngine(Engine):
         split = (config.get("strata_layer_split") or "").strip()
         if split and "GPUS" in s["gpus"]:
             env["LAYER_SPLIT"] = split
+        # The engine's hang watchdog (src/program/generate.cpp): seconds without
+        # progress during a request before it stops itself, and the allowance
+        # while it waits on slow storage / low RAM. Runtime only, like LAYER_SPLIT.
+        for key, var in (("strata_watchdog_s", "STRATA_WATCHDOG_S"),
+                         ("strata_watchdog_io_s", "STRATA_WATCHDOG_IO_S")):
+            v = str(config.get(key) if config.get(key) is not None else "").strip()
+            if v.isdigit():
+                env[var] = v
         if self.needs_reinstall(model_path, config):
             env["REINSTALL"] = "1"
         return env

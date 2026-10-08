@@ -31,7 +31,8 @@ def dump_of_builtin():
         hf = f"https://huggingface.co/{f['repo']}/resolve/{revisions[f['repo']]}/" + ("{q}/" if f["subdir"] else "")
         fam[key] = {"title": f["title"], "name": f["served"], "hf": hf, "file": f["file"],
                     "shards": f["shards"], "vision": f["vision"], "experimental": f["experimental"]}
-    mod = {k: {"download_gb": m["download_gb"], "ram_gb": m["ram_gb"], "families": list(m["families"])}
+    mod = {k: {"download_gb": m["download_gb"], "ram_gb": m["ram_gb"], "families": list(m["families"]),
+               **{o: m[o] for o in S._MODEL_OVERRIDES if o in m}}
            for k, m in sizes.items()}
     return {"families": fam, "models": mod, "revisions": revisions}
 
@@ -44,6 +45,23 @@ def dump_with_new_size():
 
 class ConversionTests(unittest.TestCase):
 
+    def test_per_model_overrides(self):
+        # setup.py keeps vision / experimental / file / shards per model for
+        # the Unsloth files: the family says no images, its sizes say yes.
+        self.assertFalse(S.FAMILIES["unsloth"]["vision"])
+        self.assertTrue(S.model_attr("unsloth", "UD-Q4_K_XL", "vision"))
+        self.assertTrue(S.model_attr("unsloth", "UD-Q4_K_XL", "experimental"))
+        self.assertFalse(S.model_attr("unsloth", "UD-IQ4_XS", "experimental"))
+        self.assertEqual(S.shard_files("unsloth", "UD-IQ4_XS"),
+                         [f"Qwen3.8-Flash-Next-UD-IQ4_XS-0000{i}-of-00003.gguf" for i in (1, 2, 3)])
+        self.assertEqual(len(S.shard_files("unsloth", "UD-Q4_K_XL")), 4)
+        self.assertEqual(S.model_for_file("/m/x/Qwen3.8-Flash-Next-UD-IQ4_XS-00002-of-00003.gguf"),
+                         ("unsloth", "UD-IQ4_XS"))
+        by_id = {m["id"]: m for m in S.catalogue()}
+        self.assertTrue(by_id["strata/unsloth-UD-Q4_K_XL"]["vision"])
+        opts, err = S.StrataEngine().parse_options({"strata_vision": "yes"}, "/strata/unsloth-UD-Q4_K_XL")
+        self.assertIsNone(err)
+
     def test_builtin_round_trips(self):
         self.assertEqual(S.catalogue_from_dump(dump_of_builtin()), S._BUILTIN_CATALOGUE)
 
@@ -54,6 +72,7 @@ class ConversionTests(unittest.TestCase):
             lambda d: d["models"]["Q2_0"].update(families=["nope"]),           # unknown family
             lambda d: d["models"]["Q2_0"].pop("ram_gb"),                       # missing field
             lambda d: d.update(models={}),                                     # empty
+            lambda d: d["models"]["UD-IQ4_XS"].update(file="x.gguf"),          # bad per-model pattern
             lambda d: d.pop("families"),
         ):
             d = dump_of_builtin()
@@ -129,6 +148,13 @@ class RefreshTests(unittest.TestCase):
         # A restart (state reset) reads the per-image cache, not the image.
         S._apply_catalogue(*copy.deepcopy(S._BUILTIN_CATALOGUE))
         S._catalogue_state.update(image=None, image_id=None, source="built-in", error=None)
+        S.refresh_catalogue_from_image()
+        self.assertEqual(self.client.containers.run.call_count, 1)
+        self.assertIn("IQ4_XS", S.SIZES)
+
+    def test_cache_from_an_older_dump_script_is_read_again(self):
+        with open(S._catalogue_cache_file(), "w") as f:
+            json.dump({"sha256:aaa": dump_of_builtin()}, f)   # unversioned key: the old script's
         S.refresh_catalogue_from_image()
         self.assertEqual(self.client.containers.run.call_count, 1)
         self.assertIn("IQ4_XS", S.SIZES)
