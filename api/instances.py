@@ -442,9 +442,24 @@ def _run_container(
     except docker.errors.ImageNotFound:
         return None, engine.image_missing_message(image_name)
     except docker.errors.APIError as e:
+        _remove_unstarted_container(container_name)
         return None, f"Docker API error: {e}"
     except Exception as e:
+        _remove_unstarted_container(container_name)
         return None, str(e)
+
+
+def _remove_unstarted_container(container_name: str) -> None:
+    """containers.run creates the container, then starts it: when the start
+    fails (a mount error, a full disk) the created container stays behind,
+    holds its image (it can't be deleted) and nothing else removes it."""
+    import docker
+    try:
+        get_docker_client().containers.get(container_name).remove(force=True)
+    except docker.errors.NotFound:
+        pass
+    except Exception as e:
+        logger.warning("Could not remove the unstarted container %s: %s", container_name, e)
 
 
 # ---------------------------------------------------------------------------
