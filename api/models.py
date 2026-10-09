@@ -71,10 +71,28 @@ def discover_models(models_dir: str) -> list[dict]:
     seen = set()
     unique = []
     for m in found:
+        # Skip a move in progress (core/archive.py copies into a partial
+        # folder before renaming it into place).
+        if "/.llamaman-partial-" in m["path"]:
+            continue
         if m["path"] not in seen:
             seen.add(m["path"])
             unique.append(m)
+    # Which other engines can run each file (e.g. a downloaded Strata shard).
+    from core.engines import file_engine_models
+    for m in unique:
+        engines = file_engine_models(m["path"])
+        if engines:
+            m["engine_models"] = engines
     return unique
+
+
+def list_models(models_dir: str) -> list[dict]:
+    """The model library: the model files on disk. An engine's recommended
+    models (Strata's catalogue) are not listed until downloaded; a
+    downloaded one is an ordinary file whose entry names the engines that
+    can run it (engine_models)."""
+    return discover_models(models_dir)
 
 
 def attach_model_sources(models: list[dict], sources: dict[str, str]) -> list[dict]:
@@ -258,7 +276,10 @@ def estimate_model_vram(size_bytes: int, n_gpu_layers: int, block_count: int | N
 
 @bp.route("/api/models")
 def api_models():
-    models = discover_models(MODELS_DIR)
+    # The UI library also lists archived models (flagged; never launchable
+    # and never in the Ollama/OpenAI listings, which use list_models).
+    from api.archive import archived_models
+    models = list_models(MODELS_DIR) + archived_models()
     models = attach_model_sources(models, get_model_sources(get_storage().get_settings()))
     return jsonify(models)
 
@@ -424,6 +445,11 @@ def api_models_delete():
 
     if not os.path.exists(resolved):
         return jsonify({"error": "path does not exist"}), 404
+
+    from core.archive import busy_reason
+    moving = busy_reason(resolved)
+    if moving:
+        return jsonify({"error": moving}), 409
 
     with instances_lock:
         for inst in instances.values():

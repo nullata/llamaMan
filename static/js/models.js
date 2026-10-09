@@ -272,7 +272,8 @@ function _modelSets() {
     ? allModels
     : ((targetNode && targetNode.snapshot && targetNode.snapshot.models) || []);
 
-  const presentKeys = new Set(present.map(m => m.name.toLowerCase()));
+  // An archived model isn't launchable here, so it doesn't hide a peer's copy.
+  const presentKeys = new Set(present.filter(m => !m.archived).map(m => m.name.toLowerCase()));
   const ghostMap = {};
   (cs.nodes || []).forEach(n => {
     if (n.node_id === target) return;
@@ -300,6 +301,9 @@ function renderModels() {
   const ghostFiltered = ghost.filter(matches);
 
   filtered.sort((a, b) => {
+    // Archived models sink to the bottom; favorites lead the rest.
+    const archDiff = (a.archived ? 1 : 0) - (b.archived ? 1 : 0);
+    if (archDiff !== 0) return archDiff;
     const favDiff = (isModelFavorited(a.path) ? 0 : 1) - (isModelFavorited(b.path) ? 0 : 1);
     if (favDiff !== 0) return favDiff;
     return a.name.localeCompare(b.name);
@@ -323,6 +327,20 @@ function renderModels() {
     // too; the filename stays visible on the path line below.
     const pretty = getModelPrettyName(m.path);
     const displayName = pretty || m.name;
+    // A file another engine can run (a downloaded Strata model).
+    const isVirtual = false;
+    const virtualBadges = (m.engine_models && m.engine_models.strata)
+      ? '<span class="badge badge-engine" title="A Strata model: pick Strata as the Inference Engine to run it">Strata</span>'
+      : '';
+    const deleteBtn = m.archived
+      ? ''
+      : '<button class="btn-delete-model" title="Delete model from disk"><i class="fa-solid fa-trash"></i></button>';
+    // Archive / Restore (static/js/archive.js): only when ARCHIVE_DIR is set.
+    const archiveBtn = (typeof archiveButtonHtml === 'function') ? archiveButtonHtml(m) : '';
+    const archivedBadge = m.archived
+      ? '<span class="badge badge-archived" title="On the archive volume - restore it to launch"><i class="fa-solid fa-box-archive"></i> archived</span>'
+      : '';
+    if (m.archived) el.classList.add('model-item-archived');
     el.innerHTML = `
       <div class="model-item-row">
         <button class="${starClass}" title="Toggle favorite"><i class="${starIcon}"></i></button>
@@ -332,11 +350,14 @@ function renderModels() {
             <span class="badge">${m.type.toUpperCase()}</span>
             ${quantBadge}
             <span class="badge badge-size">${escHtml(m.size_display)}</span>
+            ${virtualBadges}
+            ${archivedBadge}
           </div>
           <span class="path">${escHtml(m.path)}</span>
         </div>
       </div>
-      <button class="btn-delete-model" title="Delete model from disk"><i class="fa-solid fa-trash"></i></button>
+      ${archiveBtn}
+      ${deleteBtn}
     `;
     el.querySelector('.btn-star').addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -344,11 +365,25 @@ function renderModels() {
       renderModels();
       updateLaunchFormStar();
     });
-    el.querySelector('.btn-delete-model').addEventListener('click', (e) => {
+    el.querySelector('.btn-delete-model')?.addEventListener('click', (e) => {
       e.stopPropagation();
       deleteModel(m);
     });
-    el.addEventListener('click', () => selectModel(m, el));
+    el.querySelector('.btn-archive-model')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      archiveModel(m);
+    });
+    el.querySelector('.btn-restore-model')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      restoreModel(m);
+    });
+    el.addEventListener('click', () => {
+      if (m.archived) {
+        toast('This model is archived - restore it to launch', 'info');
+        return;
+      }
+      selectModel(m, el);
+    });
     list.appendChild(el);
   });
 
@@ -482,6 +517,9 @@ function applyPresetToLaunchForm(p) {
   if (typeof updateShareQueueClusterRow === 'function') updateShareQueueClusterRow();
   document.getElementById('f-auto-restart').checked = !!p.auto_restart_on_crash;
   document.getElementById('f-embedding-model').checked = !!p.embedding_model;
+  // Default on: presets saved before the toggle existed keep the web UI.
+  const webuiEl = document.getElementById('f-webui-enabled');
+  if (webuiEl) webuiEl.checked = p.webui_enabled !== false;
   document.getElementById('f-proxy-sampling-override-enabled').checked = !!p.proxy_sampling_override_enabled;
   document.getElementById('f-proxy-sampling-temperature').value = p.proxy_sampling_temperature ?? 0.8;
   document.getElementById('f-proxy-sampling-top-k').value = p.proxy_sampling_top_k ?? 40;
@@ -553,6 +591,10 @@ function applyPresetToLaunchForm(p) {
   document.getElementById('f-note').value = p.note || '';
   // Per-node hardware (base, overlaid with the selected node's override)
   applyPresetHardwareForNode(p, _launchNode());
+  // Strata's fields first: updateMmprojState reads Image Input
+  // (f-strata-vision) and clears the PDF toggles when it is off, so it must
+  // see the preset's value, not the form's default.
+  if (typeof applyStrataPresetToLaunchForm === 'function') applyStrataPresetToLaunchForm(p);
   if (typeof updateProxySamplingOverrideState === 'function') updateProxySamplingOverrideState();
   if (typeof updateSpecState === 'function') updateSpecState();
   if (typeof updateMmprojState === 'function') updateMmprojState();
@@ -574,6 +616,12 @@ async function selectModel(model, el) {
   if (typeof setActiveTab === 'function') setActiveTab('settings', 'launch');
   updatePortSuggestion();
   if (ctxField) ctxField.value = '';
+  // llama.cpp until the model's preset says otherwise; the Inference Engine
+  // dropdown offers the engines this file can run on.
+  if (typeof applyEngineToLaunchForm === 'function') {
+    applyEngineToLaunchForm('llamacpp', model);
+    if (typeof applyStrataPresetToLaunchForm === 'function') applyStrataPresetToLaunchForm({});
+  }
   // Load preset if one exists
   _loadedPreset = null;
   _loadedPresetPath = null;
@@ -583,10 +631,16 @@ async function selectModel(model, el) {
       const p = await res.json();
       _loadedPreset = p;
       _loadedPresetPath = model.path;
+      // The preset remembers the engine: show its fields before filling them.
+      const presetEngine = p.engine || 'llamacpp';
+      if (typeof applyEngineToLaunchForm === 'function' && presetEngine !== currentLaunchEngine()) {
+        applyEngineToLaunchForm(presetEngine, model);
+      }
       applyPresetToLaunchForm(p);
       toast('Preset loaded', 'info');
     }
   } catch (e) { /* no preset, use defaults */ }
+  if (typeof refreshStrataSection === 'function') refreshStrataSection();
   if (typeof updateQuickLaunchVisibility === 'function') updateQuickLaunchVisibility();
   // Detect layer count for model
   await updateGpuLayersTotal(model.path);
@@ -598,7 +652,7 @@ function populateSpecDraftModelOptions() {
   if (!dl) return;
   const { present } = _modelSets();
   dl.innerHTML = '';
-  present.filter(m => m.type === 'gguf').forEach(m => {
+  present.filter(m => m.type === 'gguf' && !m.archived).forEach(m => {
     const opt = document.createElement('option');
     opt.value = m.path;
     opt.textContent = m.name;
@@ -613,7 +667,7 @@ function populateMmprojModelOptions() {
   if (!dl) return;
   const { present } = _modelSets();
   dl.innerHTML = '';
-  present.filter(m => m.type === 'gguf').forEach(m => {
+  present.filter(m => m.type === 'gguf' && !m.archived).forEach(m => {
     const opt = document.createElement('option');
     opt.value = m.path;
     opt.textContent = m.name;
@@ -626,6 +680,10 @@ function populateMmprojModelOptions() {
 async function populateLaunchImageSelect() {
   const sel = document.getElementById('f-image');
   if (!sel) return;
+  if (typeof currentLaunchEngine === 'function' && currentLaunchEngine() !== 'llamacpp') {
+    await populateEngineImageSelect();
+    return;
+  }
   const want = sel.value;  // preserve an explicit pick across refreshes
   try {
     const res = await _nf(_launchNode(), '/api/images');
@@ -697,6 +755,7 @@ function resetLaunchForm() {
   _loadedPreset = null;
   _loadedPresetPath = null;
   currentModelMeta = null;
+  if (typeof applyEngineToLaunchForm === 'function') applyEngineToLaunchForm('llamacpp', null);
   // form.reset() doesn't fire change events, so the share-queue cluster row
   // (which hides + clears its inputs on toggle-off) needs a manual nudge.
   if (typeof updateShareQueueClusterRow === 'function') updateShareQueueClusterRow();

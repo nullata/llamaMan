@@ -24,6 +24,8 @@ NODE_SCOPED_KEYS = (
     # Whether this host keeps a local mirror of the database. Per-node because
     # having usable local disk is a property of the host, not of the cluster.
     "db_mirror_enabled",
+    # Download bandwidth is a property of the host's link, not the cluster.
+    "global_speed_limit_mbps",
 )
 
 

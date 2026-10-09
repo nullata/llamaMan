@@ -19,7 +19,7 @@ from flask import Blueprint, Response, jsonify, request
 from config import REQUEST_TIMEOUT, logger
 from core import cluster as cl
 from core.perf import phase
-from core.helpers import model_name_from_path
+from core.helpers import iter_response_chunks, model_name_from_path
 from core.proxy_sampling import PROXY_SAMPLING_OVERRIDE_KEYS
 from core.spec_decoding import SPEC_CONFIG_KEYS
 from core.timeutil import now_iso, now_utc, parse_iso
@@ -109,6 +109,16 @@ def build_local_snapshot() -> dict:
         }
     except Exception:
         kb_info = {"enabled": False, "mcp": False}
+
+    # Engine availability, so a peer's UI only offers e.g. Strata on nodes
+    # with an NVIDIA GPU and STRATA_ENABLED. Published under "system" (it is
+    # a node capability, like the GPU list) rather than as a new top-level
+    # key; consumers treat unknown keys as opaque, so older peers ignore it.
+    try:
+        from api.engines import engines_snapshot
+        system = {**system, "engines": engines_snapshot()}
+    except Exception:
+        pass
 
     return {
         "system": system,
@@ -650,7 +660,7 @@ def _forward_inference(node: dict, path: str, body: bytes, content_type: str | N
 
     def relay():
         try:
-            for chunk in resp.iter_content(chunk_size=None):
+            for chunk in iter_response_chunks(resp):
                 yield chunk
         except Exception as e:
             # Log the abort so the next time a client hangs we can see where
@@ -723,6 +733,10 @@ def dispatch_inference(model_name: str):
     # worse, substring-match the wrong one. Non-alias names pass through as-is.
     from core.model_alias import canonical_name
     model_name = canonical_name(model_name)
+    # Likewise an engine's own served name for a virtual model (Strata's
+    # "qwen3.8-flash-next-iq3_s") -> the model id its group is keyed by.
+    from core.engines import virtual_model_key
+    model_name = virtual_model_key(model_name) or model_name
 
     candidates = _group_candidates(model_name)
     if not candidates or not any(not c["is_self"] for c in candidates):

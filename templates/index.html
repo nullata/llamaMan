@@ -133,6 +133,22 @@
                   </div>
                   <div class="form-group">
                     <span class="label-row">
+                      <label for="f-engine">Inference Engine</label>
+                      <span class="info-tip" tabindex="0" role="button" aria-label="Inference Engine help" data-tip="What runs the selected model. llama.cpp runs any GGUF. Strata runs only its recommended models (download them from the Strata settings) and needs an NVIDIA GPU with STRATA_ENABLED on the target node. The choice is saved in the model&#39;s preset."><i class="fa-solid fa-circle-info"></i></span>
+                    </span>
+                    <div class="engine-select-row">
+                      <select id="f-engine">
+                        <option value="llamacpp" selected>llama.cpp</option>
+                        <option value="strata">Strata</option>
+                      </select>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-strata-models-open" hidden
+                        title="The models Strata can run, ready to download">
+                        <i class="fa-solid fa-list"></i> Models
+                      </button>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <span class="label-row">
                       <label for="f-image">Docker Image</label>
                       <span class="info-tip" tabindex="0" role="button" aria-label="Docker Image help" data-tip="Which llama.cpp image runs this instance. Defaults to the target node's configured image; pick another local image to run a different CUDA/ROCm/CPU build. Manage images in the Docker Images tab."><i class="fa-solid fa-circle-info"></i></span>
                     </span>
@@ -161,6 +177,12 @@
                     <h3>Model Settings</h3>
                     <span id="model-settings-hint" class="text-meta"></span>
                   </div>
+                  <!-- Strata (core/engines/strata.py): the model, its download and
+                       warnings; its options sit beside their llama.cpp counterparts. -->
+                  <div class="strata-model-info" data-engine-only="strata" hidden>
+                    <span id="strata-model-summary" class="text-meta"></span>
+                    <datalist id="strata-context-options"></datalist>
+                  </div>
                   <div class="launch-section-grid">
                     <div class="form-group">
                       <span class="label-row">
@@ -169,14 +191,14 @@
                       </span>
                       <input id="f-ctx-size" type="number" min="1" required />
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" data-engine-only="llamacpp">
                       <span class="label-row">
                         <label for="f-parallel">Parallel Slots (optional)</label>
                         <span class="info-tip" tabindex="0" role="button" aria-label="Parallel Slots help" data-tip="Number of concurrent decoding slots llama-server allocates (-np). Each slot can serve one request at a time."><i class="fa-solid fa-circle-info"></i></span>
                       </span>
                       <input id="f-parallel" type="number" placeholder="(default 1)" min="1" />
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" data-engine-only="llamacpp">
                       <span class="label-row">
                         <label for="f-cache-type-k">K Cache Type</label>
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="K Cache Type help" data-tip="Maps to llama-server --cache-type-k. Precision for the K (keys) side of the KV cache. Default f16. Quantized types (q8_0, q4_0, ...) reduce the K portion of KV memory at a small quality cost - q8_0 is near-lossless on most models, q4_0 more aggressive. Works with or without Flash Attention. Total KV cache memory scales with ctx_size and parallel slots, so cutting it here matters more at long contexts."><i class="fa-solid fa-circle-info"></i></span>
@@ -193,7 +215,7 @@
                         <option value="q4_0">q4_0</option>
                       </select>
                     </div>
-                    <div class="form-group" id="f-cache-type-v-group">
+                    <div class="form-group" id="f-cache-type-v-group" data-engine-only="llamacpp">
                       <span class="label-row">
                         <label for="f-cache-type-v">V Cache Type</label>
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="V Cache Type help" data-tip="Maps to llama-server --cache-type-v. Precision for the V (values) side of the KV cache. Default f16. Same values as K Cache Type. Any quantized value (q8_0, q4_0, ...) REQUIRES Flash Attention to be on - llama-server refuses to start otherwise with 'quantized V cache was requested, but this requires Flash Attention'. V is typically less sensitive to quantization than K."><i class="fa-solid fa-circle-info"></i></span>
@@ -210,7 +232,7 @@
                         <option value="q4_0">q4_0</option>
                       </select>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" data-engine-only="llamacpp">
                       <span class="label-row">
                         <label for="f-flash-attn">Flash Attention</label>
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Flash Attention help" data-tip="Maps to llama-server --flash-attn (on|off|auto, default auto). Enables the fused Flash Attention kernel: faster prompt processing and lower activation memory during inference. Auto lets llama.cpp decide per backend/GPU; On forces it (fails to start if the backend can't do it); Off disables it entirely. A quantized V Cache Type REQUIRES On - llama-server throws 'quantized V cache was requested, but this requires Flash Attention' with Off, and Auto is not a guarantee."><i class="fa-solid fa-circle-info"></i></span>
@@ -221,7 +243,7 @@
                         <option value="off">Off</option>
                       </select>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" data-engine-only="llamacpp">
                       <span class="label-row">
                         <label for="f-reasoning-format">Reasoning Format</label>
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Reasoning Format help" data-tip="Maps to llama-server --reasoning-format (none|auto|deepseek|deepseek-legacy, default auto). Controls how thought/thinking tags are parsed out of model output. Auto lets llama.cpp pick per model (detects DeepSeek-R1, Qwen-thinking, etc. and routes their thoughts to a separate reasoning_content field). None leaves any thought tags inline in the response content untouched. Deepseek forces DeepSeek-R1 style extraction into reasoning_content. Deepseek-legacy keeps &lt;think&gt; tags in the response content while also populating reasoning_content - useful for clients that only render content. Only matters for models that emit reasoning tokens; ignored otherwise."><i class="fa-solid fa-circle-info"></i></span>
@@ -233,7 +255,7 @@
                         <option value="deepseek-legacy">DeepSeek Legacy</option>
                       </select>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" data-engine-only="llamacpp">
                       <span class="label-row">
                         <label for="f-load-mode">Load Mode</label>
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Load Mode help" data-tip="Maps to llama-server --load-mode (auto|none|mmap|mlock|mmap+mlock|dio, default auto). Controls how model weights are brought into memory. Successor to the now-deprecated --mlock / --mmap / --no-mmap / --direct-io flags. Auto uses mmap unless a device doesn't support it (llama.cpp's default; flag omitted). None loads normally without memory tricks. Mmap memory-maps the file (faster startup; may page out if not mlocked). Mlock forces the OS to keep weights in RAM (no swapping/compression) at the cost of pinning physical memory. Mmap+mlock combines both. Dio uses Direct I/O when available, bypassing the OS page cache. Takes effect on relaunch."><i class="fa-solid fa-circle-info"></i></span>
@@ -246,6 +268,43 @@
                         <option value="mmap+mlock">Mmap + Mlock</option>
                         <option value="dio">Dio (Direct I/O)</option>
                       </select>
+                    </div>
+                    <div class="form-group" data-engine-only="strata" hidden>
+                      <span class="label-row">
+                        <label for="f-strata-kv">KV Cache</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="KV Cache help" data-tip="Strata KV. Precision of the KV cache. Default = Strata&#39;s own choice (int8). k8v4 = INT8 K with 4-bit V; keeps its KV in VRAM from 64K context up. Recorded in the model&#39;s setup like Image Input."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <select id="f-strata-kv">
+                        <option value="" selected>Default (int8)</option>
+                        <option value="int8">int8</option>
+                        <option value="q4_0">q4_0</option>
+                        <option value="k8v4">k8v4</option>
+                      </select>
+                    </div>
+                    <div class="form-group" data-engine-only="strata" hidden>
+                      <span class="label-row">
+                        <label for="f-strata-low-ram">Low-RAM Mode</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Low-RAM Mode help" data-tip="Strata LOW_RAM. Auto = Strata decides from the host&#39;s RAM. On = the experts are mapped from the prepared pack instead of held in RAM (slower, far less RAM). Off = held in RAM (32-62 GB). Forced On when System Memory Limit is set: Strata&#39;s setup reads the host&#39;s RAM and cannot see a container limit."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <select id="f-strata-low-ram">
+                        <option value="auto" selected>Auto</option>
+                        <option value="on">On</option>
+                        <option value="off">Off</option>
+                      </select>
+                    </div>
+                    <div class="form-group" data-engine-only="strata" hidden>
+                      <span class="label-row">
+                        <label for="f-strata-watchdog-s">Hang Watchdog (s)</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Hang Watchdog help" data-tip="Strata STRATA_WATCHDOG_S. Seconds without progress during a request before Strata stops its engine (the next request starts it again). Empty = Strata&#39;s default (60). 0 = off. Applied at every start."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-strata-watchdog-s" type="number" min="0" step="1" placeholder="60" />
+                    </div>
+                    <div class="form-group" data-engine-only="strata" hidden>
+                      <span class="label-row">
+                        <label for="f-strata-watchdog-io-s">Slow-Storage Allowance (s)</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Slow-Storage Allowance help" data-tip="Strata STRATA_WATCHDOG_IO_S. How long in all a stalled step may take while the engine is waiting on slow storage or low RAM (e.g. a model read from an HDD or a network share). Empty = 10 x the Hang Watchdog. 0 = no allowance. Needs a recent Strata image (#1407)."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-strata-watchdog-io-s" type="number" min="0" step="1" placeholder="10 x watchdog" />
                     </div>
                   </div>
                 </div>
@@ -261,14 +320,14 @@
                       </span>
                       <input id="f-port" type="number" value="8000" min="1024" max="65535" required />
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" data-engine-only="llamacpp">
                       <span class="label-row">
                         <label for="f-threads">CPU Threads (optional)</label>
                         <span class="info-tip" tabindex="0" role="button" aria-label="CPU Threads help" data-tip="Maps to llama-server --threads. Number of CPU threads used during generation. Leave blank to let llama-server auto-detect based on the host."><i class="fa-solid fa-circle-info"></i></span>
                       </span>
                       <input id="f-threads" type="number" placeholder="(auto)" min="1" />
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" data-engine-only="llamacpp">
                       <span class="label-row">
                         <label for="f-threads-batch">CPU Threads Batch (optional)</label>
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="CPU Threads Batch help" data-tip="Maps to llama-server --threads-batch. Number of CPU threads used during batch and prompt processing (the prefill / evaluation phase), separate from the generation threads set by CPU Threads. Leave blank and llama-server falls back to the CPU Threads value. Useful on CPUs with a big/little split (e.g. Intel P+E cores) where prefill can benefit from more threads than steady-state generation, or when you want prefill to use every core but keep generation on the performance cores only."><i class="fa-solid fa-circle-info"></i></span>
@@ -281,6 +340,7 @@
                         <span class="info-tip" tabindex="0" role="button" aria-label="System Memory Limit help" data-tip="Hard cap on container RAM (e.g. 32g, 8192m). Blank = no limit. Exceeding this triggers an OOM kill of the instance."><i class="fa-solid fa-circle-info"></i></span>
                       </span>
                       <input id="f-memory-limit" type="text" placeholder="(auto)  e.g. 32g  8192m" />
+                      <ul id="strata-memory-warning" class="strata-warnings" data-engine-only="strata" hidden></ul>
                     </div>
                     <div class="form-group">
                       <span class="label-row">
@@ -288,6 +348,7 @@
                         <span class="info-tip" tabindex="0" role="button" aria-label="Idle Timeout help" data-tip="Stop the instance after this many minutes with no requests. 0 keeps it running indefinitely. Live-updated from preset on save - no relaunch needed."><i class="fa-solid fa-circle-info"></i></span>
                       </span>
                       <input id="f-idle-timeout" type="number" value="0" min="0" placeholder="0" />
+                      <ul id="strata-idle-warning" class="strata-warnings" data-engine-only="strata" hidden></ul>
                     </div>
                     <div class="form-group">
                       <span class="label-row">
@@ -311,7 +372,7 @@
                     <span id="gpu-settings-hint" class="text-meta"></span>
                   </div>
                   <div class="launch-section-grid">
-                    <div class="form-group">
+                    <div class="form-group" data-engine-only="llamacpp">
                       <span class="label-row">
                         <label for="f-gpu-layers">GPU Layers (-1 auto, -2 all, 0 CPU only)</label>
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="GPU Layers help" data-tip="Maps to llama-server --n-gpu-layers / --gpu-layers / -ngl (all three are aliases for the same flag). Sets how many transformer layers to offload onto GPU(s). -1 = 'auto' (llama.cpp's default: it estimates VRAM and picks a layer count that fits, which can be less than every layer). -2 = 'all' (force every layer onto GPU; fails if it doesn't fit). 0 disables GPU entirely and runs the whole model on CPU. Any positive value offloads exactly that many layers from the bottom of the stack and leaves the rest on CPU RAM - useful when the model is larger than your VRAM or when auto's estimate is off. This is orthogonal to Split Mode: this flag decides GPU-vs-CPU, split mode decides how the GPU-resident portion is distributed across the visible GPUs."><i class="fa-solid fa-circle-info"></i></span>
@@ -322,7 +383,7 @@
                       </div>
                       <div id="gpu-layers-suggestion" class="text-meta gpu-layers-suggestion"></div>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" data-engine-only="llamacpp">
                       <span class="label-row">
                         <label for="f-n-cpu-moe">MoE CPU Layers (0 off, -1 all, first N)</label>
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="MoE CPU Layers help" data-tip="Only meaningful on Mixture-of-Experts models (Mixtral, Qwen-MoE, DeepSeek-MoE, Llama-4, gpt-oss, Kimi-K2, etc.). Keeps the routed-expert FFN weights on CPU while attention, embeddings, output projection and the KV cache stay wherever GPU Layers put them — shrinks VRAM dramatically because experts dominate the weight count but only a few fire per token. Sentinel: 0 = don't emit anything (default, no MoE flag); -1 = --cpu-moe (ALL layers' experts on CPU); positive N = --n-cpu-moe N (experts of the first N layers on CPU, the rest on GPU — the tuning knob for partial offload). Matches llama.cpp's LLM_FFN_EXPS_REGEX so it targets tensors named .ffn_(up|down|gate|gate_up)_(ch|)exps only; shared experts named _shexp are NOT covered — add an -ot override in Extra Args for those. On a dense (non-MoE) model this field is inert: the regex matches nothing, llama.cpp silently ignores the override."><i class="fa-solid fa-circle-info"></i></span>
@@ -336,7 +397,7 @@
                       </span>
                       <input id="f-gpu-devices" type="text" placeholder="(all)  e.g. 0  or 0,1" />
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" data-engine-only="llamacpp">
                       <span class="label-row">
                         <label for="f-split-mode">Split Mode</label>
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Split Mode help" data-tip="Maps 1:1 to llama-server --split-mode and controls how weights are placed across the GPUs visible inside the container. None (--split-mode none) uses a single GPU only (the first visible one); Tensor Split is ignored; other visible GPUs sit idle from llama.cpp's perspective. Layer (--split-mode layer) splits whole transformer layers across the visible GPUs; low interconnect traffic; this is llama.cpp's default when no flag is passed. Row (--split-mode row) splits tensor rows across the visible GPUs; more even VRAM usage but activations cross the interconnect on every matmul, so it is usually slower than Layer on plain PCIe and only beats it with fast interconnect like NVLink. Only distinguishes anything when 2+ GPUs are visible."><i class="fa-solid fa-circle-info"></i></span>
@@ -347,7 +408,14 @@
                         <option value="row">Row</option>
                       </select>
                     </div>
-                    <div class="form-group" id="f-tensor-split-group">
+                    <div class="form-group" id="f-strata-layer-split-group" data-engine-only="strata" hidden>
+                      <span class="label-row">
+                        <label for="f-strata-layer-split">Layer Split (optional)</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Layer Split help" data-tip="Strata LAYER_SPLIT, with 2+ GPUs: the layer each later GPU starts at, e.g. 18 (two GPUs) or 16,32 (three). Empty = auto, placed from each GPU&#39;s free VRAM. Applied at every start - no setup pass."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-strata-layer-split" type="text" placeholder="(auto)  e.g. 18  or 16,32" />
+                    </div>
+                    <div class="form-group" id="f-tensor-split-group" data-engine-only="llamacpp">
                       <span class="label-row">
                         <label for="f-tensor-split">Tensor Split</label>
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Tensor Split help" data-tip="Maps to llama-server --tensor-split. Comma-separated relative weights, one per container-visible GPU (e.g. '24,16' for a 24 GB + 16 GB pair). llama.cpp normalizes the vector, so '24,16', '3,2' and '0.6,0.4' are equivalent. The number of values MUST match the container-visible GPU count (see GPU Devices - inside the container GPUs are renumbered from 0). Leave blank to auto-fill at launch from each visible GPU's total VRAM (uses total, not free, so the value is stable across relaunches); the resolved value is previewed below the field. Ignored entirely when Split Mode is None (single GPU) or when only one GPU is visible."><i class="fa-solid fa-circle-info"></i></span>
@@ -423,18 +491,18 @@
                 <div class="form-group full launch-settings-section">
                   <div class="launch-settings-section-header">
                     <h3>Anti-Loop</h3>
-                    <span class="text-meta">Two-tier defense against output loops</span>
+                    <span class="text-meta" data-engine-only="llamacpp">Two-tier defense against output loops</span>
                   </div>
-                  <p class="hint-text">Two independent controls. <strong>DRY sampler</strong> is a soft, sampling-time deterrent baked into llama-server &mdash; it discourages token sequences that would extend a recent n-gram. <strong>Output Loop Detection</strong> is a hard, post-hoc kill: llamaman's proxy watches the model's output text and, if it sees the same large chunk repeat, ends the turn and tells the client. DRY prevents most loops from forming; Loop Detection is the safety net when DRY isn't enough.</p>
+                  <p class="hint-text" data-engine-only="llamacpp">Two independent controls. <strong>DRY sampler</strong> is a soft, sampling-time deterrent baked into llama-server &mdash; it discourages token sequences that would extend a recent n-gram. <strong>Output Loop Detection</strong> is a hard, post-hoc kill: llamaman's proxy watches the model's output text and, if it sees the same large chunk repeat, ends the turn and tells the client. DRY prevents most loops from forming; Loop Detection is the safety net when DRY isn't enough.</p>
 
-                  <div class="launch-settings-section-header anti-loop-subheader">
+                  <div class="launch-settings-section-header anti-loop-subheader" data-engine-only="llamacpp">
                     <h4>DRY sampler</h4>
                     <label class="toggle-switch" for="f-dry-enabled" aria-label="Enable DRY sampler">
                       <input id="f-dry-enabled" type="checkbox" />
                       <span class="toggle-slider"></span>
                     </label>
                   </div>
-                  <div class="launch-settings-reveal" id="dry-sampler-reveal">
+                  <div class="launch-settings-reveal" id="dry-sampler-reveal" data-engine-only="llamacpp">
                     <div class="launch-settings-reveal-inner">
                       <p class="hint-text">Maps to llama-server <code>--dry-multiplier</code> / <code>--dry-base</code> / <code>--dry-allowed-length</code> / <code>--dry-penalty-last-n</code>. Baked in at launch &mdash; changes require a relaunch.</p>
                       <div class="launch-inline-settings-grid">
@@ -520,7 +588,7 @@
                     </div>
                   </div>
                 </div>
-                <div class="form-group full launch-settings-section">
+                <div class="form-group full launch-settings-section" data-engine-only="llamacpp">
                   <div class="launch-settings-section-header">
                     <h3>Speculative Decoding</h3>
                     <label class="toggle-switch" for="f-spec-enabled"
@@ -593,10 +661,10 @@
                     </div>
                   </div>
                 </div>
-                <div class="form-group full launch-settings-section">
+                <div class="form-group full launch-settings-section" id="image-pdf-section">
                   <div class="launch-settings-section-header">
                     <h3>Image &amp; PDF Input</h3>
-                    <label class="toggle-switch" for="f-mmproj-enabled"
+                    <label class="toggle-switch" for="f-mmproj-enabled" data-engine-only="llamacpp"
                       aria-label="Enable image and PDF input">
                       <input id="f-mmproj-enabled" type="checkbox" />
                       <span class="toggle-slider"></span>
@@ -605,8 +673,22 @@
                   <!-- Collapsed until Image &amp; PDF Input is toggled on; expands with a height transition. -->
                   <div class="launch-settings-reveal" id="mmproj-reveal">
                     <div class="launch-settings-reveal-inner">
-                      <p class="hint-text">When enabled, loads a multimodal projector (<code>--mmproj</code>) so a vision model can accept image inputs. Point it at the model's mmproj GGUF alongside the main weights. Optionally accept PDF uploads: pages are rasterized to images before the vision model sees them.</p>
-                      <div class="form-group">
+                      <p class="hint-text" data-engine-only="strata" hidden>Strata has its own image encoder: turn Image Input on to accept images. PDF uploads need it too (pages are rasterized to images), except born-digital PDFs read through the text layer.</p>
+                      <div class="launch-section-grid" data-engine-only="strata" hidden>
+                      <div class="form-group" data-engine-only="strata" hidden>
+                        <span class="label-row">
+                          <label for="f-strata-vision">Image Input</label>
+                          <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Image Input help" data-tip="Strata VISION. No = text only. Yes = the image encoder runs on the GPU (about 1.2 GB of VRAM). CPU = the image encoder runs on the CPU. Recorded in the model&#39;s Strata setup: changing it re-runs Strata&#39;s setup pass on the next start (the downloaded files are reused)."><i class="fa-solid fa-circle-info"></i></span>
+                        </span>
+                        <select id="f-strata-vision">
+                          <option value="no" selected>No (text only)</option>
+                          <option value="yes">Yes (GPU)</option>
+                          <option value="cpu">Yes (CPU)</option>
+                        </select>
+                      </div>
+                      </div>
+                      <p class="hint-text" data-engine-only="llamacpp">When enabled, loads a multimodal projector (<code>--mmproj</code>) so a vision model can accept image inputs. Point it at the model's mmproj GGUF alongside the main weights. Optionally accept PDF uploads: pages are rasterized to images before the vision model sees them.</p>
+                      <div class="form-group" data-engine-only="llamacpp">
                         <span class="label-row">
                           <label for="f-mmproj-path">MMPROJ Model</label>
                           <span class="info-tip" tabindex="0" role="button" aria-label="MMPROJ Model help" data-tip="Path to the multimodal projector passed as --mmproj. Pick a downloaded GGUF from the list or type a path under the models directory."><i class="fa-solid fa-circle-info"></i></span>
@@ -628,7 +710,7 @@
                            its labels+toggles (like Queue sharing / Auto Restart
                            / Embedding below) while the hints wrap at the full
                            reveal-inner width. -->
-                      <div class="launch-toggle-table mmproj-toggle-table">
+                      <div class="launch-toggle-table mmproj-toggle-table" data-engine-only="llamacpp">
                         <div class="launch-toggle-pair">
                           <label for="f-mmproj-offload">Offload mmproj to GPU</label>
                           <label class="toggle-switch" for="f-mmproj-offload" aria-label="Offload mmproj to GPU">
@@ -637,7 +719,7 @@
                           </label>
                         </div>
                       </div>
-                      <p class="hint-text">Offload: off passes <code>--no-mmproj-offload</code> and runs the projector on CPU — useful when VRAM is tight (the encoder pins a few GB on big vision models) or when a backend's vision kernels are slow. On (llama.cpp default) omits the flag entirely.</p>
+                      <p class="hint-text" data-engine-only="llamacpp">Offload: off passes <code>--no-mmproj-offload</code> and runs the projector on CPU — useful when VRAM is tight (the encoder pins a few GB on big vision models) or when a backend's vision kernels are slow. On (llama.cpp default) omits the flag entirely.</p>
                       <div class="launch-toggle-table mmproj-toggle-table">
                         <div class="launch-toggle-pair">
                           <label for="f-pdf-input-enabled">Accept PDF uploads</label>
@@ -677,7 +759,7 @@
                     </div>
                   </div>
                 </div>
-                <div class="form-group full">
+                <div class="form-group full" data-engine-only="llamacpp">
                   <span class="label-row">
                     <label for="f-extra">Extra Args</label>
                     <span class="info-tip" tabindex="0" role="button" aria-label="Extra Args help" data-tip="Extra command-line flags appended to the llama-server invocation."><i class="fa-solid fa-circle-info"></i></span>
@@ -702,10 +784,17 @@
                       <span class="toggle-slider"></span>
                     </label>
                   </div>
-                  <div class="launch-toggle-pair">
+                  <div class="launch-toggle-pair" data-engine-only="llamacpp">
                     <label for="f-embedding-model">Embedding Model</label>
                     <label class="toggle-switch" for="f-embedding-model" aria-label="Embedding Model">
                       <input id="f-embedding-model" type="checkbox" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                  <div class="launch-toggle-pair toggle-right" data-engine-only="llamacpp">
+                    <label for="f-webui-enabled" title="llama-server's built-in chat page, linked on the instance card. Off passes --no-webui.">Web UI</label>
+                    <label class="toggle-switch" for="f-webui-enabled" aria-label="Web UI">
+                      <input id="f-webui-enabled" type="checkbox" checked />
                       <span class="toggle-slider"></span>
                     </label>
                   </div>
@@ -754,7 +843,7 @@
                     title="Import a preset JSON into the form (does not save)">
                     <i class="fa-solid fa-file-arrow-up"></i>
                   </button>
-                  <button class="btn btn-tool" type="button" id="btn-copy-llama-cmd"
+                  <button class="btn btn-tool" type="button" id="btn-copy-llama-cmd" data-engine-only="llamacpp"
                     title="Copy the equivalent llama-server command to the clipboard">
                     <i class="fa-solid fa-terminal"></i>
                   </button>
@@ -961,15 +1050,30 @@
 
           <div class="tab-panel" id="settings-tab-images" role="tabpanel"
             aria-labelledby="settings-tab-btn-images" data-tab-panel="images" hidden>
-            <p class="hint-text">Manage the llama.cpp server Docker images used to launch model instances. The active image is set via the <code>LLAMA_IMAGE</code> environment variable.</p>
+            <p class="hint-text">Docker images instances are launched from. The defaults are set by <code>LLAMA_IMAGE</code> (llama.cpp) and <code>STRATA_IMAGE</code> (Strata).</p>
             <div class="form-group node-select-row" hidden>
               <label for="images-node">Node</label>
               <select id="images-node" class="node-select"></select>
             </div>
+            <div class="form-actions image-pull-row">
+              <select id="f-image-pull-engine" class="form-input" aria-label="Engine the image is for">
+                <option value="llamacpp">llama.cpp</option>
+                <option value="strata" hidden>Strata</option>
+              </select>
+              <input id="f-image-pull-name" class="form-input" type="text"
+                placeholder="ghcr.io/ggml-org/llama.cpp:server-cuda" style="flex:1" />
+              <button class="btn btn-secondary" type="button" id="btn-pull-by-name">
+                <i class="fa-solid fa-arrow-down"></i> Pull image
+              </button>
+            </div>
+            <div id="image-pull-status" class="hint-text" hidden></div>
+            <p aria-hidden="true">&nbsp;</p>
+            <div class="cleanup-section-divider" aria-hidden="true"></div>
+            <div class="cluster-section-label">Manage llama.cpp Docker images</div>
             <div class="cleanup-settings-grid">
               <div class="form-group cleanup-toggle-grid">
-                <label for="s-image-auto-update">Auto-update image periodically</label>
-                <label class="toggle-switch" for="s-image-auto-update" aria-label="Auto-update image periodically">
+                <label for="s-image-auto-update">Auto-update llama.cpp images periodically</label>
+                <label class="toggle-switch" for="s-image-auto-update" aria-label="Auto-update llama.cpp images periodically">
                   <input id="s-image-auto-update" type="checkbox" />
                   <span class="toggle-slider"></span>
                 </label>
@@ -985,18 +1089,52 @@
               <span id="image-settings-status" class="status-text"></span>
             </div>
             <p class="hint-text" style="margin-top: 12px;">Changes take effect on the next instance launch.</p>
-            <div class="cleanup-section-divider" aria-hidden="true"></div>
-            <div class="cluster-section-label">Manage Docker images</div>
-            <div class="form-actions">
-              <input id="f-image-pull-name" class="form-input" type="text"
-                placeholder="ghcr.io/ggml-org/llama.cpp:server-cuda" style="flex:1" />
-              <button class="btn btn-secondary" type="button" id="btn-pull-by-name">
-                <i class="fa-solid fa-arrow-down"></i> Pull image
-              </button>
-            </div>
-            <div id="image-pull-status" class="hint-text" hidden></div>
-            <p class="hint-text">Locally cached images.</p>
             <div id="images-list"><div class="list-empty-state">Loading…</div></div>
+            <div id="strata-images-section" hidden>
+              <p aria-hidden="true">&nbsp;</p>
+              <div class="cleanup-section-divider" aria-hidden="true"></div>
+              <div class="cluster-section-label">Manage Strata images</div>
+              <div class="cleanup-settings-grid">
+                <div class="form-group cleanup-toggle-grid">
+                  <label for="s-strata-auto-update">Auto-update Strata images periodically</label>
+                  <label class="toggle-switch" for="s-strata-auto-update" aria-label="Auto-update Strata images periodically">
+                    <input id="s-strata-auto-update" type="checkbox" />
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                <div class="form-group cleanup-input-row">
+                  <label for="s-strata-update-interval">Update interval (hours)</label>
+                  <input id="s-strata-update-interval" class="cleanup-settings-input" type="number" value="24" min="1" />
+                </div>
+              </div>
+              <div class="form-actions">
+                <button class="btn btn-secondary" type="button" id="btn-save-strata-image-settings"><i
+                    class="fa-solid fa-floppy-disk"></i> Save</button>
+                <span id="strata-image-settings-status" class="status-text"></span>
+              </div>
+              <p class="hint-text" style="margin-top: 12px;">Pulled images are pulled again; the built image is rebuilt when its repository has a newer commit. The repository is only downloaded by the build button.</p>
+              <div id="strata-pulled-list"></div>
+              <div class="dl-item strata-image-card">
+                <div class="dl-item-top">
+                  <span class="dl-item-name"><strong id="strata-image-name"></strong> <span id="strata-image-badge"></span></span>
+                  <span class="list-meta-date" id="strata-image-size"></span>
+                </div>
+                <dl class="strata-image-rows">
+                  <dt>Source</dt><dd id="strata-image-source"></dd>
+                  <dt>Built</dt><dd id="strata-image-built"></dd>
+                </dl>
+                <div class="form-actions">
+                  <button class="btn btn-secondary" type="button" id="btn-strata-build">
+                    <i class="fa-solid fa-hammer"></i> Pull repo &amp; build latest
+                  </button>
+                  <button class="btn btn-danger" type="button" id="btn-strata-build-delete"
+                    title="Delete the built image and the downloaded repository">
+                    <i class="fa-solid fa-trash"></i> Delete image &amp; repo
+                  </button>
+                </div>
+                <div id="strata-build-status" class="hint-text" hidden></div>
+              </div>
+            </div>
           </div>
 
           <div class="tab-panel" id="settings-tab-apikeys" role="tabpanel"
@@ -1210,6 +1348,22 @@
   </div>
 
   <!-- Download Form Modal -->
+  <!-- Strata's recommended models (static/js/engines.js): the catalogue,
+       each downloadable into the target node's models folder. -->
+  <div class="modal-overlay" id="strata-models-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Strata models</h3>
+        <button class="btn-icon" id="btn-close-strata-models" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <p class="hint-text">Strata runs only these quants. A download goes to the target node&#39;s models folder and shows in the Downloads panel; when it finishes the model appears in the library - select it and choose Strata as the Inference Engine.</p>
+        <p class="hint-text">The same quants can also be downloaded manually with the Hugging Face downloader, even from another upload or under other file names, as long as they are split into the same number of files. Other quants of the same architecture (K-quants, other i-quants) do not run on Strata.</p>
+        <div id="strata-models-list" class="strata-models-list"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="download-modal">
     <div class="modal modal-sm">
       <div class="modal-header">
@@ -1331,10 +1485,12 @@
 
   <script src="{{ url_for('static', filename='js/utils.js') }}"></script>
   <script src="{{ url_for('static', filename='js/models.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/engines.js') }}"></script>
   <script src="{{ url_for('static', filename='js/logs.js') }}"></script>
   <script src="{{ url_for('static', filename='js/stats.js') }}"></script>
   <script src="{{ url_for('static', filename='js/instances.js') }}"></script>
   <script src="{{ url_for('static', filename='js/downloads.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/archive.js') }}"></script>
   <script src="{{ url_for('static', filename='js/system.js') }}"></script>
   <script src="{{ url_for('static', filename='js/cluster.js') }}"></script>
   <script src="{{ url_for('static', filename='js/kb.js') }}"></script>

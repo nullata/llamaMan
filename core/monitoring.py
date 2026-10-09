@@ -48,6 +48,12 @@ _last_update_scan_at: float = 0.0
 _last_loop_detect_tick_at: float = 0.0
 _LOOP_DETECT_TICK_INTERVAL = 5
 
+# Strata's model list, read from the installed Strata image when it changes
+# (core/engines/strata.refresh_catalogue_from_image). A no-op without
+# STRATA_ENABLED; otherwise one image lookup per pass.
+_last_strata_catalogue_at: float = 0.0
+_STRATA_CATALOGUE_INTERVAL = 60
+
 
 def _run_cleanup() -> None:
     from storage import get_storage
@@ -392,7 +398,7 @@ def _maybe_auto_restart(inst_id: str) -> None:
 def _background_poller():
     global _last_cleanup_at, _last_orphan_scan_at, _last_stale_cleanup_at, _last_image_check_at
     global _last_request_log_prune_at, _last_update_scan_at, _last_db_mirror_sync_at
-    global _last_loop_detect_tick_at
+    global _last_loop_detect_tick_at, _last_strata_catalogue_at
     while True:
         time.sleep(5)
 
@@ -409,6 +415,15 @@ def _background_poller():
                 worker_tick()
             except Exception as e:
                 logger.warning("Loop-detect tick error: %s", e)
+
+        # --- Strata model list from its image ---
+        if now - _last_strata_catalogue_at >= _STRATA_CATALOGUE_INTERVAL:
+            _last_strata_catalogue_at = now
+            try:
+                from core.engines.strata import refresh_catalogue_from_image
+                refresh_catalogue_from_image()
+            except Exception as e:
+                logger.warning("strata catalogue refresh error: %s", e)
 
         # --- Periodic cleanup ---
         if now - _last_cleanup_at >= _CLEANUP_INTERVAL:
@@ -470,14 +485,20 @@ def _background_poller():
         if now - _last_image_check_at >= _IMAGE_CHECK_INTERVAL:
             _last_image_check_at = now
             try:
-                from api.images import check_and_pull_if_needed
-                from config import LLAMA_IMAGE
-                if LLAMA_IMAGE:
-                    triggered = check_and_pull_if_needed(LLAMA_IMAGE)
-                    if triggered:
-                        logger.info("Image auto-update triggered for %s", LLAMA_IMAGE)
+                from api.images import check_and_pull_all_if_needed
+                triggered = check_and_pull_all_if_needed()
+                if triggered:
+                    logger.info("Image auto-update triggered for %s", ", ".join(triggered))
             except Exception as e:
                 logger.warning("Image auto-update check error: %s", e)
+            # Strata: fetch the newer commit and rebuild, only when its
+            # repository was already downloaded from the UI.
+            try:
+                from core.strata_build import check_and_update_if_needed
+                if check_and_update_if_needed():
+                    logger.info("Strata image auto-update started")
+            except Exception as e:
+                logger.warning("Strata image auto-update check error: %s", e)
 
         # --- Periodic orphan scan ---
         if now - _last_orphan_scan_at >= _ORPHAN_SCAN_INTERVAL:
@@ -551,6 +572,7 @@ def _background_poller():
                 new_status = "starting"
 
             status_changed = False
+            became_ready = None
             with instances_lock:
                 if inst_id in instances and instances[inst_id]["status"] not in ("stopped", "sleeping"):
                     old_status = instances[inst_id]["status"]
@@ -563,9 +585,16 @@ def _background_poller():
                             stats = instances[inst_id].setdefault("stats", {})
                             stats["model_load_time_s"] = round(time.time() - started, 1)
                         logger.info("Instance %s is now healthy (was %s)", inst_id, old_status)
+                        became_ready = dict(instances[inst_id])
 
             if status_changed:
                 save_state()
+            if became_ready is not None:
+                try:
+                    from core.engines import get_engine
+                    get_engine(became_ready.get("config"), became_ready.get("model_path")).on_ready(became_ready)
+                except Exception as e:
+                    logger.warning("engine on_ready hook failed for %s: %s", inst_id, e)
 
         # --- Idle timeout reaper ---
         for inst_id in inst_ids:

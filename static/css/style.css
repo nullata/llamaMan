@@ -2749,3 +2749,209 @@ body.login-page {
 .app-footer-repo:hover .app-footer-star {
   color: var(--yellow);
 }
+
+/* ---- Inference engines (static/js/engines.js) ---- */
+[data-engine-only][hidden] {
+  display: none !important;
+}
+.badge-engine {
+  background: var(--surface);
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
+/* Strata's model summary, at the top of Model Settings. */
+.strata-model-info {
+  margin-bottom: 12px;
+}
+.inst-web-ui a {
+  color: var(--accent);
+}
+.engine-select-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.engine-select-row select {
+  flex: 1;
+  min-width: 0;
+}
+.strata-models-list {
+  display: flex;
+  flex-direction: column;
+}
+.strata-model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.strata-model-row:last-child {
+  border-bottom: none;
+}
+.strata-model-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.strata-model-main .path {
+  font-size: 11px;
+  color: var(--muted);
+}
+.strata-model-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.strata-model-action {
+  flex-shrink: 0;
+}
+.strata-download-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.strata-warnings {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--yellow);
+}
+.strata-warnings li + li {
+  margin-top: 4px;
+}
+.load-stage-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.load-stage-name {
+  text-transform: capitalize;
+  color: var(--text);
+}
+.load-stage-bar {
+  flex: 0 1 120px;
+  height: 8px;
+  background: var(--surface);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.load-stage-bar > div {
+  height: 100%;
+  background: var(--green);
+  transition: width .3s;
+}
+.load-stage-pct {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.load-stage-detail {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#strata-images-section .cleanup-settings-grid {
+  margin-top: 12px;
+}
+.strata-image-rows {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 8px 0;
+  font-size: 12px;
+}
+.strata-image-rows dt {
+  color: var(--muted);
+}
+.strata-image-rows dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.strata-image-card .form-actions {
+  margin-top: 8px;
+}
+
+/* ---- Model archive (static/js/archive.js) ---- */
+.model-item .btn-archive-model,
+.model-item .btn-restore-model {
+  position: absolute;
+  top: 6px;
+  right: 30px;              /* left of the hover-only delete button */
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+.model-item .btn-archive-model {
+  display: none;
+}
+.model-item:hover .btn-archive-model,
+.model-item .btn-archive-model.btn-archive-busy {
+  display: block;
+}
+.model-item .btn-archive-model:hover:not(:disabled),
+.model-item .btn-restore-model:hover {
+  color: var(--accent);
+  background: rgba(16, 185, 129, 0.15);
+}
+.model-item .btn-archive-model:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+/* Archived items have no delete button: Restore takes the corner, always shown. */
+.model-item .btn-restore-model {
+  right: 6px;
+  display: block;
+}
+.model-item-archived {
+  opacity: 0.6;
+}
+.model-item-archived:hover {
+  opacity: 0.85;
+}
+.badge-archived {
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  background: none;
+}
+.arch-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+.arch-progress-bar {
+  flex: 0 1 160px;
+  height: 8px;
+  background: var(--surface);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.arch-progress-bar > div {
+  height: 100%;
+  background: var(--green);
+  transition: width .3s;
+}
+.arch-progress-text {
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.image-pull-row select {
+  flex: 0 0 auto;
+  width: auto;
+}
+/* the built card follows the pulled list's container, not its rows */
+#strata-pulled-list:not(:empty) + .strata-image-card {
+  margin-top: 6px;
+}

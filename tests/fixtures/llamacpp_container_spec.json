@@ -1,0 +1,2390 @@
+{
+ "cpu_only|None": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "0",
+   "--ctx-size",
+   "2048",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": 0, \"ctx_size\": 2048}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "cpu_only|cuda": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "0",
+   "--ctx-size",
+   "2048",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": 0, \"ctx_size\": 2048}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "cpu_only|intel": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "0",
+   "--ctx-size",
+   "2048",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": 0, \"ctx_size\": 2048}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "cpu_only|rocm": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "0",
+   "--ctx-size",
+   "2048",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": 0, \"ctx_size\": 2048}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "cpu_only|vulkan": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "0",
+   "--ctx-size",
+   "2048",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": 0, \"ctx_size\": 2048}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "embedding|None": {
+  "command": [
+   "--model",
+   "/models/emb.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "512",
+   "--cpu-moe",
+   "--embeddings",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 512, \"embedding_model\": true, \"n_cpu_moe_layers\": -1}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/emb.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "embedding|cuda": {
+  "command": [
+   "--model",
+   "/models/emb.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "512",
+   "--cpu-moe",
+   "--embeddings",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 512, \"embedding_model\": true, \"n_cpu_moe_layers\": -1}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/emb.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "embedding|intel": {
+  "command": [
+   "--model",
+   "/models/emb.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "512",
+   "--cpu-moe",
+   "--embeddings",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 512, \"embedding_model\": true, \"n_cpu_moe_layers\": -1}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/emb.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "embedding|rocm": {
+  "command": [
+   "--model",
+   "/models/emb.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "512",
+   "--cpu-moe",
+   "--embeddings",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/kfd:/dev/kfd",
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 512, \"embedding_model\": true, \"n_cpu_moe_layers\": -1}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/emb.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "embedding|vulkan": {
+  "command": [
+   "--model",
+   "/models/emb.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "512",
+   "--cpu-moe",
+   "--embeddings",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 512, \"embedding_model\": true, \"n_cpu_moe_layers\": -1}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/emb.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "empty_config|None": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "empty_config|cuda": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "empty_config|intel": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "empty_config|rocm": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/kfd:/dev/kfd",
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "empty_config|vulkan": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "gpu_all_literal|None": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"gpu_devices\": \"all\", \"ctx_size\": 4096}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "gpu_all_literal|cuda": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"gpu_devices\": \"all\", \"ctx_size\": 4096}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "gpu_all_literal|intel": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"gpu_devices\": \"all\", \"ctx_size\": 4096}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "gpu_all_literal|rocm": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/kfd:/dev/kfd",
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"gpu_devices\": \"all\", \"ctx_size\": 4096}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "gpu_all_literal|vulkan": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"gpu_devices\": \"all\", \"ctx_size\": 4096}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "gpu_pinned|None": {
+  "command": [
+   "--model",
+   "/models/sub/m-Q4_K_M.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "40",
+   "--ctx-size",
+   "8192",
+   "--split-mode",
+   "row",
+   "--tensor-split",
+   "3,2"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": 0,
+    "DeviceIDs": [
+     "0",
+     "1"
+    ],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": 40, \"ctx_size\": 8192, \"gpu_devices\": \"0,1\", \"split_mode\": \"row\", \"tensor_split\": \"3,2\"}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/sub/m-Q4_K_M.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "gpu_pinned|cuda": {
+  "command": [
+   "--model",
+   "/models/sub/m-Q4_K_M.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "40",
+   "--ctx-size",
+   "8192",
+   "--split-mode",
+   "row",
+   "--tensor-split",
+   "3,2"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": 0,
+    "DeviceIDs": [
+     "0",
+     "1"
+    ],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": 40, \"ctx_size\": 8192, \"gpu_devices\": \"0,1\", \"split_mode\": \"row\", \"tensor_split\": \"3,2\"}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/sub/m-Q4_K_M.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "gpu_pinned|intel": {
+  "command": [
+   "--model",
+   "/models/sub/m-Q4_K_M.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "40",
+   "--ctx-size",
+   "8192",
+   "--split-mode",
+   "row",
+   "--tensor-split",
+   "3,2"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": 40, \"ctx_size\": 8192, \"gpu_devices\": \"0,1\", \"split_mode\": \"row\", \"tensor_split\": \"3,2\"}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/sub/m-Q4_K_M.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "gpu_pinned|rocm": {
+  "command": [
+   "--model",
+   "/models/sub/m-Q4_K_M.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "40",
+   "--ctx-size",
+   "8192",
+   "--split-mode",
+   "row",
+   "--tensor-split",
+   "3,2"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/kfd:/dev/kfd",
+   "/dev/dri:/dev/dri"
+  ],
+  "environment": {
+   "ROCR_VISIBLE_DEVICES": "0,1"
+  },
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": 40, \"ctx_size\": 8192, \"gpu_devices\": \"0,1\", \"split_mode\": \"row\", \"tensor_split\": \"3,2\"}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/sub/m-Q4_K_M.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "gpu_pinned|vulkan": {
+  "command": [
+   "--model",
+   "/models/sub/m-Q4_K_M.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "40",
+   "--ctx-size",
+   "8192",
+   "--split-mode",
+   "row",
+   "--tensor-split",
+   "3,2"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": 40, \"ctx_size\": 8192, \"gpu_devices\": \"0,1\", \"split_mode\": \"row\", \"tensor_split\": \"3,2\"}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/sub/m-Q4_K_M.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "image_override|None": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "registry.example.org/custom/llama-server:pinned",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 4096, \"image\": \"registry.example.org/custom/llama-server:pinned\"}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "image_override|cuda": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "registry.example.org/custom/llama-server:pinned",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 4096, \"image\": \"registry.example.org/custom/llama-server:pinned\"}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "image_override|intel": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "registry.example.org/custom/llama-server:pinned",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 4096, \"image\": \"registry.example.org/custom/llama-server:pinned\"}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "image_override|rocm": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/kfd:/dev/kfd",
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "registry.example.org/custom/llama-server:pinned",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 4096, \"image\": \"registry.example.org/custom/llama-server:pinned\"}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "image_override|vulkan": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "registry.example.org/custom/llama-server:pinned",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 4096, \"image\": \"registry.example.org/custom/llama-server:pinned\"}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "kitchen_sink|None": {
+  "command": [
+   "--model",
+   "/models/big/q-00001-of-00002.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "65536",
+   "--n-cpu-moe",
+   "8",
+   "--split-mode",
+   "layer",
+   "--flash-attn",
+   "on",
+   "--reasoning-format",
+   "deepseek",
+   "--dry-multiplier",
+   "0.8",
+   "--dry-base",
+   "1.75",
+   "--dry-allowed-length",
+   "2",
+   "--dry-penalty-last-n",
+   "512",
+   "--cache-type-k",
+   "q8_0",
+   "--cache-type-v",
+   "q4_0",
+   "--load-mode",
+   "mlock",
+   "--alias",
+   "chat",
+   "--model-draft",
+   "/models/d.gguf",
+   "--spec-type",
+   "draft-simple",
+   "--spec-draft-n-max",
+   "16",
+   "--spec-draft-n-min",
+   "2",
+   "--mmproj",
+   "/models/mmproj.gguf",
+   "--no-mmproj-offload",
+   "--top-k",
+   "20",
+   "--jinja"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": -1, \"n_cpu_moe_layers\": 8, \"ctx_size\": 65536, \"flash_attn\": \"on\", \"cache_type_k\": \"q8_0\", \"cache_type_v\": \"q4_0\", \"reasoning_format\": \"deepseek\", \"load_mode\": \"mlock\", \"dry_enabled\": true, \"dry_multiplier\": 0.8, \"dry_base\": 1.75, \"dry_allowed_length\": 2, \"dry_penalty_last_n\": 512, \"share_queue_group\": \"chat\", \"spec_enabled\": true, \"spec_type\": \"draft-simple\", \"spec_draft_model\": \"/models/d.gguf\", \"spec_draft_n_max\": 16, \"spec_draft_n_min\": 2, \"mmproj_enabled\": true, \"mmproj_path\": \"/models/mmproj.gguf\", \"mmproj_offload\": false, \"embedding_model\": false, \"extra_args\": \"--top-k 20 --jinja\", \"max_concurrent\": 2, \"idle_timeout_min\": 10}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/big/q-00001-of-00002.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "kitchen_sink|cuda": {
+  "command": [
+   "--model",
+   "/models/big/q-00001-of-00002.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "65536",
+   "--n-cpu-moe",
+   "8",
+   "--split-mode",
+   "layer",
+   "--flash-attn",
+   "on",
+   "--reasoning-format",
+   "deepseek",
+   "--dry-multiplier",
+   "0.8",
+   "--dry-base",
+   "1.75",
+   "--dry-allowed-length",
+   "2",
+   "--dry-penalty-last-n",
+   "512",
+   "--cache-type-k",
+   "q8_0",
+   "--cache-type-v",
+   "q4_0",
+   "--load-mode",
+   "mlock",
+   "--alias",
+   "chat",
+   "--model-draft",
+   "/models/d.gguf",
+   "--spec-type",
+   "draft-simple",
+   "--spec-draft-n-max",
+   "16",
+   "--spec-draft-n-min",
+   "2",
+   "--mmproj",
+   "/models/mmproj.gguf",
+   "--no-mmproj-offload",
+   "--top-k",
+   "20",
+   "--jinja"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": -1, \"n_cpu_moe_layers\": 8, \"ctx_size\": 65536, \"flash_attn\": \"on\", \"cache_type_k\": \"q8_0\", \"cache_type_v\": \"q4_0\", \"reasoning_format\": \"deepseek\", \"load_mode\": \"mlock\", \"dry_enabled\": true, \"dry_multiplier\": 0.8, \"dry_base\": 1.75, \"dry_allowed_length\": 2, \"dry_penalty_last_n\": 512, \"share_queue_group\": \"chat\", \"spec_enabled\": true, \"spec_type\": \"draft-simple\", \"spec_draft_model\": \"/models/d.gguf\", \"spec_draft_n_max\": 16, \"spec_draft_n_min\": 2, \"mmproj_enabled\": true, \"mmproj_path\": \"/models/mmproj.gguf\", \"mmproj_offload\": false, \"embedding_model\": false, \"extra_args\": \"--top-k 20 --jinja\", \"max_concurrent\": 2, \"idle_timeout_min\": 10}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/big/q-00001-of-00002.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "kitchen_sink|intel": {
+  "command": [
+   "--model",
+   "/models/big/q-00001-of-00002.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "65536",
+   "--n-cpu-moe",
+   "8",
+   "--split-mode",
+   "layer",
+   "--flash-attn",
+   "on",
+   "--reasoning-format",
+   "deepseek",
+   "--dry-multiplier",
+   "0.8",
+   "--dry-base",
+   "1.75",
+   "--dry-allowed-length",
+   "2",
+   "--dry-penalty-last-n",
+   "512",
+   "--cache-type-k",
+   "q8_0",
+   "--cache-type-v",
+   "q4_0",
+   "--load-mode",
+   "mlock",
+   "--alias",
+   "chat",
+   "--model-draft",
+   "/models/d.gguf",
+   "--spec-type",
+   "draft-simple",
+   "--spec-draft-n-max",
+   "16",
+   "--spec-draft-n-min",
+   "2",
+   "--mmproj",
+   "/models/mmproj.gguf",
+   "--no-mmproj-offload",
+   "--top-k",
+   "20",
+   "--jinja"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": -1, \"n_cpu_moe_layers\": 8, \"ctx_size\": 65536, \"flash_attn\": \"on\", \"cache_type_k\": \"q8_0\", \"cache_type_v\": \"q4_0\", \"reasoning_format\": \"deepseek\", \"load_mode\": \"mlock\", \"dry_enabled\": true, \"dry_multiplier\": 0.8, \"dry_base\": 1.75, \"dry_allowed_length\": 2, \"dry_penalty_last_n\": 512, \"share_queue_group\": \"chat\", \"spec_enabled\": true, \"spec_type\": \"draft-simple\", \"spec_draft_model\": \"/models/d.gguf\", \"spec_draft_n_max\": 16, \"spec_draft_n_min\": 2, \"mmproj_enabled\": true, \"mmproj_path\": \"/models/mmproj.gguf\", \"mmproj_offload\": false, \"embedding_model\": false, \"extra_args\": \"--top-k 20 --jinja\", \"max_concurrent\": 2, \"idle_timeout_min\": 10}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/big/q-00001-of-00002.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "kitchen_sink|rocm": {
+  "command": [
+   "--model",
+   "/models/big/q-00001-of-00002.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "65536",
+   "--n-cpu-moe",
+   "8",
+   "--split-mode",
+   "layer",
+   "--flash-attn",
+   "on",
+   "--reasoning-format",
+   "deepseek",
+   "--dry-multiplier",
+   "0.8",
+   "--dry-base",
+   "1.75",
+   "--dry-allowed-length",
+   "2",
+   "--dry-penalty-last-n",
+   "512",
+   "--cache-type-k",
+   "q8_0",
+   "--cache-type-v",
+   "q4_0",
+   "--load-mode",
+   "mlock",
+   "--alias",
+   "chat",
+   "--model-draft",
+   "/models/d.gguf",
+   "--spec-type",
+   "draft-simple",
+   "--spec-draft-n-max",
+   "16",
+   "--spec-draft-n-min",
+   "2",
+   "--mmproj",
+   "/models/mmproj.gguf",
+   "--no-mmproj-offload",
+   "--top-k",
+   "20",
+   "--jinja"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/kfd:/dev/kfd",
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": -1, \"n_cpu_moe_layers\": 8, \"ctx_size\": 65536, \"flash_attn\": \"on\", \"cache_type_k\": \"q8_0\", \"cache_type_v\": \"q4_0\", \"reasoning_format\": \"deepseek\", \"load_mode\": \"mlock\", \"dry_enabled\": true, \"dry_multiplier\": 0.8, \"dry_base\": 1.75, \"dry_allowed_length\": 2, \"dry_penalty_last_n\": 512, \"share_queue_group\": \"chat\", \"spec_enabled\": true, \"spec_type\": \"draft-simple\", \"spec_draft_model\": \"/models/d.gguf\", \"spec_draft_n_max\": 16, \"spec_draft_n_min\": 2, \"mmproj_enabled\": true, \"mmproj_path\": \"/models/mmproj.gguf\", \"mmproj_offload\": false, \"embedding_model\": false, \"extra_args\": \"--top-k 20 --jinja\", \"max_concurrent\": 2, \"idle_timeout_min\": 10}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/big/q-00001-of-00002.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "kitchen_sink|vulkan": {
+  "command": [
+   "--model",
+   "/models/big/q-00001-of-00002.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "65536",
+   "--n-cpu-moe",
+   "8",
+   "--split-mode",
+   "layer",
+   "--flash-attn",
+   "on",
+   "--reasoning-format",
+   "deepseek",
+   "--dry-multiplier",
+   "0.8",
+   "--dry-base",
+   "1.75",
+   "--dry-allowed-length",
+   "2",
+   "--dry-penalty-last-n",
+   "512",
+   "--cache-type-k",
+   "q8_0",
+   "--cache-type-v",
+   "q4_0",
+   "--load-mode",
+   "mlock",
+   "--alias",
+   "chat",
+   "--model-draft",
+   "/models/d.gguf",
+   "--spec-type",
+   "draft-simple",
+   "--spec-draft-n-max",
+   "16",
+   "--spec-draft-n-min",
+   "2",
+   "--mmproj",
+   "/models/mmproj.gguf",
+   "--no-mmproj-offload",
+   "--top-k",
+   "20",
+   "--jinja"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": -1, \"n_cpu_moe_layers\": 8, \"ctx_size\": 65536, \"flash_attn\": \"on\", \"cache_type_k\": \"q8_0\", \"cache_type_v\": \"q4_0\", \"reasoning_format\": \"deepseek\", \"load_mode\": \"mlock\", \"dry_enabled\": true, \"dry_multiplier\": 0.8, \"dry_base\": 1.75, \"dry_allowed_length\": 2, \"dry_penalty_last_n\": 512, \"share_queue_group\": \"chat\", \"spec_enabled\": true, \"spec_type\": \"draft-simple\", \"spec_draft_model\": \"/models/d.gguf\", \"spec_draft_n_max\": 16, \"spec_draft_n_min\": 2, \"mmproj_enabled\": true, \"mmproj_path\": \"/models/mmproj.gguf\", \"mmproj_offload\": false, \"embedding_model\": false, \"extra_args\": \"--top-k 20 --jinja\", \"max_concurrent\": 2, \"idle_timeout_min\": 10}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/big/q-00001-of-00002.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "limits|None": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--threads",
+   "6",
+   "--threads-batch",
+   "12",
+   "--parallel",
+   "4",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 4096, \"threads\": 6, \"threads_batch\": 12, \"memory_limit\": \"32g\", \"parallel\": 4}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "mem_limit": "32g",
+  "name": "llamaman-inst-1",
+  "nano_cpus": 6000000000,
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "limits|cuda": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--threads",
+   "6",
+   "--threads-batch",
+   "12",
+   "--parallel",
+   "4",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 4096, \"threads\": 6, \"threads_batch\": 12, \"memory_limit\": \"32g\", \"parallel\": 4}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "mem_limit": "32g",
+  "name": "llamaman-inst-1",
+  "nano_cpus": 6000000000,
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "limits|intel": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--threads",
+   "6",
+   "--threads-batch",
+   "12",
+   "--parallel",
+   "4",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 4096, \"threads\": 6, \"threads_batch\": 12, \"memory_limit\": \"32g\", \"parallel\": 4}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "mem_limit": "32g",
+  "name": "llamaman-inst-1",
+  "nano_cpus": 6000000000,
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "limits|rocm": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--threads",
+   "6",
+   "--threads-batch",
+   "12",
+   "--parallel",
+   "4",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/kfd:/dev/kfd",
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 4096, \"threads\": 6, \"threads_batch\": 12, \"memory_limit\": \"32g\", \"parallel\": 4}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "mem_limit": "32g",
+  "name": "llamaman-inst-1",
+  "nano_cpus": 6000000000,
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "limits|vulkan": {
+  "command": [
+   "--model",
+   "/models/m.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--threads",
+   "6",
+   "--threads-batch",
+   "12",
+   "--parallel",
+   "4",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"ctx_size\": 4096, \"threads\": 6, \"threads_batch\": 12, \"memory_limit\": \"32g\", \"parallel\": 4}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/m.gguf",
+   "llamaman.port": "9001"
+  },
+  "mem_limit": "32g",
+  "name": "llamaman-inst-1",
+  "nano_cpus": 6000000000,
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "minimal|None": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": -1, \"ctx_size\": 4096}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "minimal|cuda": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "device_requests": [
+   {
+    "Capabilities": [
+     [
+      "gpu"
+     ]
+    ],
+    "Count": -1,
+    "DeviceIDs": [],
+    "Driver": "",
+    "Options": {}
+   }
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": -1, \"ctx_size\": 4096}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "minimal|intel": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": -1, \"ctx_size\": 4096}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "minimal|rocm": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/kfd:/dev/kfd",
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": -1, \"ctx_size\": 4096}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ },
+ "minimal|vulkan": {
+  "command": [
+   "--model",
+   "/models/chat.gguf",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "8080",
+   "--n-gpu-layers",
+   "-1",
+   "--ctx-size",
+   "4096",
+   "--split-mode",
+   "layer"
+  ],
+  "detach": true,
+  "devices": [
+   "/dev/dri:/dev/dri"
+  ],
+  "group_add": [
+   "44",
+   "107"
+  ],
+  "image": "<LLAMA_IMAGE>",
+  "labels": {
+   "llamaman.config": "{\"n_gpu_layers\": -1, \"ctx_size\": 4096}",
+   "llamaman.instance_id": "inst-1",
+   "llamaman.model_path": "/models/chat.gguf",
+   "llamaman.port": "9001"
+  },
+  "name": "llamaman-inst-1",
+  "network": "llamaman-net",
+  "ports": {
+   "8080": 9001
+  },
+  "volumes": {
+   "<REPO>/test-logs": {
+    "bind": "<REPO>/test-logs",
+    "mode": "rw"
+   },
+   "<REPO>/test-models": {
+    "bind": "<REPO>/test-models",
+    "mode": "ro"
+   }
+  }
+ }
+}

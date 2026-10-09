@@ -16,12 +16,12 @@ from config import (
     HEALTH_CHECK_TIMEOUT,
     MODELS_DIR,
     LLAMAMAN_MAX_MODELS,
-    MODEL_LOAD_TIMEOUT,
     REQUEST_TIMEOUT,
     VERSION,
     logger,
 )
 from core.helpers import (
+    iter_response_chunks, iter_response_lines,
     find_available_port,
     is_container_running,
     model_name_from_path,
@@ -35,8 +35,8 @@ from core.loop_detect import (
     make_ollama_terminator as _loop_detect_ollama_terminator,
     make_openai_sse_terminator as _loop_detect_openai_terminator,
 )
+from core.engines import load_timeout_for
 from core.proxy_sampling import apply_proxy_sampling_overrides
-from core.spec_decoding import DEFAULT_SPEC_TYPE
 from core.request_log import record_request, finalize_async, SSEAccumulator
 from api.models import (
     detect_quant,
@@ -82,9 +82,15 @@ def _stamp_serving_node(resp):
 # ---------------------------------------------------------------------------
 
 
+def _library() -> list[dict]:
+    """The model files on disk (see api.models.list_models). Goes through
+    this module's discover_models so tests patching it keep control."""
+    return discover_models(MODELS_DIR)
+
+
 def _find_model_by_name(name: str) -> dict | None:
     name_lower = name.split(":")[0].lower()
-    models = discover_models(MODELS_DIR)
+    models = _library()
     # Exact pretty-name match wins over every filename rule below. It's checked
     # first (and only exactly) so a cosmetic label can never be beaten by the
     # substring fallback, and so it resolves to precisely the file it was set on.
@@ -97,6 +103,14 @@ def _find_model_by_name(name: str) -> dict | None:
     for m in models:
         if model_name_from_path(m["path"]) == name_lower:
             return m
+    # A downloaded file another engine runs also answers to that engine's
+    # names for it (Strata's "strata/qwen-iq2_xs" or its served
+    # "qwen3.8-flash-next-iq2_xs"); asked for by such a name it runs there.
+    from core.engines import get_engine
+    for m in models:
+        for engine, model_id in (m.get("engine_models") or {}).items():
+            if name_lower in get_engine(engine).served_model_names(model_id):
+                return {**m, "_engine": engine}
     for m in models:
         if name_lower in model_name_from_path(m["path"]):
             return m
@@ -285,10 +299,16 @@ def _find_running_instance_by_alias(name: str) -> dict | None:
     return None
 
 
+def _inst_runs_file(inst: dict, model_path: str) -> bool:
+    # A Strata instance is stored under its model id; the file it was
+    # launched from is config.engine_source_path (launch_instance).
+    return model_path in (inst.get("model_path"), (inst.get("config") or {}).get("engine_source_path"))
+
+
 def _find_running_instance_for_model(model_path: str) -> dict | None:
     with instances_lock:
         for inst in instances.values():
-            if inst["model_path"] == model_path and inst["status"] not in ("stopped",):
+            if _inst_runs_file(inst, model_path) and inst["status"] not in ("stopped",):
                 return inst
     return None
 
@@ -296,7 +316,7 @@ def _find_running_instance_for_model(model_path: str) -> dict | None:
 def _find_any_instance_for_model(model_path: str) -> dict | None:
     with instances_lock:
         for inst in instances.values():
-            if inst["model_path"] == model_path:
+            if _inst_runs_file(inst, model_path):
                 return inst
     return None
 
@@ -445,7 +465,8 @@ def _ensure_model_running(
     instances may also be evicted; None defers to the Ollama override toggle.
     """
     from api.instances import (
-        launch_instance, relaunch_inactive_instance, wait_for_healthy,
+        launch_instance, launch_kwargs_from_config, relaunch_inactive_instance,
+        wait_for_healthy,
     )
 
     # Alias shortcut: when a running instance opted into share_queue_group
@@ -496,6 +517,8 @@ def _ensure_model_running(
         from api.presets import resolve_preset_for_node
         from core.cluster import get_node_id
         preset = resolve_preset_for_node(get_storage().get_preset(model["path"]) or {}, get_node_id())
+        if model.get("_engine") and not preset.get("engine"):
+            preset = {**preset, "engine": model["_engine"]}
         incoming_embedding_model = preset.get("embedding_model", False)
 
         # Waking an existing sleeping/stopped instance for its own model does
@@ -544,32 +567,16 @@ def _ensure_model_running(
         if port is None:
             return None, "no ports available"
 
+        from core.engines import get_engine
+        engine = get_engine(preset, model["path"])
         inst, err = launch_instance(
             model_path=model["path"],
             port=port,
-            n_gpu_layers=preset.get("n_gpu_layers", -1),
-            n_cpu_moe_layers=int(preset.get("n_cpu_moe_layers", 0) or 0),
-            ctx_size=preset.get("ctx_size", 4096),
-            threads=preset.get("threads"),
-            memory_limit=preset.get("memory_limit") or None,
-            parallel=preset.get("parallel"),
-            extra_args=preset.get("extra_args", ""),
-            spec_enabled=preset.get("spec_enabled", False),
-            spec_type=preset.get("spec_type") or DEFAULT_SPEC_TYPE,
-            spec_draft_model=preset.get("spec_draft_model") or "",
-            spec_draft_n_max=preset.get("spec_draft_n_max"),
-            gpu_devices=preset.get("gpu_devices") or None,
-            idle_timeout_min=preset.get("idle_timeout_min", 0),
-            max_concurrent=preset.get("max_concurrent", 0),
-            max_queue_depth=preset.get("max_queue_depth", 200),
-            share_queue=preset.get("share_queue", False),
-            embedding_model=preset.get("embedding_model", False),
-            proxy_sampling_override_enabled=bool(preset.get("proxy_sampling_override_enabled", False)),
-            proxy_sampling_temperature=float(preset.get("proxy_sampling_temperature", 0.8)),
-            proxy_sampling_top_k=int(preset.get("proxy_sampling_top_k", 40)),
-            proxy_sampling_top_p=float(preset.get("proxy_sampling_top_p", 0.95)),
-            proxy_sampling_presence_penalty=float(preset.get("proxy_sampling_presence_penalty", 0.0)),
-            proxy_sampling_repeat_penalty=float(preset.get("proxy_sampling_repeat_penalty", 0.0)),
+            engine=engine.name,
+            # The whole preset, not a hand-picked subset: image input
+            # (mmproj), PDF, sampler and GPU-split settings all apply to
+            # an API-launched instance exactly as to a UI-launched one.
+            **launch_kwargs_from_config(preset, model["path"], engine.default_ctx_size),
         )
         if err:
             return None, err
@@ -587,6 +594,11 @@ def _ensure_model_running(
 
 
 def _gguf_meta_for(model_path: str, model_type: str | None) -> dict:
+    from core.engines import ENGINES, engine_for_path
+    owner = engine_for_path(model_path)
+    if owner:
+        # A virtual model has no file header; its engine describes it.
+        return ENGINES[owner].model_metadata(model_path)
     if model_type and model_type != "gguf":
         return {}
     return get_cached_gguf_metadata(model_path)
@@ -781,8 +793,15 @@ def _llamaman_ps_entry(model_path: str, model_meta: dict | None = None,
 def _list_loaded_models() -> list[dict]:
     model_index = {
         os.path.realpath(m["path"]): m
-        for m in discover_models(MODELS_DIR)
+        for m in _library()
     }
+    # A Strata instance runs under its model id, not a library file: its
+    # size and metadata come from the engine's catalogue.
+    from core.engines import ENGINES
+    for eng in ENGINES.values():
+        if eng.capabilities.get("virtual_models"):
+            for m in eng.virtual_models():
+                model_index.setdefault(os.path.realpath(m["path"]), m)
     live_by_path: dict[str, dict] = {}
 
     with instances_lock:
@@ -1057,7 +1076,7 @@ def _stream_llamaman(host: str, port: int, openai_body: dict, model_name: str,
             return
         resp.encoding = "utf-8"
 
-        for line in resp.iter_lines(decode_unicode=True):
+        for line in iter_response_lines(resp):
             if not line:
                 continue
             if line.startswith("data: "):
@@ -1251,7 +1270,7 @@ def _handle_request(mode: str = "chat"):
     # to become healthy before forwarding the request so the prompt is not
     # lost to a connection-refused error.
     if inst.get("status") != "healthy":
-        if not _wait_for_model_ready(server_host, server_port, MODEL_LOAD_TIMEOUT):
+        if not _wait_for_model_ready(server_host, server_port, load_timeout_for(inst)):
             return jsonify({"error": "model launched but did not become healthy in time"}), 500
         with instances_lock:
             if inst["id"] in instances:
@@ -1338,7 +1357,7 @@ def _handle_request(mode: str = "chat"):
 
 @bp.route("/api/tags", methods=["GET"])
 def llamaman_tags():
-    models = discover_models(MODELS_DIR)
+    models = _library()
     entries = [_llamaman_model_entry(m) for m in models]
     taken = {e["name"].lower() for e in entries}
     entries.extend(_cluster_group_entries(taken, _llamaman_group_entry))
@@ -1537,7 +1556,7 @@ def _openai_group_entry(group: dict) -> dict:
 
 @bp.route("/v1/models", methods=["GET"])
 def llamaman_v1_models():
-    models = discover_models(MODELS_DIR)
+    models = _library()
     data = [_openai_model_entry(m) for m in models]
     taken = {e["id"].lower() for e in data}
     data.extend(_cluster_group_entries(taken, _openai_group_entry))
@@ -1583,7 +1602,7 @@ def llamaman_v1_chat():
 
     # Wait for the model to finish loading before forwarding
     if inst.get("status") != "healthy":
-        if not _wait_for_model_ready(server_host, server_port, MODEL_LOAD_TIMEOUT):
+        if not _wait_for_model_ready(server_host, server_port, load_timeout_for(inst)):
             return jsonify({"error": {"message": "model launched but did not become healthy in time"}}), 500
         with instances_lock:
             if inst_id in instances:
@@ -1637,7 +1656,7 @@ def llamaman_v1_chat():
             def _relay():
                 acc = SSEAccumulator() if handle else None
                 try:
-                    for chunk in resp.iter_content(chunk_size=None):
+                    for chunk in iter_response_chunks(resp):
                         if acc is not None:
                             acc.feed(chunk)
                         if handle and chunk:
@@ -1783,7 +1802,7 @@ def _proxy_passthrough(upstream_path: str, endpoint_label: str):
     inst_id = inst["id"]
 
     if inst.get("status") != "healthy":
-        if not _wait_for_model_ready(server_host, server_port, MODEL_LOAD_TIMEOUT):
+        if not _wait_for_model_ready(server_host, server_port, load_timeout_for(inst)):
             return jsonify({"error": {"message": "model launched but did not become healthy in time"}}), 500
         with instances_lock:
             if inst_id in instances:
@@ -1826,7 +1845,7 @@ def _proxy_passthrough(upstream_path: str, endpoint_label: str):
             def _relay():
                 acc = SSEAccumulator() if handle else None
                 try:
-                    for chunk in resp.iter_content(chunk_size=None):
+                    for chunk in iter_response_chunks(resp):
                         if acc is not None:
                             acc.feed(chunk)
                         if handle and chunk:
@@ -1923,7 +1942,7 @@ def llamaman_v1_embeddings():
     inst_id = inst["id"]
 
     if inst.get("status") != "healthy":
-        if not _wait_for_model_ready(server_host, server_port, MODEL_LOAD_TIMEOUT):
+        if not _wait_for_model_ready(server_host, server_port, load_timeout_for(inst)):
             return jsonify({"error": {"message": "model launched but did not become healthy in time"}}), 500
         with instances_lock:
             if inst_id in instances:

@@ -5,26 +5,19 @@ import os
 import threading
 import time
 import uuid
-from pathlib import Path
 
 import requests as http_requests
 from flask import Blueprint, Response, jsonify, request
 
 from config import (
     HEALTH_CHECK_TIMEOUT,
-    HOST_LOGS_DIR,
-    HOST_MODELS_DIR,
     INTERNAL_PORT_RANGE_END,
     INTERNAL_PORT_RANGE_START,
     LLAMA_CONTAINER_PORT,
     LLAMA_CONTAINER_PREFIX,
     LLAMA_GPU_DEVICES,
-    LLAMA_IMAGE,
-    LLAMA_NETWORK,
     LLAMAMAN_MAX_MODELS,
     LOGS_DIR,
-    MODELS_DIR,
-    MODEL_LOAD_TIMEOUT,
     PORT_RANGE_END,
     PORT_RANGE_START,
     logger,
@@ -39,6 +32,7 @@ from core.helpers import (
     stream_log_file,
 )
 from core.dry_sampling import DRY_SAMPLER_KEYS, parse_dry_config
+from core.engines import DEFAULT_ENGINE, engine_name, get_engine, load_timeout_for, validate_launch
 from core.loop_detect import LOOP_DETECT_KEYS, parse_loop_detect_config
 from core.perf import phase
 from core.proxy_sampling import parse_proxy_sampling_config
@@ -63,11 +57,32 @@ LLAMA_CONTAINER_PORT = 8080
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _browser_host() -> str:
+    """The host name the browser used for this request (no port): what it
+    will also use for an instance's own web page."""
+    h = (request.headers.get("X-Forwarded-Host") or request.host or "").split(",")[0].strip()
+    if h.startswith("["):
+        return h[1:].split("]", 1)[0]
+    return h.split(":", 1)[0] if h.count(":") == 1 else h
+
+
 def _public_instance(inst: dict) -> dict:
     d = public_dict(inst)
     d["last_request_at"] = inst.get("_last_request_at")
+    d["engine"] = engine_name(inst.get("config"), inst.get("model_path"))
+    if inst.get("status") == "starting":
+        stage = get_engine(inst.get("config"), inst.get("model_path")).load_stage(inst)
+        if stage:
+            d["load_stage"] = stage
     if inst.get("_internal_port") is not None:
         d["internal_port"] = inst.get("_internal_port")
+    web_path = get_engine(inst.get("config"), inst.get("model_path")).web_ui_path(inst.get("config") or {})
+    # The engine's own page, straight on the port its container publishes on
+    # the host (the internal port behind llamaman's proxy, else the public
+    # one) - not through llamaman's proxy.
+    server_port = inst.get("_internal_port") if inst.get("_internal_port") is not None else inst.get("port")
+    if web_path and server_port is not None:
+        d["web_ui"] = {"port": int(server_port), "path": web_path}
     gate = get_gate(inst["id"])
     if gate:
         d["queue"] = {
@@ -150,6 +165,7 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
             "share_queue_group",
             "share_queue_fallback",
             "embedding_model",
+            "webui_enabled",
             "auto_restart_on_crash",
             "proxy_sampling_override_enabled",
             "proxy_sampling_temperature",
@@ -171,7 +187,12 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
         ):
             if key in preset:
                 merged[key] = preset[key]
-    return merged
+        engine = get_engine(config, model_path)
+        for key in engine.option_keys:
+            if key in preset:
+                merged[key] = preset[key]
+    # No-op for llama.cpp; e.g. keeps Strata's gate at 1 whatever the preset says.
+    return get_engine(config, model_path).enforce_capabilities(merged)
 
 
 def _parse_required_positive_int(body: dict, field_name: str) -> tuple[int | None, str | None]:
@@ -350,72 +371,13 @@ def _resolve_group_add() -> list:
     return ["video", "render"]
 
 
-def _run_container(
-    inst_id: str,
-    container_name: str,
-    model_path: str,
-    server_port: int,
-    config: dict,
-    log_file: str,
-) -> tuple:
-    """Start a llama-server Docker container. Returns (container, error_str)."""
-    import docker
-
-    cmd = build_llama_cmd(model_path, LLAMA_CONTAINER_PORT, config)
-    gpu_devices = config.get("gpu_devices") or None
-    image_name = config.get("image") or LLAMA_IMAGE
-
-    ensure_docker_network()
-
-    # Bind mounts for the sibling container.
-    # SOURCE must be a path on the Docker HOST (the daemon's filesystem).
-    # When llamaman itself runs in Docker, HOST_MODELS_DIR / HOST_LOGS_DIR are
-    # the real host paths; they default to MODELS_DIR / LOGS_DIR for bare-metal.
-    volumes = {
-        HOST_MODELS_DIR: {"bind": MODELS_DIR, "mode": "ro"},
-        HOST_LOGS_DIR: {"bind": LOGS_DIR, "mode": "rw"},
-    }
-
-    # Publish container port → host port so the Werkzeug proxy and direct
-    # clients can reach it via localhost/host network.
-    port_bindings = {LLAMA_CONTAINER_PORT: server_port}
-
-    kwargs = dict(
-        image=image_name,
-        command=cmd,
-        name=container_name,
-        network=LLAMA_NETWORK,
-        volumes=volumes,
-        ports=port_bindings,
-        detach=True,
-        labels={
-            "llamaman.instance_id": inst_id,
-            "llamaman.model_path": model_path,
-            "llamaman.port": str(server_port),
-            "llamaman.config": json.dumps(config),
-        },
-    )
-
-    threads = config.get("threads")
-    if threads:
-        kwargs["nano_cpus"] = int(float(threads) * 1e9)
-
-    memory_limit = config.get("memory_limit")
-    if memory_limit:
-        kwargs["mem_limit"] = memory_limit
-
-    try:
-        n_gpu_layers = int(config.get("n_gpu_layers", -1))
-    except (TypeError, ValueError):
-        n_gpu_layers = -1
-
-    vendor = get_vendor()
-    if n_gpu_layers == 0:
-        # CPU-only: attach no GPU devices at all. Besides honoring the user's
-        # intent, this avoids Docker's CDI GPU discovery, which errors on hosts
-        # without a configured GPU runtime (e.g. WSL without the NVIDIA
-        # container toolkit).
-        pass
+def _apply_gpu_attachment(kwargs: dict, attach: str, gpu_devices: str | None,
+                          vendor: str | None) -> None:
+    """Add the GPU device kwargs an engine asked for (Engine.gpu_attachment)."""
+    if attach == "none":
+        return
+    if attach == "nvidia":
+        kwargs["device_requests"] = _make_device_requests(gpu_devices)
     elif vendor == "rocm":
         kwargs["devices"] = _make_rocm_devices()
         kwargs["group_add"] = _resolve_group_add()
@@ -438,17 +400,66 @@ def _run_container(
         # NVIDIA (cuda) or unknown/CPU - use Docker device_requests
         kwargs["device_requests"] = _make_device_requests(gpu_devices)
 
+
+def _run_container(
+    inst_id: str,
+    container_name: str,
+    model_path: str,
+    server_port: int,
+    config: dict,
+    log_file: str,
+) -> tuple:
+    """Start an inference server container. Returns (container, error_str).
+
+    The engine (core/engines, picked by config["engine"]) supplies the image,
+    command, env, mounts, ports, limits and labels; this function adds the
+    GPU devices it asks for and talks to Docker.
+    """
+    import docker
+
+    engine = get_engine(config, model_path)
+    gpu_devices = config.get("gpu_devices") or None
+
+    ensure_docker_network()
+
+    kwargs = engine.container_spec(
+        inst_id=inst_id,
+        container_name=container_name,
+        model_path=model_path,
+        server_port=server_port,
+        config=config,
+    )
+    image_name = kwargs["image"]
+
+    vendor = get_vendor()
+    _apply_gpu_attachment(kwargs, engine.gpu_attachment(config, vendor), gpu_devices, vendor)
+
     try:
         client = get_docker_client()
         container = client.containers.run(**kwargs)
         _start_log_relay(container, log_file)
         return container, None
     except docker.errors.ImageNotFound:
-        return None, f"Docker image '{image_name}' not found. Pull it in the Docker Images tab, or run: docker pull {image_name}"
+        return None, engine.image_missing_message(image_name)
     except docker.errors.APIError as e:
+        _remove_unstarted_container(container_name)
         return None, f"Docker API error: {e}"
     except Exception as e:
+        _remove_unstarted_container(container_name)
         return None, str(e)
+
+
+def _remove_unstarted_container(container_name: str) -> None:
+    """containers.run creates the container, then starts it: when the start
+    fails (a mount error, a full disk) the created container stays behind,
+    holds its image (it can't be deleted) and nothing else removes it."""
+    import docker
+    try:
+        get_docker_client().containers.get(container_name).remove(force=True)
+    except docker.errors.NotFound:
+        pass
+    except Exception as e:
+        logger.warning("Could not remove the unstarted container %s: %s", container_name, e)
 
 
 # ---------------------------------------------------------------------------
@@ -536,7 +547,7 @@ def relaunch_inactive_instance(inst_id: str) -> bool:
 
     save_state()
 
-    if not wait_for_healthy(server_host, health_port, timeout=MODEL_LOAD_TIMEOUT):
+    if not wait_for_healthy(server_host, health_port, timeout=load_timeout_for(config, model_path)):
         logger.warning("Relaunched %s but it did not become healthy", inst_id)
         return False
 
@@ -544,12 +555,87 @@ def relaunch_inactive_instance(inst_id: str) -> bool:
         inst = instances.get(inst_id)
         if inst:
             inst["status"] = "healthy"
+            ready = dict(inst)
     save_state()
+    if inst:
+        get_engine(config, model_path).on_ready(ready)
     return True
 
 
 def relaunch_sleeping_instance(inst_id: str) -> bool:
     return relaunch_inactive_instance(inst_id)
+
+
+def launch_kwargs_from_config(config: dict, model_path: str, default_ctx_size: int = 4096) -> dict:
+    """launch_instance() kwargs for a saved instance config or preset.
+
+    The single mapping from stored settings to a launch, shared by the UI
+    restart and the API auto-launch so neither can drop a field the other
+    carries. The caller supplies model_path, port and engine (plus image /
+    web_hosts where they apply)."""
+    engine = get_engine(config, model_path)
+    return dict(
+        n_gpu_layers=config.get("n_gpu_layers", -1),
+        n_cpu_moe_layers=int(config.get("n_cpu_moe_layers", 0) or 0),
+        ctx_size=config.get("ctx_size") or default_ctx_size,
+        threads=config.get("threads"),
+        threads_batch=config.get("threads_batch"),
+        memory_limit=config.get("memory_limit") or None,
+        parallel=config.get("parallel"),
+        extra_args=config.get("extra_args", ""),
+        spec_enabled=config.get("spec_enabled", False),
+        spec_type=config.get("spec_type") or DEFAULT_SPEC_TYPE,
+        spec_draft_model=config.get("spec_draft_model") or "",
+        spec_draft_n_max=config.get("spec_draft_n_max"),
+        spec_draft_n_min=config.get("spec_draft_n_min"),
+        spec_draft_p_split=config.get("spec_draft_p_split"),
+        spec_draft_p_min=config.get("spec_draft_p_min"),
+        mmproj_enabled=config.get("mmproj_enabled", False),
+        mmproj_path=config.get("mmproj_path") or "",
+        # NOTE the True default here, unlike the False-defaulted siblings:
+        # llama.cpp offloads the projector unless told otherwise, so a config
+        # predating this field must restart with offload still on.
+        mmproj_offload=config.get("mmproj_offload", True),
+        pdf_input_enabled=config.get("pdf_input_enabled", False),
+        pdf_extract_text_first=config.get("pdf_extract_text_first", False),
+        pdf_dpi=int(config.get("pdf_dpi") or 200),
+        pdf_max_pages=int(config.get("pdf_max_pages") or 20),
+        gpu_devices=config.get("gpu_devices") or None,
+        split_mode=config.get("split_mode", ""),
+        tensor_split=config.get("tensor_split", ""),
+        flash_attn=config.get("flash_attn", "auto"),
+        reasoning_format=config.get("reasoning_format", "auto"),
+        load_mode=config.get("load_mode", "auto"),
+        cache_type_k=config.get("cache_type_k", ""),
+        cache_type_v=config.get("cache_type_v", ""),
+        idle_timeout_min=config.get("idle_timeout_min", 0),
+        max_concurrent=config.get("max_concurrent", 0),
+        max_queue_depth=config.get("max_queue_depth", 200),
+        share_queue=config.get("share_queue", False),
+        share_queue_group=config.get("share_queue_group", ""),
+        share_queue_fallback=config.get("share_queue_fallback", False),
+        embedding_model=config.get("embedding_model", False),
+        webui_enabled=config.get("webui_enabled", True) is not False,
+        auto_restart_on_crash=bool(config.get("auto_restart_on_crash", False)),
+        proxy_sampling_override_enabled=bool(config.get("proxy_sampling_override_enabled", False)),
+        proxy_sampling_temperature=float(config.get("proxy_sampling_temperature", 0.8)),
+        proxy_sampling_top_k=int(config.get("proxy_sampling_top_k", 40)),
+        proxy_sampling_top_p=float(config.get("proxy_sampling_top_p", 0.95)),
+        proxy_sampling_presence_penalty=float(config.get("proxy_sampling_presence_penalty", 0.0)),
+        proxy_sampling_repeat_penalty=float(config.get("proxy_sampling_repeat_penalty", 0.0)),
+        dry_enabled=bool(config.get("dry_enabled", False)),
+        dry_multiplier=float(config.get("dry_multiplier", 0.0)),
+        dry_base=float(config.get("dry_base", 1.75)),
+        dry_allowed_length=int(config.get("dry_allowed_length", 2)),
+        dry_penalty_last_n=config.get("dry_penalty_last_n"),
+        loop_detect_enabled=bool(config.get("loop_detect_enabled", False)),
+        loop_detect_min_chunk_chars=int(config.get("loop_detect_min_chunk_chars", 200)),
+        loop_detect_min_repetitions=int(config.get("loop_detect_min_repetitions", 3)),
+        loop_detect_max_buffer_chars=int(config.get("loop_detect_max_buffer_chars", 8192)),
+        loop_detect_scan_interval_s=int(config.get("loop_detect_scan_interval_s", 10)),
+        loop_detect_scan_every_n_tokens=int(config.get("loop_detect_scan_every_n_tokens", 64)),
+        engine_options={k: config[k] for k in engine.option_keys if k in config},
+    )
 
 
 def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
@@ -573,8 +659,10 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
                     share_queue=False, share_queue_group="",
                     share_queue_fallback=False,
                     embedding_model=False,
+                    webui_enabled=True,
                     auto_restart_on_crash=False,
                     image=None,
+                    web_hosts=None,
                     proxy_sampling_override_enabled=False,
                     proxy_sampling_temperature=0.8,
                     proxy_sampling_top_k=40,
@@ -591,11 +679,47 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
                     loop_detect_min_repetitions=3,
                     loop_detect_max_buffer_chars=8192,
                     loop_detect_scan_interval_s=10,
-                    loop_detect_scan_every_n_tokens=64):
+                    loop_detect_scan_every_n_tokens=64,
+                    engine=None, engine_options=None):
+    # engine=None picks the engine owning model_path's virtual model, else
+    # llama.cpp. Capabilities clamp the queue/feature knobs (no-op for
+    # llama.cpp): Strata serves one request at a time, so its gate is forced
+    # to 1 and queueing happens in llamaman's RequestGate.
+    eng = get_engine(engine, model_path)
+    # A local file run on another engine (a downloaded Strata shard): the
+    # instance is that engine's model, the file is remembered as its source
+    # (mounted into the container, matched by the API's model lookup).
+    source_path = None
+    if eng.capabilities.get("virtual_models") and not eng.owns_model_path(model_path):
+        canonical = eng.canonical_model_path(model_path)
+        if not canonical:
+            return None, f"{eng.label} cannot run '{model_path}'"
+        source_path, model_path = model_path, canonical
+    clamped = eng.enforce_capabilities({
+        "max_concurrent": max_concurrent,
+        "embedding_model": embedding_model,
+        "spec_enabled": spec_enabled,
+    })
+    max_concurrent = clamped["max_concurrent"]
+    embedding_model = clamped["embedding_model"]
+    spec_enabled = clamped["spec_enabled"]
     with instances_lock:
         used_ports = {i["port"] for i in instances.values() if i["status"] not in ("stopped",)}
+        same_model_live = [i for i in instances.values()
+                           if i["status"] not in ("stopped",) and i.get("model_path") == model_path]
     if port in used_ports:
         return None, f"Port {port} is already in use"
+    blocker = eng.launch_blocker(source_path or model_path)
+    if blocker:
+        return None, blocker
+    from core.archive import busy_reason as archive_busy_reason
+    blocker = archive_busy_reason(model_path)
+    if blocker:
+        return None, blocker
+    if eng.capabilities.get("single_instance_per_model") and same_model_live:
+        other = same_model_live[0]
+        return None, (f"{eng.display_name(model_path)} already has an instance on port {other['port']} "
+                      f"({other['status']}); {eng.label} runs one instance per model")
 
     needs_proxy = idle_timeout_min > 0 or max_concurrent > 0 or proxy_sampling_override_enabled
     if needs_proxy:
@@ -692,8 +816,11 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
         "share_queue_group": (share_queue_group or "").strip().lower(),
         "share_queue_fallback": bool(share_queue_fallback),
         "embedding_model": embedding_model,
+        # llama-server's built-in web UI (off -> --no-webui). Default on, like
+        # llama-server; configs saved before this key existed keep it on.
+        "webui_enabled": bool(webui_enabled),
         "auto_restart_on_crash": auto_restart_on_crash,
-        "image": (image or "").strip() or LLAMA_IMAGE,
+        "image": (image or "").strip() or eng.default_image(),
         "proxy_sampling_override_enabled": proxy_sampling_override_enabled,
         "proxy_sampling_temperature": proxy_sampling_temperature,
         "proxy_sampling_top_k": proxy_sampling_top_k,
@@ -721,11 +848,24 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
         "loop_detect_scan_interval_s": int(loop_detect_scan_interval_s),
         "loop_detect_scan_every_n_tokens": int(loop_detect_scan_every_n_tokens),
     }
+    # Only non-default engines are recorded: a missing key means llama.cpp
+    # (core/engines), and stamping it would change the llama.cpp container's
+    # llamaman.config label.
+    if eng.name != DEFAULT_ENGINE:
+        config["engine"] = eng.name
+        if source_path:
+            config["engine_source_path"] = source_path
+        hosts = [h for h in dict.fromkeys(web_hosts or []) if h]
+        if eng.records_web_hosts and hosts:
+            config["web_hosts"] = hosts
+        for key in eng.option_keys:
+            if key in (engine_options or {}):
+                config[key] = engine_options[key]
 
     inst_id = str(uuid.uuid4())
     container_name = f"{LLAMA_CONTAINER_PREFIX}{inst_id[:8]}"
     log_file = os.path.join(LOGS_DIR, f"{inst_id}.log")
-    model_name = Path(model_path).name
+    model_name = eng.display_name(model_path)
 
     if not is_port_available(port):
         return None, f"Port {port} is already occupied by another process"
@@ -1142,7 +1282,8 @@ def api_instances_create():
     spec_config, spec_err = parse_spec_config(body)
     if spec_err:
         return jsonify({"error": spec_err}), 400
-    mmproj_config, mmproj_err = parse_mmproj_config(body)
+    mmproj_config, mmproj_err = parse_mmproj_config(
+        body, get_engine(body, model_path).image_input_enabled(body))
     if mmproj_err:
         return jsonify({"error": mmproj_err}), 400
     dry_config, dry_err = parse_dry_config(body)
@@ -1151,6 +1292,9 @@ def api_instances_create():
     loop_detect_config, loop_detect_err = parse_loop_detect_config(body)
     if loop_detect_err:
         return jsonify({"error": loop_detect_err}), 400
+    engine, engine_options, engine_err = validate_launch(body, model_path, get_vendor())
+    if engine_err:
+        return jsonify({"error": engine_err}), 400
 
     incoming_embedding_model = bool(body.get("embedding_model", False))
     confirm_overcommit = bool(body.get("confirm_overcommit", False))
@@ -1190,8 +1334,12 @@ def api_instances_create():
         share_queue_group=body.get("share_queue_group", ""),
         share_queue_fallback=bool(body.get("share_queue_fallback", False)),
         embedding_model=bool(body.get("embedding_model", False)),
+        webui_enabled=body.get("webui_enabled", True) is not False,
         auto_restart_on_crash=bool(body.get("auto_restart_on_crash", False)),
         image=body.get("image", "").strip() or None,
+        web_hosts=[_browser_host()],
+        engine=engine,
+        engine_options=engine_options,
         **spec_config,
         **mmproj_config,
         **proxy_sampling_config,
@@ -1266,66 +1414,14 @@ def api_instances_restart(inst_id):
         return jsonify({"error": "No ports available"}), 409
 
     inst, err = launch_instance(
-        model_path=model_path,
+        # A Strata instance runs under its model id; relaunch it from the file
+        # it was started from so that file's folder is mounted again.
+        model_path=config.get("engine_source_path") or model_path,
         port=port,
-        n_gpu_layers=config.get("n_gpu_layers", -1),
-        n_cpu_moe_layers=int(config.get("n_cpu_moe_layers", 0) or 0),
-        ctx_size=config.get("ctx_size", 4096),
-        threads=config.get("threads"),
-        threads_batch=config.get("threads_batch"),
-        memory_limit=config.get("memory_limit") or None,
-        parallel=config.get("parallel"),
-        extra_args=config.get("extra_args", ""),
-        spec_enabled=config.get("spec_enabled", False),
-        spec_type=config.get("spec_type") or DEFAULT_SPEC_TYPE,
-        spec_draft_model=config.get("spec_draft_model") or "",
-        spec_draft_n_max=config.get("spec_draft_n_max"),
-        spec_draft_n_min=config.get("spec_draft_n_min"),
-        spec_draft_p_split=config.get("spec_draft_p_split"),
-        spec_draft_p_min=config.get("spec_draft_p_min"),
-        mmproj_enabled=config.get("mmproj_enabled", False),
-        mmproj_path=config.get("mmproj_path") or "",
-        # NOTE the True default here, unlike the False-defaulted siblings:
-        # llama.cpp offloads the projector unless told otherwise, so a config
-        # predating this field must restart with offload still on.
-        mmproj_offload=config.get("mmproj_offload", True),
-        pdf_input_enabled=config.get("pdf_input_enabled", False),
-        pdf_extract_text_first=config.get("pdf_extract_text_first", False),
-        pdf_dpi=int(config.get("pdf_dpi") or 200),
-        pdf_max_pages=int(config.get("pdf_max_pages") or 20),
-        gpu_devices=config.get("gpu_devices"),
-        split_mode=config.get("split_mode", ""),
-        tensor_split=config.get("tensor_split", ""),
-        flash_attn=config.get("flash_attn", "auto"),
-        reasoning_format=config.get("reasoning_format", "auto"),
-        load_mode=config.get("load_mode", "auto"),
-        cache_type_k=config.get("cache_type_k", ""),
-        cache_type_v=config.get("cache_type_v", ""),
-        idle_timeout_min=config.get("idle_timeout_min", 0),
-        max_concurrent=config.get("max_concurrent", 0),
-        max_queue_depth=config.get("max_queue_depth", 200),
-        share_queue=config.get("share_queue", False),
-        share_queue_group=config.get("share_queue_group", ""),
-        share_queue_fallback=config.get("share_queue_fallback", False),
-        embedding_model=config.get("embedding_model", False),
         image=config.get("image"),
-        proxy_sampling_override_enabled=bool(config.get("proxy_sampling_override_enabled", False)),
-        proxy_sampling_temperature=float(config.get("proxy_sampling_temperature", 0.8)),
-        proxy_sampling_top_k=int(config.get("proxy_sampling_top_k", 40)),
-        proxy_sampling_top_p=float(config.get("proxy_sampling_top_p", 0.95)),
-        proxy_sampling_presence_penalty=float(config.get("proxy_sampling_presence_penalty", 0.0)),
-        proxy_sampling_repeat_penalty=float(config.get("proxy_sampling_repeat_penalty", 0.0)),
-        dry_enabled=bool(config.get("dry_enabled", False)),
-        dry_multiplier=float(config.get("dry_multiplier", 0.0)),
-        dry_base=float(config.get("dry_base", 1.75)),
-        dry_allowed_length=int(config.get("dry_allowed_length", 2)),
-        dry_penalty_last_n=config.get("dry_penalty_last_n"),
-        loop_detect_enabled=bool(config.get("loop_detect_enabled", False)),
-        loop_detect_min_chunk_chars=int(config.get("loop_detect_min_chunk_chars", 200)),
-        loop_detect_min_repetitions=int(config.get("loop_detect_min_repetitions", 3)),
-        loop_detect_max_buffer_chars=int(config.get("loop_detect_max_buffer_chars", 8192)),
-        loop_detect_scan_interval_s=int(config.get("loop_detect_scan_interval_s", 10)),
-        loop_detect_scan_every_n_tokens=int(config.get("loop_detect_scan_every_n_tokens", 64)),
+        web_hosts=[*(config.get("web_hosts") or []), _browser_host()],
+        engine=config.get("engine"),
+        **launch_kwargs_from_config(config, model_path),
     )
     if err:
         _restore_restarted_instance(old)

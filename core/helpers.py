@@ -12,7 +12,15 @@ from pathlib import Path
 
 
 def model_name_from_path(path: str) -> str:
-    """Derive a lowercase model name from a file path (stem only)."""
+    """Derive a lowercase model name from a file path (stem only).
+
+    An engine's virtual model (e.g. /strata/qwen-IQ2_XS) is named by its
+    model id instead ("strata/qwen-iq2_xs"): its "stem" alone would read like
+    a GGUF filename and could shadow or be shadowed by one."""
+    from core.engines import ENGINES, engine_for_path
+    owner = engine_for_path(path)
+    if owner:
+        return ENGINES[owner].display_name(path).lower()
     return Path(path).stem.lower()
 
 
@@ -107,6 +115,54 @@ def request_local_worker(url, *, method="POST", json=None, data=None,
     raise last_err
 
 
+def _streams_to_eof(resp) -> bool:
+    """True for a response body that has neither chunked framing nor a
+    length - it just streams until the server closes the connection
+    (Strata's HTTP/1.0 SSE). requests' iter_content(chunk_size=None) reads
+    such a body to EOF before yielding anything, i.e. it buffers the whole
+    stream. llama-server answers chunked, so it never takes this path."""
+    if "chunked" in (resp.headers.get("Transfer-Encoding") or "").lower():
+        return False
+    if resp.headers.get("Content-Length"):
+        return False
+    # Only a real urllib3 body (not a test double or a custom adapter).
+    from urllib3.response import HTTPResponse
+    return isinstance(resp.raw, HTTPResponse)
+
+
+def iter_response_chunks(resp):
+    """resp.iter_content(chunk_size=None), except that a body streamed to EOF
+    is yielded as it arrives instead of all at once (see _streams_to_eof)."""
+    if not _streams_to_eof(resp):
+        yield from resp.iter_content(chunk_size=None)
+        return
+    while True:
+        data = resp.raw.read1(65536, decode_content=True)
+        if not data or not isinstance(data, (bytes, bytearray)):
+            return
+        yield data
+
+
+def iter_response_lines(resp):
+    """resp.iter_lines(decode_unicode=True), except that a body streamed to
+    EOF is split into lines as it arrives (iter_lines reads 512-byte blocks,
+    which holds back short SSE events until 512 bytes have accumulated)."""
+    if not _streams_to_eof(resp):
+        yield from resp.iter_lines(decode_unicode=True)
+        return
+    import codecs
+    decoder = codecs.getincrementaldecoder(resp.encoding or "utf-8")(errors="replace")
+    pending = ""
+    for data in iter_response_chunks(resp):
+        pending += decoder.decode(data)
+        *lines, pending = pending.split("\n")
+        for line in lines:
+            yield line.rstrip("\r")
+    pending += decoder.decode(b"", final=True)
+    if pending:
+        yield pending.rstrip("\r")
+
+
 def format_size(size_bytes: int) -> str:
     if size_bytes >= 1024**3:
         return f"{size_bytes / (1024**3):.1f} GB"
@@ -181,6 +237,10 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
         cmd += ["--parallel", str(int(config["parallel"]))]
     if config.get("embedding_model"):
         cmd += ["--embeddings"]
+    # Only an explicit False: configs from before the toggle keep the web UI,
+    # and a --no-webui typed into extra_args is not doubled.
+    if config.get("webui_enabled") is False and "--no-webui" not in str(config.get("extra_args") or "").split():
+        cmd += ["--no-webui"]
     # Multi-GPU placement. All three llama.cpp modes are exposed and emitted
     # literally: none (single GPU only, ignores --tensor-split), layer (splits
     # whole layers - llama.cpp's own default when no flag is passed), row

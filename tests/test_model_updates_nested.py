@@ -85,7 +85,9 @@ class CheckNestedMultipartTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, SHARD1)  # local copy: basename only
             with open(path, "wb") as f:
-                f.write(b"x" * local_size)
+                # Sparse: only the size matters (the sha is patched). Writing
+                # b"x" * 5 GB allocated 5 GB of RAM and could take WSL down.
+                f.truncate(local_size)
             with patch.object(updates, "remote_file_info", side_effect=info_fn), \
                  patch("core.downloader.list_repo_files", return_value=_repo_listing()) as listing, \
                  patch("core.model_sources.get_model_sha", return_value=local_sha):

@@ -3,6 +3,7 @@
 from flask import Blueprint, jsonify, request
 
 from core.dry_sampling import parse_dry_config
+from core.engines import DEFAULT_ENGINE, ENGINES, get_engine, parse_engine
 from core.helpers import normalize_flash_attn, normalize_load_mode, normalize_reasoning_format
 from core.loop_detect import LOOP_DETECT_KEYS, parse_loop_detect_config
 from core.model_alias import PRETTY_NAME_KEY, existing_aliases
@@ -84,12 +85,12 @@ def validate_pretty_name(pretty: str, model_path: str) -> tuple[str, str]:
     if not key:
         return "", "name is empty after normalization"
 
-    from api.models import discover_models
+    from api.models import list_models
     from config import MODELS_DIR
     from core.helpers import model_name_from_path
 
     normalized_target = _normalize_model_path(model_path)
-    for m in discover_models(MODELS_DIR):
+    for m in list_models(MODELS_DIR):
         if _normalize_model_path(m["path"]) == normalized_target:
             continue
         if model_name_from_path(m["path"]) == key:
@@ -146,7 +147,9 @@ def api_preset_save(model_path):
     spec_config, spec_err = parse_spec_config(body)
     if spec_err:
         return jsonify({"error": spec_err}), 400
-    mmproj_config, mmproj_err = parse_mmproj_config(body)
+    from core.engines import get_engine
+    mmproj_config, mmproj_err = parse_mmproj_config(
+        body, get_engine(body, model_path).image_input_enabled(body))
     if mmproj_err:
         return jsonify({"error": mmproj_err}), 400
     dry_config, dry_err = parse_dry_config(body)
@@ -155,6 +158,18 @@ def api_preset_save(model_path):
     loop_detect_config, loop_detect_err = parse_loop_detect_config(body)
     if loop_detect_err:
         return jsonify({"error": loop_detect_err}), 400
+    # Presets are shared cluster-wide, so engine *availability* on this node
+    # is not checked here (a Strata preset may be edited from a node without
+    # an NVIDIA GPU); launching re-validates it on the target node.
+    engine, engine_err = parse_engine(body, model_path)
+    if engine_err:
+        return jsonify({"error": engine_err}), 400
+    engine_err = ENGINES[engine].reject_unsupported_fields(body)
+    if engine_err:
+        return jsonify({"error": engine_err}), 400
+    engine_options, engine_err = ENGINES[engine].parse_options(body, model_path)
+    if engine_err:
+        return jsonify({"error": engine_err}), 400
     # Preserve existing meta fields (favorite, note) that aren't part of the launch form
     existing = get_storage().get_preset(model_path) or {}
     if not isinstance(existing, dict):
@@ -205,6 +220,7 @@ def api_preset_save(model_path):
         "share_queue_group": (body.get("share_queue_group") or "").strip().lower() if share_queue_on else "",
         "share_queue_fallback": bool(body.get("share_queue_fallback", False)) if share_queue_on else False,
         "embedding_model": body.get("embedding_model", False),
+        "webui_enabled": body.get("webui_enabled", True) is not False,
         "auto_restart_on_crash": body.get("auto_restart_on_crash", False),
         "favorite": body.get("favorite", existing.get("favorite", False)),
         "note": body.get("note", existing.get("note", "")),
@@ -223,6 +239,13 @@ def api_preset_save(model_path):
         # Same tier as DRY.
         **loop_detect_config,
     }
+
+    # Like instance configs, only a non-default engine is written: a preset
+    # without the key (every preset saved before engines existed) is llama.cpp.
+    if engine != DEFAULT_ENGINE:
+        data["engine"] = engine
+        data.update(engine_options)
+    ENGINES[engine].enforce_capabilities(data)
 
     # Cluster: when a target node is named, the form's hardware fields are that
     # node's override; the shared base hardware is kept from the existing preset.
@@ -295,6 +318,7 @@ def _apply_live_preset_changes(model_path: str, preset: dict) -> None:
             for f in _LIVE_PROXY_SAMPLING_FIELDS:
                 if f in preset:
                     config[f] = preset[f]
+            get_engine(config, model_path).enforce_capabilities(config)
             touched.append(inst["id"])
 
     for inst_id in touched:

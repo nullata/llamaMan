@@ -9,7 +9,7 @@ from werkzeug.serving import make_server
 from werkzeug.wrappers import Request as WerkzeugRequest
 
 from config import REQUEST_TIMEOUT, logger
-from core.helpers import model_name_from_path, request_local_worker
+from core.helpers import iter_response_chunks, model_name_from_path, request_local_worker
 from core.loop_detect import (
     SSETextExtractor as _LoopDetectSSEExtractor,
     attach as _loop_detect_attach,
@@ -391,7 +391,12 @@ def _model_matches(inst_model_path: str, requested_model: str) -> bool:
     # name, so translate it to the file stem before the filename rules below.
     from core.model_alias import canonical_name
     req_model = canonical_name(requested_model).split(":")[0].lower()
-    return req_model == inst_model or req_model in inst_model
+    if req_model == inst_model or req_model in inst_model:
+        return True
+    # A virtual model (e.g. Strata) also answers to the name its engine
+    # reports in its own /v1/models. Empty for GGUF files.
+    from core.engines import get_engine
+    return req_model in get_engine(None, inst_model_path).served_model_names(inst_model_path)
 
 
 def _find_sleeping_instance_for_port(model_name: str, proxy_port: int) -> str | None:
@@ -481,12 +486,13 @@ def make_proxy_app(inst_id: str, internal_port: int, proxy_port: int):
                 return [json.dumps({"error": "instance no longer exists"}).encode()]
         elif status == "starting":
             from api.instances import wait_for_healthy
-            from config import MODEL_LOAD_TIMEOUT
+            from core.engines import load_timeout_for
             with instances_lock:
                 _inst = instances.get(inst_id)
                 _host = _inst.get("_server_host", "localhost") if _inst else "localhost"
                 _port = (_inst.get("_server_port") or _inst.get("_internal_port") or internal_port) if _inst else internal_port
-            if not wait_for_healthy(_host, _port, timeout=MODEL_LOAD_TIMEOUT):
+                _timeout = load_timeout_for(dict(_inst) if _inst else None)
+            if not wait_for_healthy(_host, _port, timeout=_timeout):
                 start_response("503 Service Unavailable",
                                [("Content-Type", "application/json")])
                 return [json.dumps({"error": "model is loading but did not become healthy in time"}).encode()]
@@ -609,7 +615,7 @@ def make_proxy_app(inst_id: str, internal_port: int, proxy_port: int):
                 buf: bytearray | None = bytearray() if (handle and not is_sse) else None
                 BUF_CAP = 256 * 1024
                 try:
-                    for chunk in resp.iter_content(chunk_size=None):
+                    for chunk in iter_response_chunks(resp):
                         if acc is not None:
                             acc.feed(chunk)
                             if handle and chunk:

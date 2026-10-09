@@ -165,6 +165,41 @@ LLAMA_IMAGE = _resolve_llama_image()
 HOST_MODELS_DIR = os.environ.get("HOST_MODELS_DIR", MODELS_DIR)
 HOST_LOGS_DIR = os.environ.get("HOST_LOGS_DIR", LOGS_DIR)
 
+# Strata (core/engines/strata.py): a second inference engine for the
+# Qwen3.8-Flash-Next family on NVIDIA GPUs. Off unless STRATA_ENABLED is set.
+# Its image is built on the node from the repository (STRATA_BUILD_IMAGE) or
+# pulled by name in Settings -> Docker Images. STRATA_IMAGE is the preferred
+# image for launches; when it isn't on the node, the built image, then a
+# pulled one, is used instead (core/engines/strata.resolve_image).
+STRATA_ENABLED = os.environ.get("STRATA_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+STRATA_IMAGE = os.environ.get("STRATA_IMAGE", "").strip() or "strata:latest"
+STRATA_BUILD_IMAGE = os.environ.get("STRATA_BUILD_IMAGE", "").strip() or "strata:latest"
+# What is mounted at /data in every Strata container (model files, prepared
+# packs, the MTP layer, per-model setup configs: 70-120 GB per model). A host
+# path in HOST_STRATA_DATA_DIR wins over the named volume.
+STRATA_DATA_VOLUME = os.environ.get("STRATA_DATA_VOLUME", "").strip() or "llamaman-strata-data"
+HOST_STRATA_DATA_DIR = os.environ.get("HOST_STRATA_DATA_DIR", "").strip()
+# A first start downloads ~60-110 GB and builds the pack before the server
+# opens its port, so this is far above MODEL_LOAD_TIMEOUT.
+STRATA_LOAD_TIMEOUT = int(os.environ.get("STRATA_LOAD_TIMEOUT", 3600))
+# Extra host names / IPs (comma-separated) a browser uses to open a Strata
+# instance's own web app. Strata (no API key) refuses other Host / Origin
+# names; the host of CLUSTER_ADVERTISE_URL is allowed without listing it.
+STRATA_WEB_HOSTS = [h.strip() for h in os.environ.get("STRATA_WEB_HOSTS", "").split(",") if h.strip()]
+# Settings -> Docker Images can download the Strata repository (GitHub
+# owner/name at STRATA_REPO_REF) into STRATA_SRC_DIR and build
+# STRATA_BUILD_IMAGE from it (core/strata_build.py), for this node's GPU generations.
+STRATA_REPO = os.environ.get("STRATA_REPO", "").strip() or "Niko1221/Strata"
+STRATA_REPO_REF = os.environ.get("STRATA_REPO_REF", "").strip() or "main"
+STRATA_SRC_DIR = os.environ.get("STRATA_SRC_DIR", "").strip() or os.path.join(DATA_DIR, "engines", "Strata")
+
+# Model archive (core/archive.py): a second storage volume models can be moved
+# to and restored from in the UI. Setting ARCHIVE_DIR (the path INSIDE the
+# llamaman container where that volume is mounted, e.g. /archive) enables it;
+# unset, the feature is hidden. llamaman moves the files itself - no sibling
+# container mounts it - so no HOST_ path is needed.
+ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "").strip().rstrip("/")
+
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(LOGS_DIR, exist_ok=True)
 

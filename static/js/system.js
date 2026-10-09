@@ -821,6 +821,179 @@ if (autoUpdateScanToggle) {
 
 let _pullStatusInterval = null;
 
+// Strata's images: the ones pulled for it (same rows as llama.cpp's) and the
+// one built on the node from its repository (core/strata_build.py) for the
+// node's GPU generations, with the downloaded and built commits and the build
+// state. The section is hidden without STRATA_ENABLED.
+let _strataBuildInterval = null;
+
+function renderEngineImages(engineImages) {
+  const section = document.getElementById('strata-images-section');
+  const img = engineImages.find(i => i.engine === 'strata');
+  if (section) section.hidden = !img;
+  if (!img) return;
+  const pulledBox = document.getElementById('strata-pulled-list');
+  if (pulledBox) {
+    pulledBox.innerHTML = (img.pulled || []).map(p => imageRowHtml(p, 'strata', p.name === img.default_image)).join('');
+    bindImageRowButtons(pulledBox);
+  }
+  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  const short = sha => `<code>${escHtml((sha || '').slice(0, 7))}</code>`;
+  const when = t => escHtml(t ? new Date(t * 1000).toLocaleString() : '');
+  const repo = img.repo || {};
+  set('strata-image-name', escHtml(img.name));
+  set('strata-image-badge', (img.present && img.name === img.default_image ? '<span class="badge badge-info">default</span> ' : '')
+    + (img.present
+      ? '<span class="badge badge-ok">local</span>'
+      : '<span class="badge badge-warn">not built</span>'));
+  set('strata-image-size', escHtml(img.size_mb ? `${img.size_mb} MB` : ''));
+  const link = `<a href="${escHtml(img.source)}" target="_blank" rel="noopener">${escHtml(repo.repo || img.source)}</a>`;
+  set('strata-image-source', repo.present
+    ? `${link} ${repo.sha ? short(repo.sha) + ' · ' + when(repo.fetched_at) : ''}`
+    : `${link} · not downloaded`);
+  set('strata-image-built', img.built_sha
+    ? `${short(img.built_sha)} · ${when(img.built_at)}`
+      + (img.built_archs ? ` · CUDA ${escHtml(img.built_archs.replace(/;/g, ', '))}` : ' · all GPU generations')
+    : (img.present ? 'outside llamaMan' : '-'));
+  const del = document.getElementById('btn-strata-build-delete');
+  if (del) del.hidden = !(img.present || repo.present);
+  const auto = document.getElementById('s-strata-auto-update');
+  if (auto) auto.checked = !!img.auto_update_enabled;
+  const interval = document.getElementById('s-strata-update-interval');
+  if (interval) interval.value = img.auto_update_interval_hours ?? 24;
+  showStrataBuildState(img.build || {});
+}
+
+function showStrataBuildState(state) {
+  const el = document.getElementById('strata-build-status');
+  const btn = document.getElementById('btn-strata-build');
+  const active = state.status === 'fetching' || state.status === 'building';
+  if (btn) btn.disabled = active;
+  const del = document.getElementById('btn-strata-build-delete');
+  if (del) del.disabled = active;
+  if (el) {
+    let text = '';
+    if (active) text = `${state.status === 'fetching' ? 'Downloading' : 'Building'}: ${state.message || ''}`;
+    else if (state.status === 'error') text = `Last update failed: ${state.message}`;
+    else if (state.status === 'done' && state.message) text = state.message;
+    el.hidden = !text;
+    el.textContent = text;
+  }
+  if (active && !_strataBuildInterval) {
+    _strataBuildInterval = setInterval(pollStrataBuild, 3000);
+  }
+}
+
+async function pollStrataBuild() {
+  try {
+    const res = await nodeFetch(getImagesNode(), '/api/images/strata/status');
+    if (!res || !res.ok) return;
+    const state = await res.json();
+    showStrataBuildState(state);
+    if (state.status === 'fetching' || state.status === 'building') return;
+    clearInterval(_strataBuildInterval);
+    _strataBuildInterval = null;
+    if (state.status === 'done') toast(state.message || 'Strata image updated', 'success');
+    else if (state.status === 'error') toast(`Strata update failed: ${state.message}`, 'error');
+    await loadImages();
+  } catch (e) { /* ignore */ }
+}
+
+async function startStrataBuild() {
+  const ok = await showConfirm('Build Strata image',
+    'Download the latest Strata repository (if newer) and build the image on this node? This can take a long time.');
+  if (!ok) return;
+  try {
+    const res = await nodeFetch(getImagesNode(), '/api/images/strata/build', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(`Strata build failed: ${data.error}`, 'error');
+      return;
+    }
+    toast('Strata update started', 'info');
+    showStrataBuildState({ status: 'fetching', message: 'Checking for updates' });
+  } catch (e) {
+    toast('Error starting Strata build: ' + e.message, 'error');
+  }
+}
+
+async function deleteStrataBuild() {
+  const ok = await showConfirm('Delete built Strata image',
+    'Delete the image built from the repository and the downloaded repository on this node? Pulled Strata images are kept.');
+  if (!ok) return;
+  try {
+    const res = await nodeFetch(getImagesNode(), '/api/images/strata/build', { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(`Delete failed: ${data.error}`, 'error');
+      return;
+    }
+    toast('Built Strata image and repository deleted', 'success');
+    await loadImages();
+  } catch (e) {
+    toast('Error deleting the Strata build: ' + e.message, 'error');
+  }
+}
+
+async function saveStrataImageSettings() {
+  const auto = document.getElementById('s-strata-auto-update');
+  const interval = document.getElementById('s-strata-update-interval');
+  if (!auto || !interval) return;
+  try {
+    const res = await nodeFetch(getImagesNode(), '/api/images/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        strata_auto_update_enabled: auto.checked,
+        strata_auto_update_interval_hours: parseInt(interval.value) || 24,
+      }),
+    });
+    if (res && res.ok) {
+      const status = document.getElementById('strata-image-settings-status');
+      if (status) {
+        status.textContent = 'Saved.';
+        setTimeout(() => { status.textContent = ''; }, 2000);
+      }
+    }
+  } catch (e) {
+    toast('Error saving Strata image settings: ' + e.message, 'error');
+  }
+}
+
+// One tracked image's row (llama.cpp's list and Strata's pulled list).
+function imageRowHtml(img, engine, isDefault) {
+  const digestShort = img.digest ? img.digest.replace('sha256:', '').slice(0, 12) : '-';
+  const sizeMb = img.size_mb ? `${img.size_mb} MB` : '-';
+  const pulledAt = img.last_pulled_at ? new Date(img.last_pulled_at * 1000).toLocaleString() : 'Never';
+  const presentBadge = img.present
+    ? '<span class="badge badge-ok">local</span>'
+    : '<span class="badge badge-warn">not pulled</span>';
+  const defaultBadge = isDefault ? '<span class="badge badge-info">default</span>' : '';
+  return `<div class="dl-item">
+    <div class="dl-item-top">
+      <span class="dl-item-name"><strong>${escHtml(img.name)}</strong> ${defaultBadge} ${presentBadge}</span>
+      <code class="list-meta-code" title="${escHtml(img.digest || '')}">${escHtml(digestShort)}</code>
+      <span class="list-meta-date">${escHtml(sizeMb)}</span>
+      <span class="list-meta-date">pulled: ${escHtml(pulledAt)}</span>
+      <button class="btn-xs btn-image-pull" data-image="${escHtml(img.name)}" data-engine="${engine}">
+        <i class="fa-solid fa-arrow-down"></i> Pull
+      </button>
+      <button class="btn-xs danger btn-image-delete" data-image="${escHtml(img.name)}" title="Delete (blocked while a running instance uses it)">
+        <i class="fa-solid fa-trash"></i>
+      </button>
+    </div>
+  </div>`;
+}
+
+function bindImageRowButtons(box) {
+  box.querySelectorAll('.btn-image-pull').forEach(btn => {
+    btn.addEventListener('click', () => triggerImagePull(btn.dataset.image, btn.dataset.engine));
+  });
+  box.querySelectorAll('.btn-image-delete').forEach(btn => {
+    btn.addEventListener('click', () => deleteImage(btn.dataset.image));
+  });
+}
+
 async function loadImages() {
   const list = document.getElementById('images-list');
   if (!list) return;
@@ -834,49 +1007,18 @@ async function loadImages() {
     const intervalInput = document.getElementById('s-image-update-interval');
     if (intervalInput) intervalInput.value = data.auto_update_interval_hours ?? 24;
 
+    const engineImages = data.engine_images || [];
+    renderEngineImages(engineImages);
+    const strataOpt = document.querySelector('#f-image-pull-engine option[value="strata"]');
+    if (strataOpt) strataOpt.hidden = !engineImages.some(i => i.engine === 'strata');
+    updateImagePullPlaceholder();
+
     if (!data.images || data.images.length === 0) {
       list.innerHTML = '<div class="list-empty-state">No images tracked yet.</div>';
-      return;
+    } else {
+      list.innerHTML = data.images.map(img => imageRowHtml(img, 'llamacpp', img.name === data.current_image)).join('');
+      bindImageRowButtons(list);
     }
-
-    list.innerHTML = '';
-    data.images.forEach(img => {
-      const isActive = img.name === data.current_image;
-      const digestShort = img.digest ? img.digest.replace('sha256:', '').slice(0, 12) : '-';
-      const sizeMb = img.size_mb ? `${img.size_mb} MB` : '-';
-      const pulledAt = img.last_pulled_at
-        ? new Date(img.last_pulled_at * 1000).toLocaleString()
-        : 'Never';
-      const presentBadge = img.present
-        ? '<span class="badge badge-ok">local</span>'
-        : '<span class="badge badge-warn">not pulled</span>';
-      const defaultBadge = isActive ? '<span class="badge badge-info">default</span>' : '';
-
-      const item = document.createElement('div');
-      item.className = 'dl-item';
-      item.innerHTML = `
-        <div class="dl-item-top">
-          <span class="dl-item-name"><strong>${escHtml(img.name)}</strong> ${defaultBadge} ${presentBadge}</span>
-          <code class="list-meta-code" title="${escHtml(img.digest || '')}">${escHtml(digestShort)}</code>
-          <span class="list-meta-date">${escHtml(sizeMb)}</span>
-          <span class="list-meta-date">pulled: ${escHtml(pulledAt)}</span>
-          <button class="btn-xs btn-image-pull" data-image="${escHtml(img.name)}">
-            <i class="fa-solid fa-arrow-down"></i> Pull
-          </button>
-          <button class="btn-xs danger btn-image-delete" data-image="${escHtml(img.name)}" title="Delete (blocked while a running instance uses it)">
-            <i class="fa-solid fa-trash"></i>
-          </button>
-        </div>
-      `;
-      list.appendChild(item);
-    });
-
-    list.querySelectorAll('.btn-image-pull').forEach(btn => {
-      btn.addEventListener('click', () => triggerImagePull(btn.dataset.image));
-    });
-    list.querySelectorAll('.btn-image-delete').forEach(btn => {
-      btn.addEventListener('click', () => deleteImage(btn.dataset.image));
-    });
     // Keep the launch-form image dropdown in sync with available images.
     if (typeof populateLaunchImageSelect === 'function') populateLaunchImageSelect();
   } catch (e) {
@@ -885,13 +1027,25 @@ async function loadImages() {
   }
 }
 
-async function triggerImagePull(imageName) {
+// The shared pull row: the engine picks which list the image goes to. No
+// default source for Strata - its images come from wherever you publish them.
+function updateImagePullPlaceholder() {
+  const sel = document.getElementById('f-image-pull-engine');
+  const input = document.getElementById('f-image-pull-name');
+  if (!sel || !input) return;
+  if (sel.selectedOptions[0] && sel.selectedOptions[0].hidden) sel.value = 'llamacpp';
+  input.placeholder = sel.value === 'strata' ? 'registry/owner/image:tag' : 'ghcr.io/ggml-org/llama.cpp:server-cuda';
+}
+const imagePullEngineSel = document.getElementById('f-image-pull-engine');
+if (imagePullEngineSel) imagePullEngineSel.addEventListener('change', updateImagePullPlaceholder);
+
+async function triggerImagePull(imageName, engine = 'llamacpp') {
   const statusEl = document.getElementById('image-pull-status');
   try {
     const res = await nodeFetch(getImagesNode(), '/api/images/pull', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageName }),
+      body: JSON.stringify({ image: imageName, engine }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -997,6 +1151,12 @@ async function deleteImage(imageName) {
 
 const btnSaveImageSettings = document.getElementById('btn-save-image-settings');
 if (btnSaveImageSettings) btnSaveImageSettings.addEventListener('click', saveImageSettings);
+const btnStrataBuild = document.getElementById('btn-strata-build');
+if (btnStrataBuild) btnStrataBuild.addEventListener('click', startStrataBuild);
+const btnStrataBuildDelete = document.getElementById('btn-strata-build-delete');
+if (btnStrataBuildDelete) btnStrataBuildDelete.addEventListener('click', deleteStrataBuild);
+const btnSaveStrataImageSettings = document.getElementById('btn-save-strata-image-settings');
+if (btnSaveStrataImageSettings) btnSaveStrataImageSettings.addEventListener('click', saveStrataImageSettings);
 
 const btnRestoreModelsJson = document.getElementById('btn-restore-models-json');
 const fileRestoreModels = document.getElementById('f-restore-models-file');
@@ -1072,6 +1232,7 @@ if (btnPullByName) btnPullByName.addEventListener('click', () => {
   const input = document.getElementById('f-image-pull-name');
   const name = input ? input.value.trim() : '';
   if (!name) { toast('Enter an image name first', 'error'); return; }
-  triggerImagePull(name);
+  const engineSel = document.getElementById('f-image-pull-engine');
+  triggerImagePull(name, engineSel ? engineSel.value : 'llamacpp');
   if (input) input.value = '';
 });

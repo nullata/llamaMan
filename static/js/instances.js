@@ -284,9 +284,12 @@ function renderInstances() {
       </div>`;
     }
 
+    const serverLabel = (typeof instanceServerLabel === 'function') ? instanceServerLabel(inst) : 'llama-server';
     const portLine = inst.internal_port != null
-      ? `Public ${inst.port} -> llama-server ${inst.internal_port}`
+      ? `Public ${inst.port} -> ${serverLabel} ${inst.internal_port}`
       : `Port ${inst.port}`;
+    const engineBadge = (typeof instanceEngineBadge === 'function') ? instanceEngineBadge(inst) : '';
+    const loadStageLine = (typeof instanceLoadStageLine === 'function') ? instanceLoadStageLine(inst) : '';
 
     const nodeBadge = (typeof instanceNodeBadge === 'function') ? instanceNodeBadge(inst) : '';
     const queueGroupBadge = (typeof instanceQueueGroupBadge === 'function') ? instanceQueueGroupBadge(inst) : '';
@@ -328,8 +331,10 @@ function renderInstances() {
     card.classList.toggle('instance-card-remote', !!inst._remote);
     card.innerHTML = `
     <div class="inst-info">
-      <div class="model">${escHtml(inst.model_name)}${nodeBadge}${queueGroupBadge}</div>
+      <div class="model">${escHtml(inst.model_name)}${engineBadge}${nodeBadge}${queueGroupBadge}</div>
+      ${(typeof instanceWebUiLink === 'function') ? instanceWebUiLink(inst) : ''}
       <div class="meta">${portLine} &nbsp;·&nbsp; Container ${inst.container_id ? escHtml(inst.container_id.slice(0, 12)) : '-'} &nbsp;·&nbsp; ${uptime}</div>
+      ${loadStageLine}
       ${statsLine}
       ${resourceLine}
       ${queueLine}
@@ -558,10 +563,20 @@ function updateSpecState() {
 }
 
 function updateMmprojState() {
-  const enabled = !!document.getElementById('f-mmproj-enabled')?.checked;
-  toggleLaunchSectionReveal(document.getElementById('mmproj-reveal'), enabled);
+  // Strata has no mmproj: its Image Input select (f-strata-vision) is the
+  // gate, and the section is always open so that select is reachable.
+  const strata = (typeof currentLaunchEngine === 'function') && currentLaunchEngine() === 'strata';
+  const mmprojOn = !!document.getElementById('f-mmproj-enabled')?.checked;
+  const enabled = strata
+    ? (document.getElementById('f-strata-vision')?.value || 'no') !== 'no'
+    : mmprojOn;
+  toggleLaunchSectionReveal(document.getElementById('mmproj-reveal'), strata || mmprojOn);
   const input = document.getElementById('f-mmproj-path');
-  if (input) input.disabled = !enabled;
+  if (input) input.disabled = !mmprojOn;
+  ['f-pdf-input-enabled', 'f-pdf-extract-text-first'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = strata && !enabled;
+  });
   // The master toggle IS the gate for the whole group (mmproj load + PDF
   // endpoint). Clear the PDF sub-toggles on toggle-off so a checked
   // "Accept PDF uploads" can't hide inside the collapsed reveal and trip
@@ -610,7 +625,10 @@ async function updateGpuSettingsState() {
 
   const layersRaw = document.getElementById('f-gpu-layers')?.value;
   const layers = parseInt(layersRaw, 10);
-  const cpuOnly = layers === 0;
+  const strata = (typeof currentLaunchEngine === 'function') && currentLaunchEngine() === 'strata';
+  // GPU Layers is a hidden llama.cpp field for Strata; a 0 left over from
+  // another model must not read as CPU-only.
+  const cpuOnly = !strata && layers === 0;
   const isIntel = vendor === 'intel';
 
   const devicesField  = document.getElementById('f-gpu-devices')?.closest('.form-group');
@@ -651,7 +669,17 @@ async function updateGpuSettingsState() {
 
   // Header hint: honest one-liner about why the section is greyed. Empty when
   // everything is in play so we don't add visual noise for the common case.
-  if (hint) {
+  // Strata: Layer Split is its only placement knob, and only across 2+ GPUs.
+  const lsInput = document.getElementById('f-strata-layer-split');
+  const lsGroup = document.getElementById('f-strata-layer-split-group');
+  if (lsInput) lsInput.disabled = !splitMeaningful;
+  if (lsGroup) lsGroup.classList.toggle('gpu-field-disabled', !splitMeaningful);
+
+  if (hint && strata) {
+    hint.textContent = visibleCount === 0
+      ? 'No GPUs detected on the target node.'
+      : visibleCount === 1 ? 'Strata places the model on this GPU and RAM itself.' : '';
+  } else if (hint) {
     if (isIntel) hint.textContent = 'Per-instance GPU selection is not supported on Intel.';
     else if (cpuOnly) hint.textContent = 'CPU-only (GPU Layers = 0) — no GPU placement to configure.';
     else if (visibleCount < 2) hint.textContent = visibleCount === 1
@@ -735,6 +763,11 @@ function updateModelSettingsState() {
   const ctvGroup = document.getElementById('f-cache-type-v-group');
   const hint = document.getElementById('model-settings-hint');
   if (!flashAttnEl || !ctvEl) return;
+  if ((typeof currentLaunchEngine === 'function') && currentLaunchEngine() === 'strata') {
+    // The Flash Attention / V cache rule is llama-server's; those fields are hidden.
+    if (hint) hint.textContent = '';
+    return;
+  }
 
   const flashOn = flashAttnEl.value === 'on';
   ctvEl.disabled = !flashOn;
@@ -783,7 +816,31 @@ async function updatePortSuggestion() {
   }
 }
 
+// Shared range checks for the proxy-side sampling fields (llama.cpp and
+// Strata launch bodies alike). Throws with the user-facing message.
+function validateProxySamplingBody(body) {
+  if (!Number.isFinite(body.proxy_sampling_temperature) || body.proxy_sampling_temperature < 0 || body.proxy_sampling_temperature > 2) {
+    throw new Error('Proxy-side temperature must be between 0 and 2');
+  }
+  if (!Number.isInteger(body.proxy_sampling_top_k) || body.proxy_sampling_top_k < 0) {
+    throw new Error('Proxy-side top k must be an integer >= 0');
+  }
+  if (!Number.isFinite(body.proxy_sampling_top_p) || body.proxy_sampling_top_p <= 0 || body.proxy_sampling_top_p > 1) {
+    throw new Error('Proxy-side top p must be greater than 0 and no more than 1');
+  }
+  if (!Number.isFinite(body.proxy_sampling_presence_penalty) || body.proxy_sampling_presence_penalty < -2 || body.proxy_sampling_presence_penalty > 2) {
+    throw new Error('Proxy-side presence penalty must be between -2 and 2');
+  }
+  if (!Number.isFinite(body.proxy_sampling_repeat_penalty) || body.proxy_sampling_repeat_penalty < 0 || body.proxy_sampling_repeat_penalty > 2) {
+    throw new Error('Proxy-side repeat penalty must be between 0 and 2');
+  }
+}
+
 function readLaunchForm() {
+  // A non-llama.cpp model (static/js/engines.js) sends only its own fields.
+  if (typeof currentLaunchEngine === 'function' && currentLaunchEngine() === 'strata') {
+    return readStrataLaunchForm();
+  }
   const ctxSizeRaw = document.getElementById('f-ctx-size').value.trim();
   if (!ctxSizeRaw) {
     throw new Error('Context size is required');
@@ -814,6 +871,7 @@ function readLaunchForm() {
     share_queue_fallback: document.getElementById('f-share-queue-fallback')?.checked || false,
     auto_restart_on_crash: document.getElementById('f-auto-restart').checked,
     embedding_model: document.getElementById('f-embedding-model').checked,
+    webui_enabled: document.getElementById('f-webui-enabled')?.checked !== false,
     spec_enabled: document.getElementById('f-spec-enabled').checked,
     spec_type: currentSpecType(),
     spec_draft_model: document.getElementById('f-spec-draft-model').value.trim(),
@@ -843,21 +901,7 @@ function readLaunchForm() {
     loop_detect_scan_every_n_tokens: parseInt(document.getElementById('f-loop-detect-scan-every-n-tokens')?.value, 10) || 64,
     loop_detect_scan_interval_s: parseInt(document.getElementById('f-loop-detect-scan-interval-s')?.value, 10) || 10,
   };
-  if (!Number.isFinite(body.proxy_sampling_temperature) || body.proxy_sampling_temperature < 0 || body.proxy_sampling_temperature > 2) {
-    throw new Error('Proxy-side temperature must be between 0 and 2');
-  }
-  if (!Number.isInteger(body.proxy_sampling_top_k) || body.proxy_sampling_top_k < 0) {
-    throw new Error('Proxy-side top k must be an integer >= 0');
-  }
-  if (!Number.isFinite(body.proxy_sampling_top_p) || body.proxy_sampling_top_p <= 0 || body.proxy_sampling_top_p > 1) {
-    throw new Error('Proxy-side top p must be greater than 0 and no more than 1');
-  }
-  if (!Number.isFinite(body.proxy_sampling_presence_penalty) || body.proxy_sampling_presence_penalty < -2 || body.proxy_sampling_presence_penalty > 2) {
-    throw new Error('Proxy-side presence penalty must be between -2 and 2');
-  }
-  if (!Number.isFinite(body.proxy_sampling_repeat_penalty) || body.proxy_sampling_repeat_penalty < 0 || body.proxy_sampling_repeat_penalty > 2) {
-    throw new Error('Proxy-side repeat penalty must be between 0 and 2');
-  }
+  validateProxySamplingBody(body);
   if (body.spec_enabled && SPEC_TYPES_NEEDING_DRAFT_MODEL.includes(body.spec_type) && !body.spec_draft_model) {
     throw new Error(`Speculative decoding with ${body.spec_type} requires a draft model`);
   }
@@ -956,8 +1000,9 @@ async function submitLaunchForm(btn, status) {
 
     const { res, data } = result;
     if (res.ok) {
+      const serverLabel = (typeof instanceServerLabel === 'function') ? instanceServerLabel(data) : 'llama-server';
       const msg = data.internal_port != null
-        ? `Instance launched: public ${data.port}, llama-server ${data.internal_port}`
+        ? `Instance launched: public ${data.port}, ${serverLabel} ${data.internal_port}`
         : `Instance launched on port ${data.port}`;
       toast(msg, 'success');
       updatePortSuggestion();
