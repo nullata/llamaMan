@@ -26,6 +26,8 @@ LLAMACPP_ONLY_FIELDS = {
     "threads": (0, "0"),
     "threads_batch": (0, "0"),
     "parallel": (0, "0"),
+    "batch_size": (0, "0"),
+    "ubatch_size": (0, "0"),
     "extra_args": (),
     "spec_enabled": (),
     "mmproj_enabled": (),

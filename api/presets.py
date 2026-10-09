@@ -30,7 +30,7 @@ PRETTY_NAME_MAX_LEN = 100
 PRESET_HARDWARE_KEYS = (
     "n_gpu_layers", "n_cpu_moe_layers", "threads", "threads_batch",
     "memory_limit", "gpu_devices",
-    "parallel", "split_mode", "tensor_split",
+    "parallel", "batch_size", "ubatch_size", "split_mode", "tensor_split",
 )
 
 
@@ -193,6 +193,8 @@ def api_preset_save(model_path):
         "threads_batch": body.get("threads_batch"),
         "memory_limit": body.get("memory_limit", ""),
         "parallel": body.get("parallel"),
+        "batch_size": body.get("batch_size"),
+        "ubatch_size": body.get("ubatch_size"),
         "extra_args": body.get("extra_args", ""),
         "gpu_devices": body.get("gpu_devices", ""),
         "split_mode": (body.get("split_mode") or "").strip().lower(),

@@ -309,6 +309,8 @@ idle_proxies_lock = threading.Lock()
 _GATED_PATHS = frozenset({
     "/v1/chat/completions", "/v1/completions", "/v1/embeddings",
     "/completion", "/chat/completions",
+    # Anthropic Messages, OpenAI Responses, and decision models (System One)
+    "/v1/messages", "/v1/responses", "/v1/systemone",
 })
 
 

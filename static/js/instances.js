@@ -926,6 +926,10 @@ function readLaunchForm() {
   if (memoryLimit) body.memory_limit = memoryLimit;
   const parallel = document.getElementById('f-parallel').value.trim();
   if (parallel) body.parallel = parseInt(parallel);
+  const batchSize = document.getElementById('f-batch-size')?.value.trim();
+  if (batchSize) body.batch_size = parseInt(batchSize, 10);
+  const ubatchSize = document.getElementById('f-ubatch-size')?.value.trim();
+  if (ubatchSize) body.ubatch_size = parseInt(ubatchSize, 10);
   const specNMax = document.getElementById('f-spec-draft-n-max').value.trim();
   if (specNMax) body.spec_draft_n_max = parseInt(specNMax, 10);
   // Advanced spec-decoding knobs. Empty = don't set the key at all, so the

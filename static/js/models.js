@@ -725,6 +725,10 @@ function applyPresetHardwareForNode(p, nodeId) {
   if (tbEl) tbEl.value = val('threads_batch') || '';
   document.getElementById('f-memory-limit').value = val('memory_limit') || '';
   document.getElementById('f-parallel').value = val('parallel') || '';
+  const bEl = document.getElementById('f-batch-size');
+  if (bEl) bEl.value = val('batch_size') || '';
+  const ubEl = document.getElementById('f-ubatch-size');
+  if (ubEl) ubEl.value = val('ubatch_size') || '';
   document.getElementById('f-gpu-devices').value = val('gpu_devices') || '';
   // Backfill an empty split_mode (pre-feature presets, or a preset saved
   // before the dropdown had a real 'none' option) to 'layer' - that's
@@ -1043,6 +1047,7 @@ async function updateGpuLayersTotal(modelPath) {
   const suggEl = document.getElementById('gpu-layers-suggestion');
   label.textContent = '';
   currentModelMeta = null;
+  showDecisionModel(null);
   if (suggEl) {
     suggEl.textContent = '';
     suggEl.classList.remove('text-success');
@@ -1055,8 +1060,39 @@ async function updateGpuLayersTotal(modelPath) {
       label.textContent = `/ ${data.layers}`;
     }
     currentModelMeta = data;
+    showDecisionModel(data);
     await updateGpuLayersSuggestion();
   } catch (e) { /* ignore */ }
+}
+
+// A decision model (GGUF <arch>.decision.type) answers typed questions on
+// /v1/systemone instead of generating text. Without a preset, the form gets
+// the settings it needs: kept out of the max-models cap, no chat web UI,
+// slots for the questions of a request (they share the input), and for an
+// encoder (BERT-style) model the whole context in one micro-batch.
+function showDecisionModel(meta) {
+  const hint = document.getElementById('f-decision-hint');
+  const type = meta && meta.decision_type;
+  if (hint) {
+    hint.hidden = !type;
+    hint.textContent = type
+      ? `Decision model (${type}): answers typed questions on /v1/systemone, no text generation.`
+      : '';
+  }
+  if (!type || _loadedPreset) return;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  const check = (id, on) => { const el = document.getElementById(id); if (el) el.checked = on; };
+  check('f-exclude-max-models', true);
+  check('f-webui-enabled', false);
+  check('f-embedding-model', false);
+  set('f-parallel', 8);
+  if (meta.non_causal) {
+    const ctxEl = document.getElementById('f-ctx-size');
+    const ctx = parseInt(ctxEl?.value, 10) || meta.context_length || 8192;
+    if (ctxEl && !ctxEl.value) ctxEl.value = ctx;
+    set('f-batch-size', ctx);
+    set('f-ubatch-size', ctx);
+  }
 }
 
 // Detect layers when model path is changed manually

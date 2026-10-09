@@ -246,6 +246,13 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
         cmd += ["--threads-batch", str(int(config["threads_batch"]))]
     if config.get("parallel"):
         cmd += ["--parallel", str(int(config["parallel"]))]
+    # Logical / physical batch sizes. Blank = llama-server's defaults (2048 /
+    # 512). A decision model needs a question and its options in one batch,
+    # and a non-causal (BERT-style) one its whole input in one micro-batch.
+    if config.get("batch_size"):
+        cmd += ["--batch-size", str(int(config["batch_size"]))]
+    if config.get("ubatch_size"):
+        cmd += ["--ubatch-size", str(int(config["ubatch_size"]))]
     if config.get("embedding_model"):
         cmd += ["--embeddings"]
     # Only an explicit False: configs from before the toggle keep the web UI,

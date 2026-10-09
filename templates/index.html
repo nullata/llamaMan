@@ -159,6 +159,7 @@
                   <div class="form-group">
                     <label for="f-model-path">Model Path</label>
                     <input id="f-model-path" type="text" placeholder="/models/my-model" required />
+                    <p class="hint-text decision-hint" id="f-decision-hint" hidden></p>
                   </div>
                   <div class="form-group form-group-narrow">
                     <span class="label-row">
@@ -197,6 +198,20 @@
                         <span class="info-tip" tabindex="0" role="button" aria-label="Parallel Slots help" data-tip="Number of concurrent decoding slots llama-server allocates (-np). Each slot can serve one request at a time."><i class="fa-solid fa-circle-info"></i></span>
                       </span>
                       <input id="f-parallel" type="number" placeholder="(default 1)" min="1" />
+                    </div>
+                    <div class="form-group" data-engine-only="llamacpp">
+                      <span class="label-row">
+                        <label for="f-batch-size">Batch Size (optional)</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="Batch Size help" data-tip="Maps to llama-server --batch-size (-b): the most prompt tokens processed in one step. Blank = 2048. A decision model needs each question and its options to fit in one batch."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-batch-size" type="number" placeholder="(default 2048)" min="1" />
+                    </div>
+                    <div class="form-group" data-engine-only="llamacpp">
+                      <span class="label-row">
+                        <label for="f-ubatch-size">Micro-batch Size (optional)</label>
+                        <span class="info-tip" tabindex="0" role="button" aria-label="Micro-batch Size help" data-tip="Maps to llama-server --ubatch-size (-ub): the physical batch sent to the GPU. Blank = 512. Bigger is faster prompt processing for more VRAM. Embedding and BERT-style decision models need their whole input in one micro-batch: set it (and Batch Size) to the context size."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <input id="f-ubatch-size" type="number" placeholder="(default 512)" min="1" />
                     </div>
                     <div class="form-group" data-engine-only="llamacpp">
                       <span class="label-row">

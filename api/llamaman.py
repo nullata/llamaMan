@@ -45,6 +45,7 @@ from api.models import (
     estimate_model_vram,
     format_param_count,
     get_cached_gguf_metadata,
+    model_decision_type,
 )
 from storage import get_storage
 from core.state import instances, instances_lock, update_instance_stats
@@ -1263,6 +1264,8 @@ def _handle_request(mode: str = "chat"):
 
     if inst.get("config", {}).get("embedding_model"):
         return jsonify({"error": f"model '{model_name}' is embedding-only and cannot handle chat completions"}), 422
+    if model_decision_type(inst.get("model_path", "")):
+        return jsonify({"error": _decision_only_message(model_name)}), 422
 
     server_host = inst.get("_server_host", "localhost")
     server_port = inst.get("_server_port") or inst.get("_internal_port") or inst["port"]
@@ -1586,6 +1589,8 @@ def llamaman_v1_chat():
 
     if inst.get("config", {}).get("embedding_model"):
         return jsonify({"error": {"message": f"model '{model_name}' is embedding-only and cannot handle chat completions"}}), 422
+    if model_decision_type(inst.get("model_path", "")):
+        return jsonify({"error": {"message": _decision_only_message(model_name)}}), 422
 
     # Rewrite PDF payloads before forwarding - llama-server doesn't understand
     # them and would return an opaque decode error otherwise. No-op when the
@@ -1765,9 +1770,17 @@ def _completion_usage(data) -> dict | None:
     return None
 
 
-def _proxy_passthrough(upstream_path: str, endpoint_label: str):
+def _decision_only_message(model_name: str) -> str:
+    return (f"model '{model_name}' is a decision model: it answers typed questions "
+            "on /v1/systemone and does not generate text")
+
+
+def _proxy_passthrough(upstream_path: str, endpoint_label: str, decision: bool = False):
     """Cluster/gate/sampling-aware passthrough for the raw completion endpoints
-    (/v1/completions, /completion).
+    (/v1/completions, /completion) and decision models' /v1/systemone
+    (`decision`: no sampling overrides, no embedding check - llama-server
+    answers 501 for a model that is not a decision model - and the answers
+    are what the request log records).
 
     Same machinery as the chat handler - cross-node dispatch + work-stealing,
     proxy-side sampling overrides, request logging - but the body is forwarded
@@ -1791,10 +1804,12 @@ def _proxy_passthrough(upstream_path: str, endpoint_label: str):
     )
     if err:
         return jsonify({"error": {"message": err}}), 503
-    if inst.get("config", {}).get("embedding_model"):
-        return jsonify({"error": {"message": f"model '{model_name}' is embedding-only and cannot generate completions"}}), 422
-
-    body = apply_proxy_sampling_overrides(body, effective_inference_config(inst))
+    if not decision:
+        if inst.get("config", {}).get("embedding_model"):
+            return jsonify({"error": {"message": f"model '{model_name}' is embedding-only and cannot generate completions"}}), 422
+        if model_decision_type(inst.get("model_path", "")):
+            return jsonify({"error": {"message": _decision_only_message(model_name)}}), 422
+        body = apply_proxy_sampling_overrides(body, effective_inference_config(inst))
 
     server_host = inst.get("_server_host", "localhost")
     server_port = inst.get("_server_port") or inst.get("_internal_port") or inst["port"]
@@ -1888,8 +1903,9 @@ def _proxy_passthrough(upstream_path: str, endpoint_label: str):
             if tps:
                 update_instance_stats(inst_id, tokens_per_sec=tps)
             if handle:
-                handle.set_response(text=_extract_completion_text(data),
-                                    usage=usage, status_code=resp.status_code)
+                text = (json.dumps(data.get("answers") or data.get("error") or {}, ensure_ascii=False)
+                        if decision and isinstance(data, dict) else _extract_completion_text(data))
+                handle.set_response(text=text, usage=usage, status_code=resp.status_code)
                 if tps:
                     handle.set_metrics(tokens_per_sec=tps)
             return jsonify(data), resp.status_code
@@ -1909,6 +1925,14 @@ def llamaman_v1_completions():
     """OpenAI legacy text-completions, with the same dispatch/gate/sampling
     pipeline as chat. Single-node and cluster both supported."""
     return _proxy_passthrough("/v1/completions", "openai_completions")
+
+
+@bp.route("/v1/systemone", methods=["POST"])
+def llamaman_v1_systemone():
+    """Decision models (System One API: typed questions answered with
+    probabilities). Same routing as completions: model by name, auto-launch,
+    cluster dispatch, gate, request log."""
+    return _proxy_passthrough("/v1/systemone", "systemone", decision=True)
 
 
 @bp.route("/completion", methods=["POST"])
