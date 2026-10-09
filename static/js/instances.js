@@ -871,6 +871,7 @@ function readLaunchForm() {
     share_queue_fallback: document.getElementById('f-share-queue-fallback')?.checked || false,
     auto_restart_on_crash: document.getElementById('f-auto-restart').checked,
     embedding_model: document.getElementById('f-embedding-model').checked,
+    exclude_from_max_models: document.getElementById('f-exclude-max-models').checked,
     webui_enabled: document.getElementById('f-webui-enabled')?.checked !== false,
     spec_enabled: document.getElementById('f-spec-enabled').checked,
     spec_type: currentSpecType(),
@@ -1301,6 +1302,15 @@ if (mmprojToggle) {
 
 const specTypeSelect = document.getElementById('f-spec-type');
 if (specTypeSelect) specTypeSelect.addEventListener('change', updateSpecState);
+
+// An embedding model is normally kept out of the cap: turning it on turns
+// Exclude from Max Models on too (it can be turned off again).
+const embeddingToggle = document.getElementById('f-embedding-model');
+if (embeddingToggle) {
+  embeddingToggle.addEventListener('change', () => {
+    if (embeddingToggle.checked) document.getElementById('f-exclude-max-models').checked = true;
+  });
+}
 
 // GPU Settings section: react to the two inputs that gate the visible-GPU
 // count (GPU Layers = 0 disables the whole placement group; GPU Devices

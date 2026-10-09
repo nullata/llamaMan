@@ -4,7 +4,9 @@ from flask import Blueprint, jsonify, request
 
 from core.dry_sampling import parse_dry_config
 from core.engines import DEFAULT_ENGINE, ENGINES, get_engine, parse_engine
-from core.helpers import normalize_flash_attn, normalize_load_mode, normalize_reasoning_format
+from core.helpers import (
+    excluded_from_max_models, normalize_flash_attn, normalize_load_mode, normalize_reasoning_format,
+)
 from core.loop_detect import LOOP_DETECT_KEYS, parse_loop_detect_config
 from core.model_alias import PRETTY_NAME_KEY, existing_aliases
 from core.model_alias import invalidate as invalidate_alias_cache
@@ -220,6 +222,7 @@ def api_preset_save(model_path):
         "share_queue_group": (body.get("share_queue_group") or "").strip().lower() if share_queue_on else "",
         "share_queue_fallback": bool(body.get("share_queue_fallback", False)) if share_queue_on else False,
         "embedding_model": body.get("embedding_model", False),
+        "exclude_from_max_models": excluded_from_max_models(body),
         "webui_enabled": body.get("webui_enabled", True) is not False,
         "auto_restart_on_crash": body.get("auto_restart_on_crash", False),
         "favorite": body.get("favorite", existing.get("favorite", False)),
@@ -315,6 +318,8 @@ def _apply_live_preset_changes(model_path: str, preset: dict) -> None:
             config["share_queue_group"] = (preset.get("share_queue_group") or "").strip().lower()
             config["share_queue_fallback"] = bool(preset.get("share_queue_fallback", False))
             config["auto_restart_on_crash"] = preset.get("auto_restart_on_crash", False)
+            # Only how the cap counts the instance, read on every launch/evict.
+            config["exclude_from_max_models"] = excluded_from_max_models(preset)
             for f in _LIVE_PROXY_SAMPLING_FIELDS:
                 if f in preset:
                     config[f] = preset[f]

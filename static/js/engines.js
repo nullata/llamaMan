@@ -307,6 +307,7 @@ function readStrataLaunchForm() {
     share_queue_group: val('f-share-queue-group')?.value.trim() || '',
     share_queue_fallback: val('f-share-queue-fallback')?.checked || false,
     auto_restart_on_crash: val('f-auto-restart').checked,
+    exclude_from_max_models: val('f-exclude-max-models').checked,
     proxy_sampling_override_enabled: val('f-proxy-sampling-override-enabled').checked,
     proxy_sampling_temperature: parseFloat(val('f-proxy-sampling-temperature').value),
     proxy_sampling_top_k: parseInt(val('f-proxy-sampling-top-k').value, 10),

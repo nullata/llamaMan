@@ -798,6 +798,16 @@
                       <span class="toggle-slider"></span>
                     </label>
                   </div>
+                  <div class="launch-toggle-pair">
+                    <span class="label-row">
+                      <label for="f-exclude-max-models">Exclude from Max Models</label>
+                      <span class="info-tip" tabindex="0" role="button" aria-label="Exclude from Max Models help" data-tip="Not counted toward LLAMAMAN_MAX_MODELS and never evicted to make room for another model. For small always-on models, such as embedding or decision models. Turning Embedding Model on turns this on too."><i class="fa-solid fa-circle-info"></i></span>
+                    </span>
+                    <label class="toggle-switch" for="f-exclude-max-models" aria-label="Exclude from Max Models">
+                      <input id="f-exclude-max-models" type="checkbox" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
                 </div>
                 <!-- Cluster grouping: revealed only when Queue sharing is on. The
                      group name overrides the implicit "same filename" key, so

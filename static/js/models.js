@@ -517,6 +517,10 @@ function applyPresetToLaunchForm(p) {
   if (typeof updateShareQueueClusterRow === 'function') updateShareQueueClusterRow();
   document.getElementById('f-auto-restart').checked = !!p.auto_restart_on_crash;
   document.getElementById('f-embedding-model').checked = !!p.embedding_model;
+  // Presets saved before the toggle existed: Embedding Model was what excluded
+  // a model from the cap, so it turns both on.
+  document.getElementById('f-exclude-max-models').checked =
+    'exclude_from_max_models' in p ? !!p.exclude_from_max_models : !!p.embedding_model;
   // Default on: presets saved before the toggle existed keep the web UI.
   const webuiEl = document.getElementById('f-webui-enabled');
   if (webuiEl) webuiEl.checked = p.webui_enabled !== false;

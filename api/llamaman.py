@@ -21,6 +21,7 @@ from config import (
     logger,
 )
 from core.helpers import (
+    excluded_from_max_models,
     iter_response_chunks, iter_response_lines,
     find_available_port,
     is_container_running,
@@ -322,7 +323,7 @@ def _find_any_instance_for_model(model_path: str) -> dict | None:
 
 
 def _count_running_instances() -> int:
-    """Count non-embedding instances holding a slot against LLAMAMAN_MAX_MODELS.
+    """Count instances (not excluded from the cap) holding a slot against LLAMAMAN_MAX_MODELS.
 
     Sleeping instances still count: the admin (or a prior auto-launch) claimed
     that slot for that model's config; sleep is a resource-saving pause, not a
@@ -334,7 +335,7 @@ def _count_running_instances() -> int:
         return sum(
             1 for inst in instances.values()
             if inst["status"] not in ("stopped",)
-            and not inst.get("config", {}).get("embedding_model", False)
+            and not excluded_from_max_models(inst.get("config"))
         )
 
 
@@ -349,19 +350,19 @@ def _get_llamaman_managed_instances() -> list[dict]:
             inst for inst in instances.values()
             if inst.get("_llamaman_managed")
             and inst["status"] not in ("stopped",)
-            and not inst.get("config", {}).get("embedding_model", False)
+            and not excluded_from_max_models(inst.get("config"))
         ]
     managed.sort(key=lambda i: i.get("_last_request_at", i["started_at"]))
     return managed
 
 
 def _get_all_evictable_instances() -> list[dict]:
-    """Return ALL non-embedding not-fully-stopped instances sorted by LRU."""
+    """Return ALL not-excluded, not-fully-stopped instances sorted by LRU."""
     with instances_lock:
         all_insts = [
             inst for inst in instances.values()
             if inst["status"] not in ("stopped",)
-            and not inst.get("config", {}).get("embedding_model", False)
+            and not excluded_from_max_models(inst.get("config"))
         ]
     all_insts.sort(key=lambda i: i.get("_last_request_at", i["started_at"]))
     return all_insts
@@ -377,7 +378,7 @@ def _openai_can_evict_admin_instances() -> bool:
     return bool(effective_from_settings(get_storage().get_settings(), "allow_openai_api_override_admin", False))
 
 
-def _evict_llamaman_instances_if_needed(incoming_embedding_model: bool = False,
+def _evict_llamaman_instances_if_needed(incoming_excluded: bool = False,
                                         can_evict_admin: bool | None = None) -> bool:
     """Evict oldest llamaman-managed instances to stay within limits.
 
@@ -398,8 +399,8 @@ def _evict_llamaman_instances_if_needed(incoming_embedding_model: bool = False,
 
     if LLAMAMAN_MAX_MODELS <= 0:
         return True  # 0 = no limit, never evict
-    if incoming_embedding_model:
-        return True  # embedding launches never count toward the chat-model cap
+    if incoming_excluded:
+        return True  # an excluded model never counts toward the cap
 
     total = _count_running_instances()
     if total < LLAMAMAN_MAX_MODELS:
@@ -519,7 +520,7 @@ def _ensure_model_running(
         preset = resolve_preset_for_node(get_storage().get_preset(model["path"]) or {}, get_node_id())
         if model.get("_engine") and not preset.get("engine"):
             preset = {**preset, "engine": model["_engine"]}
-        incoming_embedding_model = preset.get("embedding_model", False)
+        incoming_excluded = excluded_from_max_models(preset)
 
         # Waking an existing sleeping/stopped instance for its own model does
         # NOT consume a new slot - that slot was already claimed at launch
@@ -539,7 +540,7 @@ def _ensure_model_running(
                 # Evict LRU Ollama-managed instances (and admin-UI ones if the
                 # override toggle is on) to stay within LLAMAMAN_MAX_MODELS.
                 room = _evict_llamaman_instances_if_needed(
-                    incoming_embedding_model=incoming_embedding_model,
+                    incoming_excluded=incoming_excluded,
                     can_evict_admin=can_evict_admin,
                 )
                 if not room:
@@ -549,7 +550,7 @@ def _ensure_model_running(
                     )
             else:
                 # OpenAI API: never evict - only proceed if there is already room.
-                if not incoming_embedding_model and LLAMAMAN_MAX_MODELS > 0:
+                if not incoming_excluded and LLAMAMAN_MAX_MODELS > 0:
                     if _count_running_instances() >= LLAMAMAN_MAX_MODELS:
                         return None, (
                             f"model limit reached (LLAMAMAN_MAX_MODELS={LLAMAMAN_MAX_MODELS}); "

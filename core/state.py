@@ -10,7 +10,7 @@ import os
 
 from config import LLAMA_CONTAINER_PREFIX, LOGS_DIR, logger
 from core.helpers import (
-    get_docker_client, is_container_running, resolve_llama_endpoint,
+    excluded_from_max_models, get_docker_client, is_container_running, resolve_llama_endpoint,
     start_container_log_relay, stop_container,
 )
 
@@ -171,6 +171,7 @@ def adopt_orphans() -> int:
         orphan_config = {
             **config,
             "embedding_model": preset.get("embedding_model", config.get("embedding_model", False)),
+            "exclude_from_max_models": excluded_from_max_models(preset if preset else config),
             "proxy_sampling_override_enabled": preset.get("proxy_sampling_override_enabled", False),
             "proxy_sampling_temperature": preset.get("proxy_sampling_temperature", 0.8),
             "proxy_sampling_top_k": preset.get("proxy_sampling_top_k", 40),
