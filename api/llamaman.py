@@ -1657,9 +1657,7 @@ def llamaman_v1_chat():
                 acc = SSEAccumulator() if handle else None
                 try:
                     for chunk in iter_response_chunks(resp):
-                        if acc is not None:
-                            acc.feed(chunk)
-                        if handle and chunk:
+                        if acc is not None and acc.feed(chunk):
                             handle.mark_first_token()
                         yield chunk
                         # Loop-detection fork. Extract visible text from the
@@ -1846,9 +1844,7 @@ def _proxy_passthrough(upstream_path: str, endpoint_label: str):
                 acc = SSEAccumulator() if handle else None
                 try:
                     for chunk in iter_response_chunks(resp):
-                        if acc is not None:
-                            acc.feed(chunk)
-                        if handle and chunk:
+                        if acc is not None and acc.feed(chunk):
                             handle.mark_first_token()
                         yield chunk
                         if _loop_buf is not None and _loop_extractor is not None and chunk:
