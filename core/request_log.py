@@ -252,9 +252,14 @@ class SSEAccumulator:
         self._content: list[str] = []
         self._usage: dict | None = None
 
-    def feed(self, chunk: bytes) -> None:
+    def feed(self, chunk: bytes) -> bool:
+        """True when this chunk carried generated output (content, reasoning or
+        a tool call): the first such chunk is the first token. Not the first
+        bytes - Strata sends an empty role chunk and keep-alive comments while
+        it reads the prompt."""
         if not chunk:
-            return
+            return False
+        output = False
         self._buf += chunk
         while b"\n" in self._buf:
             line, self._buf = self._buf.split(b"\n", 1)
@@ -281,13 +286,18 @@ class SSEAccumulator:
                     c = delta.get("content")
                     if isinstance(c, str) and c:
                         self._content.append(c)
+                        output = True
+                    if delta.get("reasoning_content") or delta.get("tool_calls"):
+                        output = True
                 text = c0.get("text")                       # legacy completions: choices[].text
                 if isinstance(text, str) and text:
                     self._content.append(text)
+                    output = True
             else:                                           # llama.cpp native: top-level content
                 c = obj.get("content")
                 if isinstance(c, str) and c:
                     self._content.append(c)
+                    output = True
                 if obj.get("stop") and self._usage is None:
                     tp, te = obj.get("tokens_predicted"), obj.get("tokens_evaluated")
                     if isinstance(tp, int) or isinstance(te, int):
@@ -296,6 +306,7 @@ class SSEAccumulator:
                             "prompt_tokens": te or 0,
                             "total_tokens": (tp or 0) + (te or 0),
                         }
+        return output
 
     def finish(self) -> tuple[str, dict | None]:
         return "".join(self._content), self._usage
