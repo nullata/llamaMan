@@ -84,15 +84,24 @@ services:
       # - ARCHIVE_DIR=/archive
       #
       # Strata engine (optional, NVIDIA only) - see README "Strata Engine".
-      # Build the image first in a clone of github.com/Niko1221/Strata:
-      #   docker build -t strata .
+      # Easiest build path: Settings -> Docker Images -> build Strata from the
+      # repository, on this node. Or build it yourself in a clone of
+      # github.com/Niko1221/Strata: docker build -t strata .
       # - STRATA_ENABLED=true
       # - STRATA_IMAGE=strata:latest
+      # Build source for the UI build: owner/name and ref (branch or commit;
+      # pin a commit for reproducibility) downloaded into STRATA_SRC_DIR.
+      # - STRATA_REPO=Niko1221/Strata
+      # - STRATA_REPO_REF=main
+      # - STRATA_SRC_DIR=/app/data/engines/Strata
+      # - STRATA_BUILD_IMAGE=strata:latest
       # Named volume (default) or a host path mounted at /data in Strata
       # containers; 70-120 GB per model.
       # - STRATA_DATA_VOLUME=llamaman-strata-data
       # - HOST_STRATA_DATA_DIR=/srv/strata-data
       # - STRATA_LOAD_TIMEOUT=3600
+      # - STRATA_WEB_HOSTS=extra-host:port  (hosts added to Strata's Host/Origin
+      #   allowlist so its own web app chat works from the browser)
       #
       # Clustering (optional) - run several llamaman deployments as one cluster.
       # Off by default; single-node installs ignore all of these. The node's
