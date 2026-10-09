@@ -13,6 +13,7 @@ The guarantees under test:
 
 import os
 import tempfile
+import threading
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
@@ -102,6 +103,12 @@ class ResilientTestCase(unittest.TestCase):
     def tearDown(self):
         import storage.resilient as R
         R._is_connection_error = self._real_pred
+        # Enabling the mirror kicks a daemon sync thread that writes into the
+        # mirror directory. Let it land before rmtree, or cleanup races it and
+        # fails with "Directory not empty".
+        for t in threading.enumerate():
+            if t.name == "db-mirror-initial-sync":
+                t.join(10)
         self._tmp.cleanup()
 
     def make(self, enabled=True, fail_threshold=3):
