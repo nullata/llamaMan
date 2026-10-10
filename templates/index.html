@@ -5,26 +5,37 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>llamaMan</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/shell.css') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='fontawesome-free-7.1.0-web/css/all.min.css') }}" />
   <link rel="icon" href="{{ url_for('static', filename='images/logo.svg') }}" type="image/svg+xml" />
+  <script>
+    // Apply the stored theme before first paint so there is no flash.
+    try {
+      var t = localStorage.getItem('llamaman-theme');
+      if (t === 'light') document.documentElement.dataset.theme = 'light';
+    } catch (e) { /* private mode */ }
+  </script>
 
 </head>
 
 <body>
 
-  <header>
+  <header class="app-header">
+    <button class="btn-icon rail-toggle" id="btn-rail-toggle" type="button"
+      aria-label="Toggle navigation" title="Toggle navigation"><i class="fa-solid fa-bars"></i></button>
     <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="null" class="header-logo" />
     <h1>llamaMan</h1>
+    <span class="header-crumb" id="view-title" aria-live="polite">Dashboard</span>
     <div class="header-spacer"></div>
-    <nav class="header-nav" aria-label="Primary">
-      <a href="/logging" class="nav-link" title="Request logging"><i class="fa-solid fa-chart-column"></i> Logging</a>
-      <span class="header-separator" aria-hidden="true">|</span>
-      <span id="instance-count" class="nav-meta">0 instances</span>
-      <span class="header-separator" aria-hidden="true">|</span>
-      <a href="/logout" class="nav-link nav-link-logout" title="Logout"><i
-          class="fa-solid fa-right-from-bracket"></i></a>
-    </nav>
+    <span id="instance-count" class="nav-meta">0 instances</span>
+    <span class="header-separator" aria-hidden="true">|</span>
+    <button class="btn-icon" id="btn-theme-toggle" type="button" title="Toggle light / dark theme"
+      aria-label="Toggle color theme"><i class="fa-solid fa-moon"></i></button>
+    <span class="header-separator" aria-hidden="true">|</span>
+    <a href="/logout" class="nav-link nav-link-logout" title="Logout"><i
+        class="fa-solid fa-right-from-bracket"></i></a>
   </header>
 
   <!-- Shown whenever /api/gpu-info returns no GPUs, which covers both "there is
@@ -37,90 +48,127 @@
     one, set GPU Layers to 0 to run fully on CPU.
   </div>
 
+
   <div class="layout">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <h2>Model Library</h2>
-        <div class="btn-group">
-          <button class="btn-icon" id="btn-open-download" title="Download a model from HuggingFace"><i
-              class="fa-solid fa-download"></i> Download</button>
-          <button class="btn-icon" id="btn-refresh-models" title="Rescan models"><i
-              class="fa-solid fa-arrows-rotate"></i></button>
-        </div>
+    <nav class="rail" id="app-rail" aria-label="Primary">
+      <div class="rail-group">
+        <span class="rail-group-label">Operate</span>
+        <a class="rail-item" href="#/dashboard" data-view-link="dashboard"><i
+            class="fa-solid fa-gauge-high"></i><span class="rail-label">Dashboard</span></a>
+        <a class="rail-item" href="#/instances" data-view-link="instances"><i
+            class="fa-solid fa-server"></i><span class="rail-label">Instances</span><span
+            class="rail-badge" id="rail-inst-count" hidden></span></a>
+        <a class="rail-item" href="#/launch" data-view-link="launch"><i
+            class="fa-solid fa-rocket"></i><span class="rail-label">Launch</span></a>
       </div>
-      <input type="text" id="model-search" placeholder="Search models…" />
-      <div id="model-list">
-        <div id="model-empty">Scanning…</div>
+      <div class="rail-group">
+        <span class="rail-group-label">Library</span>
+        <a class="rail-item" href="#/models" data-view-link="models"><i
+            class="fa-solid fa-cube"></i><span class="rail-label">Models</span></a>
+        <a class="rail-item" href="#/downloads" data-view-link="downloads"><i
+            class="fa-solid fa-download"></i><span class="rail-label">Downloads</span><span
+            class="rail-badge" id="rail-dl-count" hidden></span></a>
       </div>
-
-      <!-- Downloads section -->
-      <div class="sidebar-section">
-        <div class="sidebar-section-header" id="dl-section-toggle">
-          <h2>Downloads</h2>
-          <span class="chevron"><i class="fa-solid fa-chevron-down"></i></span>
-        </div>
-        <div id="downloads-panel">
-          <div id="dl-empty">No downloads yet.</div>
-        </div>
+      <div class="rail-group">
+        <span class="rail-group-label">Admin</span>
+        <a class="rail-item" href="#/settings" data-view-link="settings"><i
+            class="fa-solid fa-sliders"></i><span class="rail-label">Settings</span></a>
+        <a class="rail-item" href="/logging"><i class="fa-solid fa-chart-column"></i><span
+            class="rail-label">Logging</span></a>
       </div>
-    </aside>
+      <div class="rail-footer">
+        <span>llamaMan v{{ llamaman_version }}</span>
+        <a href="https://github.com/nullata/llamaman" target="_blank" rel="noopener noreferrer"
+          class="app-footer-repo" title="Star llamaMan on GitHub if it's useful to you"><i
+            class="fa-solid fa-star app-footer-star"></i> GitHub</a>
+      </div>
+    </nav>
 
-    <!-- Main -->
-    <main class="main">
-
+    <main class="main" id="main">
       <!-- Storage degraded banner (shown only while the database is unreachable
            and this node is serving from its local mirror) -->
       <div id="storage-degraded-banner" class="storage-degraded-banner" hidden role="status"></div>
 
-      <!-- Settings -->
-      <div class="card tabbed-card" data-tab-group="settings" data-default-tab="launch"
-        data-active-tab="launch">
-        <div class="section-heading collapsible-heading" data-section="settings">
-          <h2>Settings</h2>
-          <span class="heading-actions">
-            <button class="btn btn-primary btn-compact" type="button" id="btn-quick-launch"
-              title="Launch the selected model with its saved preset" hidden><i class="fa-solid fa-rocket"></i>
-              Quick Launch</button>
-            <span class="chevron"><i class="fa-solid fa-chevron-down"></i></span>
-          </span>
+      <!-- ===== View: Dashboard ===== -->
+      <section class="view" id="view-dashboard" data-view="dashboard">
+        <div class="page-header">
+          <div>
+            <h2 class="page-title">Dashboard</h2>
+            <p class="page-desc">Cluster overview at a glance.</p>
+          </div>
         </div>
-        <div class="collapsible-body" data-section="settings">
-          <div class="settings-tabs" role="tablist" aria-label="Settings sections">
-            <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-launch"
-              aria-controls="settings-tab-launch" aria-selected="false" tabindex="-1" data-tab="launch">Launch
-              Instance</button>
-            <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-cleanup"
-              aria-controls="settings-tab-cleanup" aria-selected="false" tabindex="-1" data-tab="cleanup">Cleanup
-              Settings</button>
-            <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-appsettings"
-              aria-controls="settings-tab-appsettings" aria-selected="false" tabindex="-1" data-tab="appsettings">Application</button>
-            <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-downloads"
-              aria-controls="settings-tab-downloads" aria-selected="false" tabindex="-1" data-tab="downloads">Downloads</button>
-            <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-huggingface"
-              aria-controls="settings-tab-huggingface" aria-selected="false" tabindex="-1" data-tab="huggingface">Hugging Face</button>
-            <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-apikeys"
-              aria-controls="settings-tab-apikeys" aria-selected="false" tabindex="-1" data-tab="apikeys">API
-              Keys</button>
-            <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-images"
-              aria-controls="settings-tab-images" aria-selected="false" tabindex="-1" data-tab="images">Docker
-              Images</button>
-            <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-cluster"
-              aria-controls="settings-tab-cluster" aria-selected="false" tabindex="-1" data-tab="cluster">Cluster</button>
-            <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-knowledge"
-              aria-controls="settings-tab-knowledge" aria-selected="false" tabindex="-1" data-tab="knowledge">MCP</button>
-            <span class="settings-tab-repo" id="f-repo-info" hidden></span>
-            <button type="button" class="settings-tab-update" id="f-update-check"
+        <div class="stat-tiles" id="stat-tiles"></div>
+        <div class="dash-grid">
+      <!-- System Info (CPU & RAM) -->
+      <div class="card" id="system-info-card">
+        <div class="section-heading">
+          <h2>System</h2>
+          <span id="system-cores" class="text-meta"></span>
+          <button class="btn-icon btn-icon-sm" id="btn-refresh-system" title="Refresh system info"><i
+              class="fa-solid fa-arrows-rotate"></i></button>
+        </div>
+        <div id="system-info-bars"></div>
+      </div>
+
+      <!-- GPU VRAM Indicator -->
+      <div class="card" id="gpu-vram-card">
+        <div class="section-heading">
+          <h2>GPU VRAM</h2>
+          <button class="btn-icon btn-icon-sm" id="btn-refresh-gpu" title="Refresh GPU info"><i
+              class="fa-solid fa-arrows-rotate"></i></button>
+        </div>
+        <div id="gpu-vram-bars"></div>
+      </div>
+
+        </div>
+      </section>
+
+      <!-- ===== View: Instances ===== -->
+      <section class="view" id="view-instances" data-view="instances" hidden>
+        <div class="page-header">
+          <div>
+            <h2 class="page-title">Instances</h2>
+            <p class="page-desc">Running inference servers and their live resource usage.</p>
+          </div>
+          <div class="page-actions">
+            <a class="btn btn-primary btn-compact" href="#/launch"><i class="fa-solid fa-rocket"></i>
+              Launch</a>
+          </div>
+        </div>
+      <!-- Instances -->
+      <div class="card instances-card">
+        <div class="section-heading collapsible-heading" data-section="instances">
+          <h2 id="instances-heading">Running Instances</h2>
+          <span class="chevron"><i class="fa-solid fa-chevron-down"></i></span>
+        </div>
+        <div class="collapsible-body" data-section="instances">
+          <div id="instance-container">
+            <div id="no-instances">No instances yet. Use the Launch page to start one.</div>
+          </div>
+        </div>
+      </div>
+
+      </section>
+
+      <!-- ===== View: Launch ===== -->
+      <section class="view" id="view-launch" data-view="launch" hidden>
+        <div class="page-header">
+          <div>
+            <h2 class="page-title">Launch Instance</h2>
+            <p class="page-desc">Pick a model in the library, tune its settings, and launch.</p>
+          </div>
+          <div class="page-actions launch-context">
+                        <span class="settings-tab-repo" id="f-repo-info" hidden></span>
+                        <button type="button" class="settings-tab-update" id="f-update-check"
               title="Check whether the source repo has republished this model" hidden>
               <i class="fa-solid fa-rotate"></i><span id="f-update-label">Check for updates</span>
             </button>
-            <button type="button" class="btn-star settings-tab-star" id="f-favorite" title="Toggle favorite" hidden>
+                        <button type="button" class="btn-star settings-tab-star" id="f-favorite" title="Toggle favorite" hidden>
               <i class="fa-star fa-regular"></i>
             </button>
           </div>
-
-          <div class="tab-panel" id="settings-tab-launch" role="tabpanel" aria-labelledby="settings-tab-btn-launch"
-            data-tab-panel="launch">
+        </div>
+        <div class="card launch-card">
             <form id="launch-form" autocomplete="off">
               <div class="form-grid">
                 <div class="launch-pair">
@@ -880,8 +928,106 @@
                 </div>
               </div>
             </form>
-          </div>
+        </div>
+      </section>
 
+      <!-- ===== View: Models ===== -->
+      <section class="view" id="view-models" data-view="models" hidden>
+        <div class="page-header">
+          <div>
+            <h2 class="page-title">Model Library</h2>
+            <p class="page-desc">Models on this node and on peer nodes.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-secondary btn-compact" type="button" id="btn-configure-model"
+              title="Open the selected model's launch settings" hidden><i
+                class="fa-solid fa-sliders"></i> Configure</button>
+            <button class="btn btn-primary btn-compact" type="button" id="btn-quick-launch"
+              title="Launch the selected model with its saved preset" hidden><i class="fa-solid fa-rocket"></i>
+              Quick Launch</button>
+          </div>
+        </div>
+        <div class="card library-card">
+      <div class="sidebar-header">
+        <h2>Model Library</h2>
+        <div class="btn-group">
+          <button class="btn-icon" id="btn-open-download" title="Download a model from HuggingFace"><i
+              class="fa-solid fa-download"></i> Download</button>
+          <button class="btn-icon" id="btn-refresh-models" title="Rescan models"><i
+              class="fa-solid fa-arrows-rotate"></i></button>
+        </div>
+      </div>
+      <input type="text" id="model-search" placeholder="Search models…" />
+      <div id="model-list">
+        <div id="model-empty">Scanning…</div>
+      </div>
+
+        </div>
+      </section>
+
+      <!-- ===== View: Downloads ===== -->
+      <section class="view" id="view-downloads" data-view="downloads" hidden>
+        <div class="page-header">
+          <div>
+            <h2 class="page-title">Downloads</h2>
+            <p class="page-desc">Active and recent Hugging Face transfers across the cluster.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-primary btn-compact" type="button" id="btn-open-download-top"
+              data-opens-download-modal><i class="fa-solid fa-download"></i> Download</button>
+          </div>
+        </div>
+        <div class="card downloads-card">
+      <!-- Downloads section -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-header" id="dl-section-toggle">
+          <h2>Downloads</h2>
+          <span class="chevron"><i class="fa-solid fa-chevron-down"></i></span>
+        </div>
+        <div id="downloads-panel">
+          <div id="dl-empty">No downloads yet.</div>
+        </div>
+      </div>
+        </div>
+      </section>
+
+      <!-- ===== View: Settings ===== -->
+      <section class="view" id="view-settings" data-view="settings" hidden>
+        <div class="page-header">
+          <div>
+            <h2 class="page-title">Settings</h2>
+            <p class="page-desc">Application behaviour, credentials, images, cluster and MCP.</p>
+          </div>
+        </div>
+        <div class="card tabbed-card settings-vertical" data-tab-group="settings"
+          data-default-tab="appsettings" data-active-tab="appsettings">
+          <div class="section-heading collapsible-heading" data-section="settings">
+            <h2>Configuration</h2>
+            <span class="heading-actions">
+              <span class="chevron"><i class="fa-solid fa-chevron-down"></i></span>
+            </span>
+          </div>
+          <div class="collapsible-body" data-section="settings">
+            <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+              <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-cleanup"
+                aria-controls="settings-tab-cleanup" aria-selected="false" tabindex="-1" data-tab="cleanup">Cleanup</button>
+              <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-appsettings"
+                aria-controls="settings-tab-appsettings" aria-selected="false" tabindex="-1" data-tab="appsettings">Application</button>
+              <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-downloads"
+                aria-controls="settings-tab-downloads" aria-selected="false" tabindex="-1" data-tab="downloads">Downloads</button>
+              <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-huggingface"
+                aria-controls="settings-tab-huggingface" aria-selected="false" tabindex="-1" data-tab="huggingface">Hugging Face</button>
+              <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-apikeys"
+                aria-controls="settings-tab-apikeys" aria-selected="false" tabindex="-1" data-tab="apikeys">API
+                Keys</button>
+              <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-images"
+                aria-controls="settings-tab-images" aria-selected="false" tabindex="-1" data-tab="images">Docker
+                Images</button>
+              <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-cluster"
+                aria-controls="settings-tab-cluster" aria-selected="false" tabindex="-1" data-tab="cluster">Cluster</button>
+              <button class="settings-tab" type="button" role="tab" id="settings-tab-btn-knowledge"
+                aria-controls="settings-tab-knowledge" aria-selected="false" tabindex="-1" data-tab="knowledge">MCP</button>
+            </div>
           <div class="tab-panel" id="settings-tab-cleanup" role="tabpanel"
             aria-labelledby="settings-tab-btn-cleanup" data-tab-panel="cleanup" hidden>
             <div class="cleanup-settings-grid">
@@ -1329,52 +1475,26 @@
               </div>
             </div>
           </div>
-        </div>
-      </div>
-
-      <!-- System Info (CPU & RAM) -->
-      <div class="card" id="system-info-card">
-        <div class="section-heading">
-          <h2>System</h2>
-          <span id="system-cores" class="text-meta"></span>
-          <button class="btn-icon btn-icon-sm" id="btn-refresh-system" title="Refresh system info"><i
-              class="fa-solid fa-arrows-rotate"></i></button>
-        </div>
-        <div id="system-info-bars"></div>
-      </div>
-
-      <!-- GPU VRAM Indicator -->
-      <div class="card" id="gpu-vram-card">
-        <div class="section-heading">
-          <h2>GPU VRAM</h2>
-          <button class="btn-icon btn-icon-sm" id="btn-refresh-gpu" title="Refresh GPU info"><i
-              class="fa-solid fa-arrows-rotate"></i></button>
-        </div>
-        <div id="gpu-vram-bars"></div>
-      </div>
-
-      <!-- Instances -->
-      <div class="card instances-card">
-        <div class="section-heading collapsible-heading" data-section="instances">
-          <h2 id="instances-heading">Running Instances</h2>
-          <span class="chevron"><i class="fa-solid fa-chevron-down"></i></span>
-        </div>
-        <div class="collapsible-body" data-section="instances">
-          <div id="instance-container">
-            <div id="no-instances">No instances yet. Launch one above.</div>
           </div>
         </div>
-      </div>
-
-      <footer class="app-footer" aria-label="Version">
-        llamaMan v{{ llamaman_version }} &middot;
-        <a href="https://github.com/nullata/llamaman" target="_blank" rel="noopener noreferrer"
-           class="app-footer-repo" title="Star llamaMan on GitHub if it's useful to you">
-          <i class="fa-solid fa-star app-footer-star"></i> github.com/nullata/llamaman
-        </a>
-      </footer>
+      </section>
     </main>
   </div>
+
+  <script>
+    // Deep-link flash guard: the dashboard is visible by default so the page
+    // still works with JS disabled, but a #/settings link would otherwise paint
+    // the dashboard first. Hide the non-matching views synchronously here;
+    // shell.js does the full routing (active states, crumb) when it loads.
+    (function () {
+      var m = (location.hash || '').match(/^#\/([a-z]+)/), v = m && m[1];
+      if (!v) return;
+      document.querySelectorAll('.view').forEach(function (s) {
+        if (s.dataset.view !== v) s.hidden = true;
+        else s.hidden = false;
+      });
+    })();
+  </script>
 
   <!-- Download Form Modal -->
   <!-- Strata's recommended models (static/js/engines.js): the catalogue,
@@ -1523,6 +1643,8 @@
   <script src="{{ url_for('static', filename='js/system.js') }}"></script>
   <script src="{{ url_for('static', filename='js/cluster.js') }}"></script>
   <script src="{{ url_for('static', filename='js/kb.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/shell.js') }}"></script>
   <script src="{{ url_for('static', filename='js/boot.js') }}"></script>
 </body>
 

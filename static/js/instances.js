@@ -213,7 +213,7 @@ function renderInstances() {
     `Running Instances (${all.length})`;
 
   if (all.length === 0) {
-    container.innerHTML = '<div id="no-instances">No instances yet. Launch one above.</div>';
+    container.innerHTML = '<div id="no-instances">No instances yet. Use the Launch page to start one.</div>';
     return;
   }
 
@@ -790,16 +790,16 @@ function updateModelSettingsState() {
   }
 }
 
-// The Quick Launch button lives in the Settings heading and only makes sense
-// when the card is collapsed (an expanded card has its own Launch button) and a
-// model is selected (its preset is already loaded into the hidden form).
+// Quick Launch and Configure live in the Model Library view's page header:
+// they act on the currently selected model, whose preset is already loaded
+// into the launch form. Both need a model selected; the Launch view itself
+// has its own Launch button, so these only appear where you pick models.
 function updateQuickLaunchVisibility() {
-  const btn = document.getElementById('btn-quick-launch');
-  if (!btn) return;
-  const body = document.querySelector('.collapsible-body[data-section="settings"]');
-  const collapsed = !!body && body.classList.contains('hidden');
   const hasModel = !!document.getElementById('f-model-path')?.value.trim();
-  btn.hidden = !(collapsed && hasModel);
+  const quick = document.getElementById('btn-quick-launch');
+  if (quick) quick.hidden = !hasModel;
+  const configure = document.getElementById('btn-configure-model');
+  if (configure) configure.hidden = !hasModel;
 }
 
 async function updatePortSuggestion() {
@@ -1037,10 +1037,16 @@ if (launchForm) launchForm.addEventListener('submit', async (e) => {
 
 const quickLaunchBtn = document.getElementById('btn-quick-launch');
 if (quickLaunchBtn) quickLaunchBtn.addEventListener('click', async (e) => {
-  e.stopPropagation();  // the heading it sits in toggles the section on click
+  e.stopPropagation();
   const result = await submitLaunchForm(quickLaunchBtn, null);
-  // Nothing is visible to correct while the card is collapsed, so open it.
-  if (result.invalidForm && typeof toggleSection === 'function') toggleSection('settings');
+  // The form was rejected - show it so the user can correct the fields.
+  if (result.invalidForm && typeof gotoView === 'function') gotoView('launch');
+});
+
+// Configure: jump from the library to the launch form for the selected model.
+const configureModelBtn = document.getElementById('btn-configure-model');
+if (configureModelBtn) configureModelBtn.addEventListener('click', () => {
+  if (typeof gotoView === 'function') gotoView('launch');
 });
 
 // -------------------------------------------------------------------------
