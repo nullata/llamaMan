@@ -1067,9 +1067,11 @@ async function updateGpuLayersTotal(modelPath) {
 
 // A decision model (GGUF <arch>.decision.type) answers typed questions on
 // /v1/systemone instead of generating text. Without a preset, the form gets
-// the settings it needs: kept out of the max-models cap, no chat web UI,
-// slots for the questions of a request (they share the input), and for an
-// encoder (BERT-style) model the whole context in one micro-batch.
+// the settings it needs: kept out of the max-models cap and no chat web UI.
+// Most types answer each question in its own slot (sharing the input), so 8
+// slots; an encoder (BERT-style) one needs each whole question in one
+// micro-batch. Clef asks all the questions in one prompt and reads them from
+// one pass: one slot, and the whole request in one micro-batch.
 function showDecisionModel(meta) {
   const hint = document.getElementById('f-decision-hint');
   const type = meta && meta.decision_type;
@@ -1085,10 +1087,15 @@ function showDecisionModel(meta) {
   check('f-exclude-max-models', true);
   check('f-webui-enabled', false);
   check('f-embedding-model', false);
-  set('f-parallel', 8);
-  if (meta.non_causal) {
+  const joint = type === 'clef';
+  set('f-parallel', joint ? 1 : 8);
+  if (meta.non_causal || joint) {
     const ctxEl = document.getElementById('f-ctx-size');
-    const ctx = parseInt(ctxEl?.value, 10) || meta.context_length || 8192;
+    // Clef's GGUF carries its Qwen base's context length (far past what it
+    // was trained on, and a micro-batch that size needs a huge buffer): its
+    // own default is 16384 tokens per request.
+    const own = joint ? Math.min(meta.context_length || 16384, 16384) : meta.context_length;
+    const ctx = parseInt(ctxEl?.value, 10) || own || 8192;
     if (ctxEl && !ctxEl.value) ctxEl.value = ctx;
     set('f-batch-size', ctx);
     set('f-ubatch-size', ctx);
