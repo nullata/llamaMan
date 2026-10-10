@@ -1072,7 +1072,7 @@ async function updateGpuLayersTotal(modelPath) {
 // slots; an encoder (BERT-style) one needs each whole question in one
 // micro-batch. Clef asks all the questions in one prompt and reads them from
 // one pass: one slot, and the whole request in one micro-batch.
-function showDecisionModel(meta) {
+function showDecisionModel(meta, force = false) {
   const hint = document.getElementById('f-decision-hint');
   const type = meta && meta.decision_type;
   if (hint) {
@@ -1081,7 +1081,7 @@ function showDecisionModel(meta) {
       ? `Decision model (${type}): answers typed questions on /v1/systemone, no text generation.`
       : '';
   }
-  if (!type || _loadedPreset) return;
+  if (!type || (_loadedPreset && !force)) return;
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   const check = (id, on) => { const el = document.getElementById(id); if (el) el.checked = on; };
   check('f-exclude-max-models', true);
@@ -1101,6 +1101,31 @@ function showDecisionModel(meta) {
     set('f-ubatch-size', ctx);
   }
 }
+
+// Clear Preset: the form back to the defaults for the selected model - what
+// it shows for a model with no preset, recommended settings included (e.g. a
+// decision model's). Nothing is saved; the engine, display name and note
+// stay (they're not launch settings).
+function clearPresetForm() {
+  const modelPath = document.getElementById('f-model-path').value.trim();
+  if (!modelPath) { toast('Select a model first', 'error'); return; }
+  const note = document.getElementById('f-note').value;
+  applyPresetToLaunchForm({ note });
+  const ctxField = document.getElementById('f-ctx-size');
+  if (ctxField) ctxField.value = '';
+  document.getElementById('f-gpu-layers').value = -1;
+  if (typeof applyStrataPresetToLaunchForm === 'function') applyStrataPresetToLaunchForm({});
+  if (typeof updateProxySamplingOverrideState === 'function') updateProxySamplingOverrideState();
+  if (typeof updateSpecState === 'function') updateSpecState();
+  if (typeof updateMmprojState === 'function') updateMmprojState();
+  if (typeof updateModelSettingsState === 'function') updateModelSettingsState();
+  showDecisionModel(currentModelMeta, true);
+  if (typeof updateGpuLayersSuggestion === 'function') updateGpuLayersSuggestion();
+  toast('Form reset to defaults (not saved)', 'info');
+}
+
+const clearPresetBtn = document.getElementById('btn-clear-preset');
+if (clearPresetBtn) clearPresetBtn.addEventListener('click', clearPresetForm);
 
 // Detect layers when model path is changed manually
 const modelPathField = document.getElementById('f-model-path');
