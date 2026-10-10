@@ -5,9 +5,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ "Setup" if setup else "Login" }} - llamaMan</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='fontawesome-free-7.1.0-web/css/all.min.css') }}" />
   <link rel="icon" href="{{ url_for('static', filename='images/logo.svg') }}" type="image/svg+xml" />
+  <script>
+    // Apply the stored theme before first paint so there is no flash.
+    try {
+      var t = localStorage.getItem('llamaman-theme');
+      if (t === 'light') document.documentElement.dataset.theme = 'light';
+    } catch (e) { /* private mode */ }
+  </script>
 </head>
 
 <body class="login-page">

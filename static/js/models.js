@@ -617,7 +617,11 @@ async function selectModel(model, el) {
   updateLaunchFormRepoInfo(model);
   updateLaunchFormStar();
   const ctxField = document.getElementById('f-ctx-size');
-  if (typeof setActiveTab === 'function') setActiveTab('settings', 'launch');
+  // No view jump here: the library is its own view now, and being yanked to
+  // Launch on every click would make the list unusable. The form is filled
+  // regardless (its DOM stays live), and the Configure / Quick Launch buttons
+  // in the library header act on the selection.
+  if (typeof updateQuickLaunchVisibility === 'function') updateQuickLaunchVisibility();
   updatePortSuggestion();
   if (ctxField) ctxField.value = '';
   // llama.cpp until the model's preset says otherwise; the Inference Engine
@@ -1008,6 +1012,7 @@ function updateLaunchFormStar() {
   const btn = document.getElementById('f-favorite');
   if (!btn) return;
   const modelPath = document.getElementById('f-model-path').value.trim();
+  btn.hidden = !modelPath;
   const fav = modelPath ? isModelFavorited(modelPath) : false;
   btn.classList.toggle('active', fav);
   btn.querySelector('i').className = fav ? 'fa-solid fa-star' : 'fa-regular fa-star';
@@ -1132,6 +1137,12 @@ const modelPathField = document.getElementById('f-model-path');
 if (modelPathField) {
   modelPathField.addEventListener('change', function() {
     updateGpuLayersTotal(this.value.trim());
+  });
+  // The star/repo controls now live in the page header and are hidden until a
+  // model is known, so typing a path by hand has to reveal them too - not just
+  // picking one from the library.
+  modelPathField.addEventListener('input', function() {
+    if (typeof updateLaunchFormStar === 'function') updateLaunchFormStar();
   });
 }
 

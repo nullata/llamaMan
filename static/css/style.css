@@ -6,22 +6,7 @@
   padding: 0;
 }
 
-:root {
-  --bg: #09090b;
-  --panel: #18181b;
-  --surface: #27272a;
-  --border: #3f3f46;
-  --text: #f4f4f5;
-  --muted: #a1a1aa;
-  --accent: #10b981;
-  --accent-hover: #34d399;
-  --green: #10b981;
-  --yellow: #f59e0b;
-  --red: #f43f5e;
-  --grey: #71717a;
-  --radius: 10px;
-  --font: system-ui, -apple-system, 'Segoe UI', sans-serif;
-}
+/* Design tokens live in tokens.css (loaded first). */
 
 body {
   background: var(--bg);
@@ -2492,23 +2477,12 @@ body.login-page {
     padding: 8px 16px;
   }
 
-  /* Stack the sidebar above main; both size to their content. */
+  /* The rail becomes a horizontal strip above the content (see shell.css);
+     the layout stacks and scrolls as one document. */
   .layout {
     flex-direction: column;
     flex: none;
     overflow: visible;
-  }
-  .sidebar {
-    width: 100%;
-    min-width: 0;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    overflow: visible;
-  }
-  /* Keep the model library from pushing everything else off-screen;
-     it scrolls internally while the page scrolls around it. */
-  #model-list {
-    max-height: 50vh;
   }
   .main {
     flex: none;
@@ -2649,39 +2623,10 @@ body.login-page {
   }
 }
 
-/* ---- Portrait phones: monitoring-first order ----
-   Landscape phones are ≥820px wide and keep the desktop two-column layout, so
-   this never touches them. In portrait the width-based stack above applies,
-   but it leads with the Model Library (eating the top ~50vh) and buries
-   Running Instances at the very bottom — a config-first layout on a device you
-   mostly open to *monitor and control*. Flip the priority: Running Instances
-   and the live System/GPU widgets float to the top, launch/settings config
-   sits below them, and the Model Library (only needed while launching) drops
-   to the bottom. Reorder only — collapse stays JS-driven so the chevrons and
-   localStorage state stay in sync across orientations. */
-@media (max-width: 820px) and (orientation: portrait) {
-  /* Model Library (sidebar) drops below the main content. */
-  .main {
-    order: 1;
-  }
-  .sidebar {
-    order: 2;
-    border-bottom: none;
-    border-top: 1px solid var(--border);
-  }
-
-  /* Within main: Instances first, then the compact monitoring widgets,
-     then the (natural-order) launch/settings card. */
-  .instances-card {
-    order: -3;
-  }
-  #system-info-card {
-    order: -2;
-  }
-  #gpu-vram-card {
-    order: -1;
-  }
-}
+/* ---- Portrait phones ----
+   The old sidebar/main split and its portrait reordering are gone: the app
+   is now one view at a time (shell.js), and the rail becomes a horizontal
+   strip handled in shell.css. Nothing left to reorder here. */
 
 /* Storage degraded banner - shown while the database is unreachable and this
    node is serving from its local mirror. */

@@ -63,7 +63,7 @@ const params = new URLSearchParams(window.location.search);
 const presetModelPath = params.get('model_path');
 if (presetModelPath && modelPathField) {
   modelPathField.value = presetModelPath;
-  if (typeof setActiveTab === 'function') setActiveTab('settings', 'launch');
+  if (typeof gotoView === 'function') gotoView('launch');
   updateGpuLayersTotal(presetModelPath);
 }
 
@@ -118,9 +118,9 @@ if (downloadNodeSel) downloadNodeSel.addEventListener('change', refreshDownloadD
 //
 // The left bound isn't the viewport edge - it's the right edge of any
 // left-side layout column that visually holds content the tooltip would
-// otherwise overlap. On this page that's `.sidebar` (the model library),
-// which is a 260px flex column, so a tooltip on a leftmost field extends
-// into the sidebar area and sits on top of model rows there. We resolve
+// otherwise overlap. On this page that's `.rail` (the primary nav), which is
+// a fixed-width flex column, so a tooltip on a leftmost field extends
+// into the rail area and sits on top of nav items there. We resolve
 // this once per invocation (getBoundingClientRect is fast and the layout
 // might have shifted between opens - sidebar can collapse, etc).
 function updateInfoTipClipping(tip) {
@@ -128,7 +128,7 @@ function updateInfoTipClipping(tip) {
   const center = rect.left + rect.width / 2;
   const halfMax = tip.classList.contains('info-tip-wide') ? 180 : 120;
   let leftBound = 0;
-  const sidebar = document.querySelector('.sidebar');
+  const sidebar = document.querySelector('.rail');
   if (sidebar) {
     const sr = sidebar.getBoundingClientRect();
     // Only treat the sidebar as an obstacle when the tip itself is to the

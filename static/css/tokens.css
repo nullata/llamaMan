@@ -1,0 +1,151 @@
+/* ==========================================================================
+   llamaMan design tokens
+   --------------------------------------------------------------------------
+   Two tiers: primitives (raw palette, never used by components directly)
+   and semantic tokens (what every component consumes). A theme is just a
+   re-mapping of the semantic tier, so the light theme below is the whole
+   light theme - no component needs to know it exists.
+
+   Load order: tokens.css -> style.css -> shell.css.
+   ========================================================================== */
+
+/* ---- Primitives ---------------------------------------------------------- */
+:root {
+  --zinc-50: #fafafa;
+  --zinc-100: #f4f4f5;
+  --zinc-200: #e4e4e7;
+  --zinc-300: #d4d4d8;
+  --zinc-400: #a1a1aa;
+  --zinc-500: #71717a;
+  --zinc-600: #52525b;
+  --zinc-700: #3f3f46;
+  --zinc-800: #27272a;
+  --zinc-850: #18181b;
+  --zinc-900: #101013;
+  --zinc-950: #09090b;
+
+  --green-300: #6ee7b7;
+  --green-400: #34d399;
+  --green-500: #10b981;
+  --green-600: #059669;
+  --green-700: #047857;
+
+  --amber-500: #f59e0b;
+  --amber-700: #b45309;
+  --rose-500: #f43f5e;
+  --rose-600: #e11d48;
+  --sky-400: #38bdf8;
+  --sky-600: #0284c7;
+
+  /* ---- Semantic tokens (dark theme is the default) ---------------------- */
+  --bg: var(--zinc-950);
+  --surface-1: var(--zinc-850);
+  --surface-2: var(--zinc-800);
+  --surface-3: #323238;
+  --border: var(--zinc-700);
+  --border-subtle: var(--zinc-800);
+  --text: var(--zinc-100);
+  --text-muted: var(--zinc-400);
+  --text-subtle: var(--zinc-500);
+
+  --accent: var(--green-500);
+  --accent-hover: var(--green-400);
+  --accent-subtle: rgba(16, 185, 129, 0.12);
+  --accent-border: rgba(16, 185, 129, 0.5);
+  --on-accent: #04130d;
+
+  --warning: var(--amber-500);
+  --warning-subtle: rgba(245, 158, 11, 0.14);
+  --danger: var(--rose-500);
+  --danger-subtle: rgba(244, 63, 94, 0.14);
+  --info: var(--sky-400);
+  --info-subtle: rgba(56, 189, 248, 0.12);
+
+  --focus-ring: rgba(16, 185, 129, 0.55);
+  --scrim: rgba(0, 0, 0, 0.6);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+
+  /* ---- Spacing scale ---------------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* ---- Typography ------------------------------------------------------- */
+  --font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-base: 14px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+  --fs-2xl: 22px;
+
+  /* ---- Shape, elevation, motion ---------------------------------------- */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-pill: 999px;
+
+  --z-content: 1;
+  --z-header: 50;
+  --z-toast: 200;
+  --z-modal: 300;
+
+  --dur-fast: 0.12s;
+  --dur-base: 0.2s;
+  --dur-slow: 0.4s;
+  --ease: ease;
+}
+
+/* ---- Light theme ----------------------------------------------------------
+   Opt-in via <html data-theme="light"> (persisted by shell.js). Components
+   only ever reference semantic tokens, so this block is the entire theme. */
+[data-theme="light"] {
+  --bg: var(--zinc-100);
+  --surface-1: #ffffff;
+  --surface-2: var(--zinc-100);
+  --surface-3: var(--zinc-200);
+  --border: var(--zinc-300);
+  --border-subtle: var(--zinc-200);
+  --text: var(--zinc-900);
+  --text-muted: var(--zinc-600);
+  --text-subtle: var(--zinc-500);
+
+  --accent: var(--green-600);
+  --accent-hover: var(--green-700);
+  --accent-subtle: rgba(5, 150, 105, 0.10);
+  --accent-border: rgba(5, 150, 105, 0.45);
+  --on-accent: #ffffff;
+
+  --warning: var(--amber-700);
+  --warning-subtle: rgba(180, 83, 9, 0.10);
+  --danger: var(--rose-600);
+  --danger-subtle: rgba(225, 29, 72, 0.10);
+  --info: var(--sky-600);
+  --info-subtle: rgba(2, 132, 199, 0.10);
+
+  --focus-ring: rgba(5, 150, 105, 0.5);
+  --scrim: rgba(24, 24, 27, 0.45);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+/* ---- Legacy aliases -------------------------------------------------------
+   style.css (2.9k lines) predates the token tiers and references these by
+   name. They now resolve through the semantic tier, so the legacy sheet
+   themes correctly under both palettes while new code uses the semantic
+   names directly. Delete once style.css is fully migrated. */
+:root {
+  --panel: var(--surface-1);
+  --surface: var(--surface-2);
+  --muted: var(--text-muted);
+  --green: var(--accent);
+  --yellow: var(--warning);
+  --red: var(--danger);
+  --grey: var(--text-subtle);
+}
