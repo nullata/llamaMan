@@ -14,7 +14,7 @@
 
 - [Features](#features) · [Architecture](#architecture) · [Request Flow](#request-flow) · [Design Decisions](#design-decisions--trade-offs)
 - [Quick Start](#quick-start) · [Authentication](#authentication) · [Models](#models) · [Launching Instances](#launching-instances) · [Launch settings reference](#launch-settings-reference)
-- [Image & PDF Input](#image--pdf-input) · [Anti-Loop](#anti-loop) · [Per-Instance Proxy](#per-instance-proxy) · [Idle Timeout](#idle-timeout) · [GPU Stats](#gpu-stats)
+- [Image & PDF Input](#image--pdf-input) · [Decision Models](#decision-models) · [Anti-Loop](#anti-loop) · [Per-Instance Proxy](#per-instance-proxy) · [Idle Timeout](#idle-timeout) · [GPU Stats](#gpu-stats)
 - [Request Recording & Stats](#request-recording--stats) · [Model Eviction](#model-eviction) · [Strata Engine](#strata-engine) · [Model Archive](#model-archive) · [OpenWebUI](#openwebui-integration)
 - [Storage & DB Outage Mirror](#storage-backends) · [Clustering](#clustering) · 🆕 [Knowledge Base & MCP](#knowledge-base--mcp)
 - [Environment Variables](#environment-variables) · [REST API](#rest-api) · [Troubleshooting](#troubleshooting)
@@ -244,6 +244,8 @@ Behavior notes below are terse; hover the field's info-tip in the UI for the ful
 |---|---|---|---|
 | **Context Size** | `4096` | `--ctx-size` | Prompt + response token cap per request |
 | **Parallel Slots** | `1` | `--parallel` | Concurrent decoding slots inside llama-server (KV slots) |
+| **Batch Size** | `2048` | `--batch-size` | Most prompt tokens processed in one step. Blank omits the flag |
+| **Micro-batch Size** | `512` | `--ubatch-size` | Physical batch sent to the GPU; bigger = faster prefill, more VRAM. Embedding and encoder (BERT-style) decision models need their whole input in one micro-batch. Blank omits the flag |
 | **K Cache Type** | `f16` | `--cache-type-k` | `f16`/`f32`/`bf16`/`q8_0`/`q5_1`/`q5_0`/`iq4_nl`/`q4_1`/`q4_0`. Quantized reduces K memory; works with or without Flash Attention |
 | **V Cache Type** | `f16` | `--cache-type-v` | Same values. Any quantized value **requires Flash Attention = On** - the UI greys the dropdown and auto-snaps V back to `f16` when FA leaves On |
 | **Flash Attention** | `auto` | `--flash-attn on\|off\|auto` | `auto` omits the flag (llama.cpp's own default); `on` forces it (fails if backend can't); `off` disables |
@@ -261,6 +263,7 @@ Behavior notes below are terse; hover the field's info-tip in the UI for the ful
 | **Idle Timeout min** | `0` | - | Auto-sleep after N minutes idle. `0` = off. Live-updated from preset (no relaunch) |
 | **Max Concurrent** | `0` | - | Max in-flight inference requests; excess queues. `0` = no gating |
 | **Max Queue Depth** | `200` | - | Queue cap before HTTP 429 |
+| **Exclude from Max Models** | off | - | Not counted toward `LLAMAMAN_MAX_MODELS`, never evicted. See [Model Eviction](#model-eviction). Live-updated from preset |
 
 **GPU Settings**
 
@@ -352,6 +355,28 @@ Enable the **Image & PDF Input** toggle to load a vision model's multimodal proj
 
 **Rasterization concurrency:** PDF rendering is CPU- and RAM-heavy and runs in the gunicorn worker thread before any per-instance gate. A process-wide semaphore caps concurrent rasters; tune via `LLAMAMAN_PDF_MAX_CONCURRENT` (default 4).
 
+## Decision Models
+
+Decision models answer typed questions about an input with probabilities instead of generating text: the System One API introduced by TypeSafe's Jev, served by llama.cpp (images built after 2026-10-05) on `POST /v1/systemone`. Open GGUFs: Julia-1, Laya, Kev-4B, lev, Clef-Flash, Clef, OpenJev (OpenJev and Clef also take images, with their `--mmproj`). llama-server recognises them from `<arch>.decision.type` in the GGUF; no flag is needed.
+
+- **Detection.** Picking one in the launch form says so under Model Path. Without a preset the form is filled for it: **Exclude from Max Models** on, **Web UI** off (its chat page can't drive the model), **Parallel Slots** `8` (each question of a request takes a slot, and they share the input), **Embedding Model** off (llama.cpp turns embedding mode on itself where the model needs it; forcing it is not needed). An encoder (BERT-style) model also gets Context, Batch and Micro-batch Size set to its context length: its whole input must fit in one micro-batch. **Clef** (and Clef-Flash) asks all the questions in one prompt and reads them from one pass, so it gets **Parallel Slots** `1` and Batch = Micro-batch = Context (16384, its trained default, when Context is blank): the whole request (input, every question and option) must fit in one micro-batch, or llama-server answers "increase the physical batch size".
+- **Routing.** `POST :42069/v1/systemone` picks the model by `"model"` like `/v1/chat/completions` (auto-start, eviction rules, cluster forwarding, queue). The request is forwarded unchanged (no sampling overrides). On the instance's own port it goes through the per-instance proxy's queue when that proxy runs.
+- **Chat endpoints refuse them** (HTTP 422) - they don't generate text.
+- **Request log:** the answers, and `input_tokens` as the prompt tokens (`output_tokens` is always 0).
+- **Errors:** a question whose options don't fit in one batch is rejected by llama-server ("increase the physical batch size") - raise Batch Size / Micro-batch Size.
+
+```bash
+curl http://localhost:42069/v1/systemone -H "Content-Type: application/json" -d '{
+  "model": "Clef-Flash-Q4_K_M",
+  "state": "Customer: I was charged twice for my order last week.",
+  "questions": {
+    "route":   {"type": "choice", "instructions": "Which team?", "criteria": {"billing": null, "shipping": null}},
+    "angry":   {"type": "noul",   "instructions": "Is the customer angry?"},
+    "urgency": {"type": "score",  "instructions": "How urgent?", "criteria": ["can wait", "today", "right now"]}
+  }
+}'
+```
+
 ## Anti-Loop
 
 Two independent controls in the **Anti-Loop** section of the launch form, both off by default. They target the same problem (models getting stuck in stable output loops) at two different points in the pipeline; use them together for the best coverage.
@@ -430,7 +455,7 @@ Other details:
 
 - All running chat instances count (both admin UI and proxy-managed).
 - **Sleeping instances still count** (slot claim persists across the idle pause) - but waking a sleeper for its own model is never blocked by the cap.
-- **Embedding models are excluded** and never evicted.
+- Instances with **Exclude from Max Models** on (launch form) are not counted and never evicted: embedding models, decision models, anything small that should stay up. Turning **Embedding Model** on turns it on too, and presets saved before the toggle existed get it from their Embedding Model setting.
 - `LLAMAMAN_MAX_MODELS=0` disables eviction entirely.
 
 ## Strata Engine
@@ -833,6 +858,7 @@ Instances and presets take an optional `engine` (`llamacpp` default, or `strata`
 
 Ollama: `/api/tags`, `/api/version`, `/api/show`, `/api/ps`, `/api/chat`, `/api/generate` (chat/generate auto-start).
 OpenAI: `/v1/models`, `/v1/chat/completions` (chat auto-starts).
+Decision models: `/v1/systemone` (auto-starts) - see [Decision Models](#decision-models).
 
 ## Troubleshooting
 

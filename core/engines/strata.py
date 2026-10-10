@@ -613,7 +613,7 @@ class StrataEngine(Engine):
         "ctx_size", "memory_limit", "gpu_devices", "image",
         "idle_timeout_min", "max_concurrent", "max_queue_depth",
         "share_queue", "share_queue_group", "share_queue_fallback",
-        "auto_restart_on_crash",
+        "auto_restart_on_crash", "exclude_from_max_models",
         "proxy_sampling_override_enabled", "proxy_sampling_temperature",
         "proxy_sampling_top_k", "proxy_sampling_top_p",
         "proxy_sampling_presence_penalty", "proxy_sampling_repeat_penalty",

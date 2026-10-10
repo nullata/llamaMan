@@ -21,6 +21,7 @@ from config import (
     logger,
 )
 from core.helpers import (
+    excluded_from_max_models,
     iter_response_chunks, iter_response_lines,
     find_available_port,
     is_container_running,
@@ -44,6 +45,7 @@ from api.models import (
     estimate_model_vram,
     format_param_count,
     get_cached_gguf_metadata,
+    model_decision_type,
 )
 from storage import get_storage
 from core.state import instances, instances_lock, update_instance_stats
@@ -322,7 +324,7 @@ def _find_any_instance_for_model(model_path: str) -> dict | None:
 
 
 def _count_running_instances() -> int:
-    """Count non-embedding instances holding a slot against LLAMAMAN_MAX_MODELS.
+    """Count instances (not excluded from the cap) holding a slot against LLAMAMAN_MAX_MODELS.
 
     Sleeping instances still count: the admin (or a prior auto-launch) claimed
     that slot for that model's config; sleep is a resource-saving pause, not a
@@ -334,7 +336,7 @@ def _count_running_instances() -> int:
         return sum(
             1 for inst in instances.values()
             if inst["status"] not in ("stopped",)
-            and not inst.get("config", {}).get("embedding_model", False)
+            and not excluded_from_max_models(inst.get("config"))
         )
 
 
@@ -349,19 +351,19 @@ def _get_llamaman_managed_instances() -> list[dict]:
             inst for inst in instances.values()
             if inst.get("_llamaman_managed")
             and inst["status"] not in ("stopped",)
-            and not inst.get("config", {}).get("embedding_model", False)
+            and not excluded_from_max_models(inst.get("config"))
         ]
     managed.sort(key=lambda i: i.get("_last_request_at", i["started_at"]))
     return managed
 
 
 def _get_all_evictable_instances() -> list[dict]:
-    """Return ALL non-embedding not-fully-stopped instances sorted by LRU."""
+    """Return ALL not-excluded, not-fully-stopped instances sorted by LRU."""
     with instances_lock:
         all_insts = [
             inst for inst in instances.values()
             if inst["status"] not in ("stopped",)
-            and not inst.get("config", {}).get("embedding_model", False)
+            and not excluded_from_max_models(inst.get("config"))
         ]
     all_insts.sort(key=lambda i: i.get("_last_request_at", i["started_at"]))
     return all_insts
@@ -377,7 +379,7 @@ def _openai_can_evict_admin_instances() -> bool:
     return bool(effective_from_settings(get_storage().get_settings(), "allow_openai_api_override_admin", False))
 
 
-def _evict_llamaman_instances_if_needed(incoming_embedding_model: bool = False,
+def _evict_llamaman_instances_if_needed(incoming_excluded: bool = False,
                                         can_evict_admin: bool | None = None) -> bool:
     """Evict oldest llamaman-managed instances to stay within limits.
 
@@ -398,8 +400,8 @@ def _evict_llamaman_instances_if_needed(incoming_embedding_model: bool = False,
 
     if LLAMAMAN_MAX_MODELS <= 0:
         return True  # 0 = no limit, never evict
-    if incoming_embedding_model:
-        return True  # embedding launches never count toward the chat-model cap
+    if incoming_excluded:
+        return True  # an excluded model never counts toward the cap
 
     total = _count_running_instances()
     if total < LLAMAMAN_MAX_MODELS:
@@ -519,7 +521,7 @@ def _ensure_model_running(
         preset = resolve_preset_for_node(get_storage().get_preset(model["path"]) or {}, get_node_id())
         if model.get("_engine") and not preset.get("engine"):
             preset = {**preset, "engine": model["_engine"]}
-        incoming_embedding_model = preset.get("embedding_model", False)
+        incoming_excluded = excluded_from_max_models(preset)
 
         # Waking an existing sleeping/stopped instance for its own model does
         # NOT consume a new slot - that slot was already claimed at launch
@@ -539,7 +541,7 @@ def _ensure_model_running(
                 # Evict LRU Ollama-managed instances (and admin-UI ones if the
                 # override toggle is on) to stay within LLAMAMAN_MAX_MODELS.
                 room = _evict_llamaman_instances_if_needed(
-                    incoming_embedding_model=incoming_embedding_model,
+                    incoming_excluded=incoming_excluded,
                     can_evict_admin=can_evict_admin,
                 )
                 if not room:
@@ -549,7 +551,7 @@ def _ensure_model_running(
                     )
             else:
                 # OpenAI API: never evict - only proceed if there is already room.
-                if not incoming_embedding_model and LLAMAMAN_MAX_MODELS > 0:
+                if not incoming_excluded and LLAMAMAN_MAX_MODELS > 0:
                     if _count_running_instances() >= LLAMAMAN_MAX_MODELS:
                         return None, (
                             f"model limit reached (LLAMAMAN_MAX_MODELS={LLAMAMAN_MAX_MODELS}); "
@@ -1262,6 +1264,8 @@ def _handle_request(mode: str = "chat"):
 
     if inst.get("config", {}).get("embedding_model"):
         return jsonify({"error": f"model '{model_name}' is embedding-only and cannot handle chat completions"}), 422
+    if model_decision_type(inst.get("model_path", "")):
+        return jsonify({"error": _decision_only_message(model_name)}), 422
 
     server_host = inst.get("_server_host", "localhost")
     server_port = inst.get("_server_port") or inst.get("_internal_port") or inst["port"]
@@ -1585,6 +1589,8 @@ def llamaman_v1_chat():
 
     if inst.get("config", {}).get("embedding_model"):
         return jsonify({"error": {"message": f"model '{model_name}' is embedding-only and cannot handle chat completions"}}), 422
+    if model_decision_type(inst.get("model_path", "")):
+        return jsonify({"error": {"message": _decision_only_message(model_name)}}), 422
 
     # Rewrite PDF payloads before forwarding - llama-server doesn't understand
     # them and would return an opaque decode error otherwise. No-op when the
@@ -1764,9 +1770,17 @@ def _completion_usage(data) -> dict | None:
     return None
 
 
-def _proxy_passthrough(upstream_path: str, endpoint_label: str):
+def _decision_only_message(model_name: str) -> str:
+    return (f"model '{model_name}' is a decision model: it answers typed questions "
+            "on /v1/systemone and does not generate text")
+
+
+def _proxy_passthrough(upstream_path: str, endpoint_label: str, decision: bool = False):
     """Cluster/gate/sampling-aware passthrough for the raw completion endpoints
-    (/v1/completions, /completion).
+    (/v1/completions, /completion) and decision models' /v1/systemone
+    (`decision`: no sampling overrides, no embedding check - llama-server
+    answers 501 for a model that is not a decision model - and the answers
+    are what the request log records).
 
     Same machinery as the chat handler - cross-node dispatch + work-stealing,
     proxy-side sampling overrides, request logging - but the body is forwarded
@@ -1790,10 +1804,12 @@ def _proxy_passthrough(upstream_path: str, endpoint_label: str):
     )
     if err:
         return jsonify({"error": {"message": err}}), 503
-    if inst.get("config", {}).get("embedding_model"):
-        return jsonify({"error": {"message": f"model '{model_name}' is embedding-only and cannot generate completions"}}), 422
-
-    body = apply_proxy_sampling_overrides(body, effective_inference_config(inst))
+    if not decision:
+        if inst.get("config", {}).get("embedding_model"):
+            return jsonify({"error": {"message": f"model '{model_name}' is embedding-only and cannot generate completions"}}), 422
+        if model_decision_type(inst.get("model_path", "")):
+            return jsonify({"error": {"message": _decision_only_message(model_name)}}), 422
+        body = apply_proxy_sampling_overrides(body, effective_inference_config(inst))
 
     server_host = inst.get("_server_host", "localhost")
     server_port = inst.get("_server_port") or inst.get("_internal_port") or inst["port"]
@@ -1887,8 +1903,9 @@ def _proxy_passthrough(upstream_path: str, endpoint_label: str):
             if tps:
                 update_instance_stats(inst_id, tokens_per_sec=tps)
             if handle:
-                handle.set_response(text=_extract_completion_text(data),
-                                    usage=usage, status_code=resp.status_code)
+                text = (json.dumps(data.get("answers") or data.get("error") or {}, ensure_ascii=False)
+                        if decision and isinstance(data, dict) else _extract_completion_text(data))
+                handle.set_response(text=text, usage=usage, status_code=resp.status_code)
                 if tps:
                     handle.set_metrics(tokens_per_sec=tps)
             return jsonify(data), resp.status_code
@@ -1908,6 +1925,14 @@ def llamaman_v1_completions():
     """OpenAI legacy text-completions, with the same dispatch/gate/sampling
     pipeline as chat. Single-node and cluster both supported."""
     return _proxy_passthrough("/v1/completions", "openai_completions")
+
+
+@bp.route("/v1/systemone", methods=["POST"])
+def llamaman_v1_systemone():
+    """Decision models (System One API: typed questions answered with
+    probabilities). Same routing as completions: model by name, auto-launch,
+    cluster dispatch, gate, request log."""
+    return _proxy_passthrough("/v1/systemone", "systemone", decision=True)
 
 
 @bp.route("/completion", methods=["POST"])

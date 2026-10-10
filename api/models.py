@@ -238,7 +238,37 @@ def get_gguf_metadata(filepath: str) -> dict:
         "head_count": _intish(full.get(f"{arch}.attention.head_count") if arch else None),
         "head_count_kv": _intish(full.get(f"{arch}.attention.head_count_kv") if arch else None),
         "vocab_size": _intish(full.get(f"{arch}.vocab_size") if arch else None),
+        "context_length": _intish(full.get(f"{arch}.context_length") if arch else None),
+        **decision_info(full),
     }
+
+
+# Encoder (bidirectional) architectures: their whole input goes through one
+# micro-batch. The converter also writes <arch>.attention.causal = false.
+_NON_CAUSAL_ARCHS = frozenset({"bert", "modern-bert", "nomic-bert", "nomic-bert-moe",
+                               "jina-bert-v2", "jina-bert-v3", "neo-bert", "eurobert"})
+
+
+def decision_info(full: dict) -> dict:
+    """A decision model (served on /v1/systemone) carries <arch>.decision.type
+    in its GGUF: openjev, lev, kev, laya, clef, ... Empty for any other model."""
+    arch = (full.get("general.architecture") or "") if isinstance(full, dict) else ""
+    dtype = full.get(f"{arch}.decision.type") if arch else None
+    if not isinstance(dtype, str) or not dtype:
+        return {"decision_type": ""}
+    causal = full.get(f"{arch}.attention.causal")
+    non_causal = causal is False or (causal is None and arch in _NON_CAUSAL_ARCHS)
+    return {"decision_type": dtype, "non_causal": non_causal}
+
+
+def model_decision_type(model_path: str) -> str:
+    """decision_type of a local GGUF ("" for anything else). Cached by mtime."""
+    if not model_path or not model_path.lower().endswith(".gguf"):
+        return ""
+    try:
+        return decision_info(get_cached_gguf_metadata(model_path)).get("decision_type", "")
+    except Exception:
+        return ""
 
 
 def format_param_count(n: int) -> str:

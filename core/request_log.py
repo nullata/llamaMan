@@ -140,7 +140,8 @@ class RecordingHandle:
                      status_code: int | None = None) -> None:
         if text is not None:
             self._record["response_body"] = text
-        if isinstance(usage, dict):
+        usage = normalize_usage(usage)
+        if usage:
             pt = usage.get("prompt_tokens")
             ct = usage.get("completion_tokens")
             if isinstance(pt, int):
@@ -236,9 +237,37 @@ def _safe_dumps(obj: Any) -> str:
             return ""
 
 
+def _int(v) -> int:
+    return v if isinstance(v, int) and not isinstance(v, bool) else 0
+
+
+def normalize_usage(usage) -> dict | None:
+    """Usage in OpenAI chat names (prompt_tokens / completion_tokens).
+
+    The Anthropic Messages, OpenAI Responses and System One (decision model)
+    APIs report input_tokens / output_tokens instead. Anthropic leaves the
+    cached part of the prompt out of input_tokens, so it is added back: the
+    prompt count means the whole prompt, as for chat completions."""
+    if not isinstance(usage, dict):
+        return None
+    if "prompt_tokens" in usage or "completion_tokens" in usage:
+        return usage
+    if "input_tokens" not in usage and "output_tokens" not in usage:
+        return usage
+    out = dict(usage)
+    if "input_tokens" in usage:
+        out["prompt_tokens"] = (_int(usage.get("input_tokens"))
+                                + _int(usage.get("cache_read_input_tokens"))
+                                + _int(usage.get("cache_creation_input_tokens")))
+    if "output_tokens" in usage:
+        out["completion_tokens"] = _int(usage.get("output_tokens"))
+    return out
+
+
 class SSEAccumulator:
-    """Parse OpenAI-style SSE bytes incrementally, collecting assistant
-    content and final usage counts for recording.
+    """Parse SSE bytes incrementally, collecting assistant content and final
+    usage counts for recording: OpenAI chat / completions, llama.cpp native,
+    Anthropic Messages and OpenAI Responses streams.
 
     Bytes may arrive split across arbitrary boundaries; we buffer until
     newline-terminated lines are available. Only `data:` lines are parsed;
@@ -276,8 +305,32 @@ class SSEAccumulator:
             if not isinstance(obj, dict):
                 continue
             usage = obj.get("usage")
+            if not isinstance(usage, dict):
+                # Anthropic message_start / Responses response.completed nest it
+                inner = obj.get("message") or obj.get("response")
+                usage = inner.get("usage") if isinstance(inner, dict) else None
             if isinstance(usage, dict):
-                self._usage = usage
+                # Anthropic sends the input in message_start and the output
+                # in message_delta: merge, later counts win.
+                self._usage = {**(self._usage or {}), **usage}
+            etype = obj.get("type")
+            if isinstance(etype, str):
+                d = obj.get("delta")
+                if etype == "content_block_delta" and isinstance(d, dict):
+                    # Anthropic: text_delta is the answer; thinking and
+                    # tool-input deltas are output too, but not its text
+                    piece = d.get("text") or d.get("thinking") or d.get("partial_json")
+                    if isinstance(piece, str) and piece:
+                        output = True
+                        if d.get("type") == "text_delta":
+                            self._content.append(piece)
+                elif etype.startswith("response.") and etype.endswith(".delta"):
+                    # Responses: output_text, reasoning, function-call deltas
+                    if isinstance(d, str) and d:
+                        output = True
+                        if etype == "response.output_text.delta":
+                            self._content.append(d)
+                continue
             choices = obj.get("choices")
             if isinstance(choices, list) and choices and isinstance(choices[0], dict):
                 c0 = choices[0]
@@ -309,7 +362,7 @@ class SSEAccumulator:
         return output
 
     def finish(self) -> tuple[str, dict | None]:
-        return "".join(self._content), self._usage
+        return "".join(self._content), normalize_usage(self._usage)
 
 
 def record_request(

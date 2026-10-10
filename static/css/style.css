@@ -1836,6 +1836,10 @@ body.login-page {
   margin-bottom: 14px;
 }
 
+.decision-hint {
+  margin: 4px 0 0;
+}
+
 .text-warning {
   color: var(--yellow);
 }

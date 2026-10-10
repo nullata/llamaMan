@@ -26,8 +26,8 @@ from core.gpu import get_vendor
 from core.helpers import (
     build_llama_cmd, ensure_docker_network, find_available_port,
     get_docker_client, is_container_running, is_port_available,
-    kill_instance_process, normalize_flash_attn, normalize_load_mode,
-    normalize_reasoning_format,
+    excluded_from_max_models, kill_instance_process, normalize_flash_attn,
+    normalize_load_mode, normalize_reasoning_format,
     public_dict, read_log_file, resolve_llama_endpoint, stop_container,
     stream_log_file,
 )
@@ -135,6 +135,8 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
             "threads_batch",
             "memory_limit",
             "parallel",
+            "batch_size",
+            "ubatch_size",
             "extra_args",
             "flash_attn",
             "reasoning_format",
@@ -165,6 +167,7 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
             "share_queue_group",
             "share_queue_fallback",
             "embedding_model",
+            "exclude_from_max_models",
             "webui_enabled",
             "auto_restart_on_crash",
             "proxy_sampling_override_enabled",
@@ -223,15 +226,15 @@ def _count_running_chat_instances(exclude_instance_id: str | None = None) -> int
             1 for inst in instances.values()
             if inst["id"] != exclude_instance_id
             and inst["status"] not in ("stopped",)
-            and not inst.get("config", {}).get("embedding_model", False)
+            and not excluded_from_max_models(inst.get("config"))
         )
 
 
 def _would_ui_launch_exceed_limit(
-    incoming_embedding_model: bool = False,
+    incoming_excluded: bool = False,
     exclude_instance_id: str | None = None,
 ) -> bool:
-    if LLAMAMAN_MAX_MODELS <= 0 or incoming_embedding_model:
+    if LLAMAMAN_MAX_MODELS <= 0 or incoming_excluded:
         return False
     return _count_running_chat_instances(exclude_instance_id=exclude_instance_id) >= LLAMAMAN_MAX_MODELS
 
@@ -245,7 +248,7 @@ def _get_lru_chat_instances(
             inst for inst in instances.values()
             if inst["id"] != exclude_instance_id
             and inst["status"] not in ("stopped",)
-            and not inst.get("config", {}).get("embedding_model", False)
+            and not excluded_from_max_models(inst.get("config"))
         ]
     if ollama_managed_first:
         candidates.sort(key=lambda inst: (
@@ -258,10 +261,10 @@ def _get_lru_chat_instances(
 
 
 def _evict_instances_for_ui_launch_if_needed(
-    incoming_embedding_model: bool = False,
+    incoming_excluded: bool = False,
     exclude_instance_id: str | None = None,
 ) -> None:
-    if LLAMAMAN_MAX_MODELS <= 0 or incoming_embedding_model:
+    if LLAMAMAN_MAX_MODELS <= 0 or incoming_excluded:
         return
 
     total = _count_running_chat_instances(exclude_instance_id=exclude_instance_id)
@@ -582,6 +585,8 @@ def launch_kwargs_from_config(config: dict, model_path: str, default_ctx_size: i
         threads_batch=config.get("threads_batch"),
         memory_limit=config.get("memory_limit") or None,
         parallel=config.get("parallel"),
+        batch_size=config.get("batch_size"),
+        ubatch_size=config.get("ubatch_size"),
         extra_args=config.get("extra_args", ""),
         spec_enabled=config.get("spec_enabled", False),
         spec_type=config.get("spec_type") or DEFAULT_SPEC_TYPE,
@@ -615,6 +620,7 @@ def launch_kwargs_from_config(config: dict, model_path: str, default_ctx_size: i
         share_queue_group=config.get("share_queue_group", ""),
         share_queue_fallback=config.get("share_queue_fallback", False),
         embedding_model=config.get("embedding_model", False),
+        exclude_from_max_models=excluded_from_max_models(config),
         webui_enabled=config.get("webui_enabled", True) is not False,
         auto_restart_on_crash=bool(config.get("auto_restart_on_crash", False)),
         proxy_sampling_override_enabled=bool(config.get("proxy_sampling_override_enabled", False)),
@@ -642,6 +648,7 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
                     ctx_size=4096,
                     threads=None, threads_batch=None,
                     memory_limit=None, parallel=None, extra_args="",
+                    batch_size=None, ubatch_size=None,
                     spec_enabled=False, spec_type=DEFAULT_SPEC_TYPE,
                     spec_draft_model="", spec_draft_n_max=None,
                     spec_draft_n_min=None, spec_draft_p_split=None,
@@ -659,6 +666,7 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
                     share_queue=False, share_queue_group="",
                     share_queue_fallback=False,
                     embedding_model=False,
+                    exclude_from_max_models=None,
                     webui_enabled=True,
                     auto_restart_on_crash=False,
                     image=None,
@@ -757,6 +765,8 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
         "threads_batch": threads_batch,
         "memory_limit": memory_limit,
         "parallel": parallel,
+        "batch_size": batch_size,
+        "ubatch_size": ubatch_size,
         "extra_args": extra_args,
         "spec_enabled": spec_enabled,
         "spec_type": spec_type,
@@ -816,6 +826,9 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
         "share_queue_group": (share_queue_group or "").strip().lower(),
         "share_queue_fallback": bool(share_queue_fallback),
         "embedding_model": embedding_model,
+        # None (an older caller): follows embedding_model, as before the toggle.
+        "exclude_from_max_models": bool(embedding_model if exclude_from_max_models is None
+                                        else exclude_from_max_models),
         # llama-server's built-in web UI (off -> --no-webui). Default on, like
         # llama-server; configs saved before this key existed keep it on.
         "webui_enabled": bool(webui_enabled),
@@ -1296,13 +1309,13 @@ def api_instances_create():
     if engine_err:
         return jsonify({"error": engine_err}), 400
 
-    incoming_embedding_model = bool(body.get("embedding_model", False))
+    incoming_excluded = excluded_from_max_models(body)
     confirm_overcommit = bool(body.get("confirm_overcommit", False))
     if _admin_ui_enforces_eviction():
         _evict_instances_for_ui_launch_if_needed(
-            incoming_embedding_model=incoming_embedding_model,
+            incoming_excluded=incoming_excluded,
         )
-    elif _would_ui_launch_exceed_limit(incoming_embedding_model=incoming_embedding_model) and not confirm_overcommit:
+    elif _would_ui_launch_exceed_limit(incoming_excluded=incoming_excluded) and not confirm_overcommit:
         return jsonify({
             "error": f"You're about to launch an instance beyond LLAMAMAN_MAX_MODELS={LLAMAMAN_MAX_MODELS}. Do you want to proceed?",
             "confirm_required": True,
@@ -1318,6 +1331,8 @@ def api_instances_create():
         threads_batch=body.get("threads_batch"),
         memory_limit=body.get("memory_limit", "").strip() or None,
         parallel=body.get("parallel"),
+        batch_size=body.get("batch_size"),
+        ubatch_size=body.get("ubatch_size"),
         extra_args=body.get("extra_args", "").strip(),
         gpu_devices=body.get("gpu_devices", "").strip() or None,
         split_mode=body.get("split_mode", "").strip(),
@@ -1334,6 +1349,7 @@ def api_instances_create():
         share_queue_group=body.get("share_queue_group", ""),
         share_queue_fallback=bool(body.get("share_queue_fallback", False)),
         embedding_model=bool(body.get("embedding_model", False)),
+        exclude_from_max_models=incoming_excluded,
         webui_enabled=body.get("webui_enabled", True) is not False,
         auto_restart_on_crash=bool(body.get("auto_restart_on_crash", False)),
         image=body.get("image", "").strip() or None,
@@ -1382,15 +1398,15 @@ def api_instances_restart(inst_id):
         config = old["config"]
         preferred_port = old["port"]
 
-    incoming_embedding_model = bool(config.get("embedding_model", False))
+    incoming_excluded = excluded_from_max_models(config)
     confirm_overcommit = bool(body.get("confirm_overcommit", False))
     if _admin_ui_enforces_eviction():
         _evict_instances_for_ui_launch_if_needed(
-            incoming_embedding_model=incoming_embedding_model,
+            incoming_excluded=incoming_excluded,
             exclude_instance_id=inst_id,
         )
     elif _would_ui_launch_exceed_limit(
-        incoming_embedding_model=incoming_embedding_model,
+        incoming_excluded=incoming_excluded,
         exclude_instance_id=inst_id,
     ) and not confirm_overcommit:
         return jsonify({

@@ -17,6 +17,7 @@ Full docs and source: **[github.com/nullata/llamaman](https://github.com/nullata
 - **One-click launch + presets** - per-model launch settings with live updates for the fields that don't need a relaunch (idle-timeout, gates, sampling overrides)
 - **Instance management** - stop / restart / logs / stats; per-GPU VRAM, container CPU% + RAM, and per-instance throughput / TTFT / latency rolled up from the request log
 - **Ollama + OpenAI proxy on `:42069`** - Open WebUI drops in, auto-starts models on demand, LRU-evicts once `LLAMAMAN_MAX_MODELS` is hit
+- **Decision models** - typed-question models (Jev-style System One) served on `POST /v1/systemone` with auto-start and cluster routing; chat endpoints refuse them. See the [Decision Models docs on GitHub](https://github.com/nullata/llamaMan#decision-models)
 - **Flash Attention + KV cache quant + reasoning format + load mode** - `--flash-attn`, `--cache-type-k/v`, `--reasoning-format`, `--load-mode` (mmap/mlock/dio) all exposed; UI enforces the quantized-V-requires-FA-On constraint
 - **Anti-Loop** - DRY sampler (soft, sampling-time) + proxy-side output loop detection that watches the streamed text and hard-kills the turn when a large chunk repeats often enough. Both off by default, tuned per preset
 - **Speculative decoding** - all five draft-model families (`draft-simple/-mtp/-dflash/-dspark/-eagle3`) with advanced knobs (`n-min`, `p-split`, `p-min`)
@@ -188,7 +189,7 @@ When **Idle Timeout**, **Max Concurrent**, or **Proxy Sampling Overrides** are o
 
 ## Model Eviction
 
-`LLAMAMAN_MAX_MODELS` caps concurrent **chat** models via the proxy. Embedding-flagged instances are excluded and never evicted; sleeping instances still count.
+`LLAMAMAN_MAX_MODELS` caps concurrent **chat** models via the proxy. Instances with **Exclude from Max Models** on (launch form; auto-on for embedding and decision models) are not counted and never evicted; sleeping instances still count.
 
 | Launcher | Evicts | Cannot evict |
 |---|---|---|

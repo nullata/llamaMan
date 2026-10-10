@@ -517,6 +517,10 @@ function applyPresetToLaunchForm(p) {
   if (typeof updateShareQueueClusterRow === 'function') updateShareQueueClusterRow();
   document.getElementById('f-auto-restart').checked = !!p.auto_restart_on_crash;
   document.getElementById('f-embedding-model').checked = !!p.embedding_model;
+  // Presets saved before the toggle existed: Embedding Model was what excluded
+  // a model from the cap, so it turns both on.
+  document.getElementById('f-exclude-max-models').checked =
+    'exclude_from_max_models' in p ? !!p.exclude_from_max_models : !!p.embedding_model;
   // Default on: presets saved before the toggle existed keep the web UI.
   const webuiEl = document.getElementById('f-webui-enabled');
   if (webuiEl) webuiEl.checked = p.webui_enabled !== false;
@@ -721,6 +725,10 @@ function applyPresetHardwareForNode(p, nodeId) {
   if (tbEl) tbEl.value = val('threads_batch') || '';
   document.getElementById('f-memory-limit').value = val('memory_limit') || '';
   document.getElementById('f-parallel').value = val('parallel') || '';
+  const bEl = document.getElementById('f-batch-size');
+  if (bEl) bEl.value = val('batch_size') || '';
+  const ubEl = document.getElementById('f-ubatch-size');
+  if (ubEl) ubEl.value = val('ubatch_size') || '';
   document.getElementById('f-gpu-devices').value = val('gpu_devices') || '';
   // Backfill an empty split_mode (pre-feature presets, or a preset saved
   // before the dropdown had a real 'none' option) to 'layer' - that's
@@ -1039,6 +1047,7 @@ async function updateGpuLayersTotal(modelPath) {
   const suggEl = document.getElementById('gpu-layers-suggestion');
   label.textContent = '';
   currentModelMeta = null;
+  showDecisionModel(null);
   if (suggEl) {
     suggEl.textContent = '';
     suggEl.classList.remove('text-success');
@@ -1051,9 +1060,72 @@ async function updateGpuLayersTotal(modelPath) {
       label.textContent = `/ ${data.layers}`;
     }
     currentModelMeta = data;
+    showDecisionModel(data);
     await updateGpuLayersSuggestion();
   } catch (e) { /* ignore */ }
 }
+
+// A decision model (GGUF <arch>.decision.type) answers typed questions on
+// /v1/systemone instead of generating text. Without a preset, the form gets
+// the settings it needs: kept out of the max-models cap and no chat web UI.
+// Most types answer each question in its own slot (sharing the input), so 8
+// slots; an encoder (BERT-style) one needs each whole question in one
+// micro-batch. Clef asks all the questions in one prompt and reads them from
+// one pass: one slot, and the whole request in one micro-batch.
+function showDecisionModel(meta, force = false) {
+  const hint = document.getElementById('f-decision-hint');
+  const type = meta && meta.decision_type;
+  if (hint) {
+    hint.hidden = !type;
+    hint.textContent = type
+      ? `Decision model (${type}): answers typed questions on /v1/systemone, no text generation.`
+      : '';
+  }
+  if (!type || (_loadedPreset && !force)) return;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  const check = (id, on) => { const el = document.getElementById(id); if (el) el.checked = on; };
+  check('f-exclude-max-models', true);
+  check('f-webui-enabled', false);
+  check('f-embedding-model', false);
+  const joint = type === 'clef';
+  set('f-parallel', joint ? 1 : 8);
+  if (meta.non_causal || joint) {
+    const ctxEl = document.getElementById('f-ctx-size');
+    // Clef's GGUF carries its Qwen base's context length (far past what it
+    // was trained on, and a micro-batch that size needs a huge buffer): its
+    // own default is 16384 tokens per request.
+    const own = joint ? Math.min(meta.context_length || 16384, 16384) : meta.context_length;
+    const ctx = parseInt(ctxEl?.value, 10) || own || 8192;
+    if (ctxEl && !ctxEl.value) ctxEl.value = ctx;
+    set('f-batch-size', ctx);
+    set('f-ubatch-size', ctx);
+  }
+}
+
+// Clear Preset: the form back to the defaults for the selected model - what
+// it shows for a model with no preset, recommended settings included (e.g. a
+// decision model's). Nothing is saved; the engine, display name and note
+// stay (they're not launch settings).
+function clearPresetForm() {
+  const modelPath = document.getElementById('f-model-path').value.trim();
+  if (!modelPath) { toast('Select a model first', 'error'); return; }
+  const note = document.getElementById('f-note').value;
+  applyPresetToLaunchForm({ note });
+  const ctxField = document.getElementById('f-ctx-size');
+  if (ctxField) ctxField.value = '';
+  document.getElementById('f-gpu-layers').value = -1;
+  if (typeof applyStrataPresetToLaunchForm === 'function') applyStrataPresetToLaunchForm({});
+  if (typeof updateProxySamplingOverrideState === 'function') updateProxySamplingOverrideState();
+  if (typeof updateSpecState === 'function') updateSpecState();
+  if (typeof updateMmprojState === 'function') updateMmprojState();
+  if (typeof updateModelSettingsState === 'function') updateModelSettingsState();
+  showDecisionModel(currentModelMeta, true);
+  if (typeof updateGpuLayersSuggestion === 'function') updateGpuLayersSuggestion();
+  toast('Form reset to defaults (not saved)', 'info');
+}
+
+const clearPresetBtn = document.getElementById('btn-clear-preset');
+if (clearPresetBtn) clearPresetBtn.addEventListener('click', clearPresetForm);
 
 // Detect layers when model path is changed manually
 const modelPathField = document.getElementById('f-model-path');

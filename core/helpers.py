@@ -85,6 +85,17 @@ def normalize_load_mode(value) -> str:
     return "auto"
 
 
+def excluded_from_max_models(config: dict | None) -> bool:
+    """Whether an instance (or preset, or launch body) stays out of
+    LLAMAMAN_MAX_MODELS: not counted, never evicted. Its own toggle; configs
+    saved before the toggle existed follow embedding_model, which was the
+    only way to exclude a model then."""
+    config = config or {}
+    if "exclude_from_max_models" in config:
+        return bool(config["exclude_from_max_models"])
+    return bool(config.get("embedding_model"))
+
+
 def request_local_worker(url, *, method="POST", json=None, data=None,
                          headers=None, stream=False):
     """Send an HTTP request to a local llama-server with bounded connect
@@ -235,6 +246,13 @@ def build_llama_cmd(model_path: str, port: int, config: dict) -> list[str]:
         cmd += ["--threads-batch", str(int(config["threads_batch"]))]
     if config.get("parallel"):
         cmd += ["--parallel", str(int(config["parallel"]))]
+    # Logical / physical batch sizes. Blank = llama-server's defaults (2048 /
+    # 512). A decision model needs a question and its options in one batch,
+    # and a non-causal (BERT-style) one its whole input in one micro-batch.
+    if config.get("batch_size"):
+        cmd += ["--batch-size", str(int(config["batch_size"]))]
+    if config.get("ubatch_size"):
+        cmd += ["--ubatch-size", str(int(config["ubatch_size"]))]
     if config.get("embedding_model"):
         cmd += ["--embeddings"]
     # Only an explicit False: configs from before the toggle keep the web UI,

@@ -871,6 +871,7 @@ function readLaunchForm() {
     share_queue_fallback: document.getElementById('f-share-queue-fallback')?.checked || false,
     auto_restart_on_crash: document.getElementById('f-auto-restart').checked,
     embedding_model: document.getElementById('f-embedding-model').checked,
+    exclude_from_max_models: document.getElementById('f-exclude-max-models').checked,
     webui_enabled: document.getElementById('f-webui-enabled')?.checked !== false,
     spec_enabled: document.getElementById('f-spec-enabled').checked,
     spec_type: currentSpecType(),
@@ -925,6 +926,10 @@ function readLaunchForm() {
   if (memoryLimit) body.memory_limit = memoryLimit;
   const parallel = document.getElementById('f-parallel').value.trim();
   if (parallel) body.parallel = parseInt(parallel);
+  const batchSize = document.getElementById('f-batch-size')?.value.trim();
+  if (batchSize) body.batch_size = parseInt(batchSize, 10);
+  const ubatchSize = document.getElementById('f-ubatch-size')?.value.trim();
+  if (ubatchSize) body.ubatch_size = parseInt(ubatchSize, 10);
   const specNMax = document.getElementById('f-spec-draft-n-max').value.trim();
   if (specNMax) body.spec_draft_n_max = parseInt(specNMax, 10);
   // Advanced spec-decoding knobs. Empty = don't set the key at all, so the
@@ -1301,6 +1306,15 @@ if (mmprojToggle) {
 
 const specTypeSelect = document.getElementById('f-spec-type');
 if (specTypeSelect) specTypeSelect.addEventListener('change', updateSpecState);
+
+// An embedding model is normally kept out of the cap: turning it on turns
+// Exclude from Max Models on too (it can be turned off again).
+const embeddingToggle = document.getElementById('f-embedding-model');
+if (embeddingToggle) {
+  embeddingToggle.addEventListener('change', () => {
+    if (embeddingToggle.checked) document.getElementById('f-exclude-max-models').checked = true;
+  });
+}
 
 // GPU Settings section: react to the two inputs that gate the visible-GPU
 // count (GPU Layers = 0 disables the whole placement group; GPU Devices
