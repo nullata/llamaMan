@@ -1,8 +1,48 @@
-# Strata engine - design notes and verification
+# Strata engine
 
-[Strata](https://github.com/Niko1221/Strata) is a second inference engine in llamaMan, next to llama.cpp. This page
-covers how the integration works, what it relies on upstream, its limits, and how to verify it on a real NVIDIA
-host. For setup and day-to-day use, see the README's "Strata Engine" section.
+*(opt-in, NVIDIA only)* [Strata](https://github.com/Niko1221/Strata) runs the Qwen3.8-Flash-Next mixture-of-experts family (and its Coder, Swift 1.5 and Unsloth variants) on consumer NVIDIA GPUs plus system RAM. llamaMan can launch, monitor, proxy, sleep/wake and stop Strata instances next to llama.cpp ones. llama.cpp behaviour does not change: the engine layer (`core/engines/`) keeps the llama.cpp launch byte-for-byte identical (snapshot-tested).
+
+## Contents
+
+- [Getting started](#getting-started) · [Limits and behaviour](#limits-and-behaviour) · [Design notes and verification](#design-notes-and-verification)
+
+## Getting started
+
+**1. Get an image** (upstream publishes none; the host needs NVIDIA driver **580+**, i.e. CUDA 13, and the NVIDIA Container Toolkit). After enabling Strata (step 2), either pull one you trust by name in **Settings → Docker Images** (engine *Strata* in the pull row), or use **Manage Strata images → Pull repo & build latest**, which downloads the repository into `STRATA_SRC_DIR` and builds `STRATA_BUILD_IMAGE` through the Docker socket for the node's GPU generations (read from the driver; all supported ones if that fails), or build it by hand:
+
+```bash
+git clone https://github.com/Niko1221/Strata && cd Strata
+docker build -t strata .                                        # all supported GPU generations
+docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (faster build)
+```
+
+**2. Enable it** on the llamaMan node: `STRATA_ENABLED=true` (see [Strata variables](CONFIGURATION.md#strata)). Settings → Docker Images then shows *Manage Strata images*: the pulled Strata images, the built one (downloaded and built commits, the build button) and their auto-update. The launch form offers Strata once one of them is on the node.
+
+**3. Launch.** The model library gains one virtual entry per family × size: `strata/qwen-Q2_0`, `strata/qwen-IQ2_XS`, `strata/qwen-IQ3_XXS`, `strata/qwen-IQ3_S`, `strata/swift-IQ2_XS`, `strata/swift-IQ3_XXS`, `strata/coder-IQ1_M`, `strata/unsloth-UD-Q4_K_XL` *(experimental)*. Each is its own instance and container, so switching models works like llama.cpp: launch or wake another instance, with the usual [eviction](MODELS.md#model-eviction) rules (a Strata instance is one chat model). The entries also appear in `/api/tags` and `/v1/models`, and requests may use the id (`strata/qwen-IQ2_XS`, any case, `:tag` ignored) or Strata's own served name (`qwen3.8-flash-next-iq2_xs`).
+
+The launch form hides the llama.cpp-only fields (GPU layers, MoE, threads, parallel, KV types, flash attention, spec decoding, mmproj, DRY, extra args) and shows **Image Input** (no / GPU / CPU), **KV Cache** (Strata default int8, `int8`, `q4_0`, `k8v4`) and **Low-RAM Mode** (auto / on / off). The API rejects llama.cpp-only fields set for a Strata model.
+
+**First start.** Strata downloads ~58-111 GB, prepares its "pack" and fetches its MTP layer before the server opens its port; later starts go straight to loading (1-3 minutes). The instance card shows *setting up → downloading (with %) → preparing pack → loading* parsed from the container log, and the Logs button streams the log. Two ways to download:
+
+- **Let Strata download** into its `/data` volume (default).
+- **Pre-download with llamaMan** (button in the Strata section, or `POST /api/engines/strata/download`): an ordinary entry in the Downloads tab (progress, pause/resume, retry, HF tokens, speed limits) that fetches the shards from the Hugging Face revision Strata pins into `MODELS_DIR/strata/<tag>/`. Once complete they are bind-mounted into the container and Strata's setup uses them instead of downloading. A launch is refused while that download is still running. The MTP layer (~5 GB) and the pack are still prepared by Strata on the first start.
+
+## Limits and behaviour
+
+- **One request at a time.** Max Concurrent is forced to 1; further requests queue in llamaMan's gate (Max Queue Depth, then 429).
+- **RAM.** Strata loads 32-62 GB into RAM (`--ulimit memlock=-1` is always set). A **System Memory Limit** forces Low-RAM mode on, because Strata's setup reads the host's RAM and cannot see a container limit; the UI warns below ~64 GB.
+- **Settings are baked into Strata's setup.** Context / image input / KV / Low-RAM / GPU pinning are recorded per model on the data volume. llamaMan remembers the settings each model last came up healthy with and passes `REINSTALL=1` only when they change (the files are reused).
+- **Idle timeout** works (sleep stops the container; the next request wakes it), but a cold start takes minutes and the waking request waits for it (`STRATA_LOAD_TIMEOUT`).
+- **One instance per Strata model per node** (instances of one model share its setup on the volume).
+- **NVIDIA only.** The option is unavailable, with the reason, on ROCm / Intel / Vulkan / CPU nodes and when `STRATA_ENABLED` is off. In a cluster each node advertises its engines, so only capable nodes offer Strata models.
+- Bare-metal llamaMan reaches Strata the same way as llama-server (published port on `LLAMA_HOST_ADDR`).
+
+---
+
+# Design notes and verification
+
+This page covers how the integration works, what it relies on upstream, its limits, and how to verify it on a real NVIDIA
+host.
 
 Upstream references point at Strata commit `99f3dbd` (2026-10-03).
 

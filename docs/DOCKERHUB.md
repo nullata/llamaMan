@@ -4,7 +4,7 @@
 
 # <img src="https://raw.githubusercontent.com/nullata/llamaMan/4d17202d108547537c0dbc13083794274b491fd3/static/images/logo.svg" alt="logo" width="24"> llamaMan
 
-**What it is.** A browser UI + API front-end for running multiple [llama.cpp](https://github.com/ggerganov/llama.cpp) server instances from one Docker container. Ollama-compatible proxy so it drops in for [Open WebUI](https://github.com/open-webui/open-webui).
+**What it is.** A browser UI + API front-end for running multiple [llama.cpp](https://github.com/ggml-org/llama.cpp) server instances from one Docker container. Ollama-compatible proxy so it drops in for [Open WebUI](https://github.com/open-webui/open-webui).
 
 **What's different.** llamaMan has **no llama.cpp code and no GPU dependency** - it spawns `ghcr.io/ggml-org/llama.cpp:server-*` containers as siblings over the Docker socket. Every launch knob (spec-decoding, MoE offload, KV quant, flash-attn, load-mode, mmproj, PDF input) is a first-class UI field, and multi-node deployments can share a queue across heterogeneous hardware. Update llama.cpp without touching llamaMan: pull a newer `server-*` image from Settings → Docker Images.
 
@@ -17,7 +17,7 @@ Full docs and source: **[github.com/nullata/llamaman](https://github.com/nullata
 - **One-click launch + presets** - per-model launch settings with live updates for the fields that don't need a relaunch (idle-timeout, gates, sampling overrides)
 - **Instance management** - stop / restart / logs / stats; per-GPU VRAM, container CPU% + RAM, and per-instance throughput / TTFT / latency rolled up from the request log
 - **Ollama + OpenAI proxy on `:42069`** - Open WebUI drops in, auto-starts models on demand, LRU-evicts once `LLAMAMAN_MAX_MODELS` is hit
-- **Decision models** - typed-question models (Jev-style System One) served on `POST /v1/systemone` with auto-start and cluster routing; chat endpoints refuse them. See the [Decision Models docs on GitHub](https://github.com/nullata/llamaMan#decision-models)
+- **Decision models** - typed-question models (Jev-style System One) served on `POST /v1/systemone` with auto-start and cluster routing; chat endpoints refuse them. See the [Decision Models docs on GitHub](https://github.com/nullata/llamaman/blob/main/docs/MODELS.md#decision-models)
 - **Flash Attention + KV cache quant + reasoning format + load mode** - `--flash-attn`, `--cache-type-k/v`, `--reasoning-format`, `--load-mode` (mmap/mlock/dio) all exposed; UI enforces the quantized-V-requires-FA-On constraint
 - **Anti-Loop** - DRY sampler (soft, sampling-time) + proxy-side output loop detection that watches the streamed text and hard-kills the turn when a large chunk repeats often enough. Both off by default, tuned per preset
 - **Speculative decoding** - all five draft-model families (`draft-simple/-mtp/-dflash/-dspark/-eagle3`) with advanced knobs (`n-min`, `p-split`, `p-min`)
@@ -26,7 +26,7 @@ Full docs and source: **[github.com/nullata/llamaman](https://github.com/nullata
 - **Auth** - user accounts, API keys (bearer tokens), toggle for whether model endpoints require auth
 - **Persistent state, JSON or MariaDB** - MariaDB unlocks multi-node clustering (shared dashboard, cross-node launch/download, shared-queue load balancing) and an optional local write-through mirror that keeps the node serving through a DB outage
 - **Request recording + logging dashboard** - opt-in per-request or per-conversation recording with retention, plus a dedicated logging page
-- 🆕 **Knowledge base + MCP server** - opt-in (MariaDB 11.8+): store documents as topics, search them by meaning with your own embedding model, and serve them to MCP clients at `:42069/mcp/knowledge`, with an optional private knowledge base per API key. See the [Knowledge Base & MCP docs on GitHub](https://github.com/nullata/llamaman#knowledge-base--mcp)
+- 🆕 **Knowledge base + MCP server** - opt-in (MariaDB 11.8+): store documents as topics, search them by meaning with your own embedding model, and serve them to MCP clients at `:42069/mcp/knowledge`, with an optional private knowledge base per API key. See the [Knowledge Base & MCP docs on GitHub](https://github.com/nullata/llamaman/blob/main/docs/KNOWLEDGE-BASE.md)
 
 ## Tags
 
@@ -131,7 +131,7 @@ networks:
 
 ## Environment Variables
 
-Only the ones you'll typically touch. See the [full reference on GitHub](https://github.com/nullata/llamaman#environment-variables) for every knob.
+Only the ones you'll typically touch. See the [full reference on GitHub](https://github.com/nullata/llamaman/blob/main/docs/CONFIGURATION.md#environment-variables) for every knob.
 
 | Variable | Default | Description |
 |---|---|---|

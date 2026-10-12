@@ -18,8 +18,8 @@ services:
       - ./models:/models
       - ./data:/data
       - ./logs:/tmp/llama-logs
-      # Optional model archive volume (README "Model Archive"); also set
-      # ARCHIVE_DIR=/archive below.
+      # Optional model archive volume (docs/MODELS.md, "Model Archive"); also
+      # set ARCHIVE_DIR=/archive below.
       # - /mnt/user/backup/llms:/archive
       # Docker socket - allows llamaman to spawn llama-server containers
       - /var/run/docker.sock:/var/run/docker.sock
@@ -53,6 +53,7 @@ services:
       #   NVIDIA:     ghcr.io/ggml-org/llama.cpp:server-cuda   (default)
       #   AMD ROCm:   ghcr.io/ggml-org/llama.cpp:server-rocm
       #   Intel Arc:  ghcr.io/ggml-org/llama.cpp:server-sycl
+      #   Vulkan:     ghcr.io/ggml-org/llama.cpp:server-vulkan (opt-in: set GPU_TYPE=vulkan)
       #   CPU only:   ghcr.io/ggml-org/llama.cpp:server
       - LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda
       - LLAMA_NETWORK=llamaman-net
@@ -68,7 +69,8 @@ services:
       # uses localhost on the published ports. Override only if detection is
       # wrong for your runtime: LLAMAMAN_IN_DOCKER=true|false.
       # - LLAMAMAN_IN_DOCKER=true
-      # GPU_TYPE: override GPU auto-detection ("cuda", "rocm", "intel").
+      # GPU_TYPE: override GPU auto-detection ("cuda", "rocm", "intel",
+      # "vulkan" - opt-in only, never auto-detected).
       # Leave unset to let llamaman probe the host automatically.
       # - GPU_TYPE=cuda
       # Restrict which GPUs are visible to all llama-server containers.
@@ -83,7 +85,7 @@ services:
       # mounted above. Enables Archive / Restore in the model list.
       # - ARCHIVE_DIR=/archive
       #
-      # Strata engine (optional, NVIDIA only) - see README "Strata Engine".
+      # Strata engine (optional, NVIDIA only) - see docs/STRATA.md.
       # Easiest build path: Settings -> Docker Images -> build Strata from the
       # repository, on this node. Or build it yourself in a clone of
       # github.com/Niko1221/Strata: docker build -t strata .
