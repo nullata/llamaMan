@@ -15,6 +15,7 @@ let launchEngine = 'llamacpp';
 let launchSelectedModel = null;    // library entry of the selected file
 let launchEngineModel = null;      // its entry in the engine's catalogue (Strata)
 let _enginesCache = {};            // nodeId -> {at, data} from /api/engines
+let _enginesInflight = {};         // nodeId -> the pending /api/engines promise
 const _ENGINES_TTL_MS = 15000;
 
 function currentLaunchEngine() { return launchEngine; }
@@ -61,15 +62,24 @@ async function fetchEnginesForNode(nodeId, force = false) {
   const key = nodeId || 'local';
   const hit = _enginesCache[key];
   if (!force && hit && Date.now() - hit.at < _ENGINES_TTL_MS) return hit.data;
-  try {
-    const res = await _nf(nodeId, '/api/engines');
-    if (!res || !res.ok) return hit ? hit.data : null;
-    const data = await res.json();
-    _enginesCache[key] = { at: Date.now(), data };
-    return data;
-  } catch (e) {
-    return hit ? hit.data : null;
-  }
+  // Concurrent callers (the engine dropdown and the Strata-models button both
+  // ask on every change) share one request instead of each hitting the network.
+  if (!force && _enginesInflight[key]) return _enginesInflight[key];
+  const p = (async () => {
+    try {
+      const res = await _nf(nodeId, '/api/engines');
+      if (!res || !res.ok) return hit ? hit.data : null;
+      const data = await res.json();
+      _enginesCache[key] = { at: Date.now(), data };
+      return data;
+    } catch (e) {
+      return hit ? hit.data : null;
+    } finally {
+      if (_enginesInflight[key] === p) delete _enginesInflight[key];
+    }
+  })();
+  _enginesInflight[key] = p;
+  return p;
 }
 
 function _engineInfo(data, name) {
@@ -427,12 +437,13 @@ function strataReady(info) {
   return !!(info && info.available && info.image_built !== false);
 }
 
-// The button beside the Inference Engine dropdown: whenever the target node
-// is Strata-ready, so a first model can be downloaded before any is local.
+// The button beside the Inference Engine dropdown: only while Strata is the
+// selected engine and the target node is Strata-ready.
 async function updateStrataModelsButton() {
   const btn = document.getElementById('btn-strata-models-open');
   if (!btn) return;
-  btn.hidden = !strataReady(_engineInfo(await fetchEnginesForNode(_launchNode()), 'strata'));
+  const ready = strataReady(_engineInfo(await fetchEnginesForNode(_launchNode()), 'strata'));
+  btn.hidden = !(ready && launchEngine === 'strata');
 }
 
 document.getElementById('btn-strata-models-open')?.addEventListener('click', openStrataModelsModal);
