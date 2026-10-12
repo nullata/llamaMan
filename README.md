@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/llamaman-logo-wide.jpg" alt="llamaMan" width="1000">
+  <img src="docs/llamaman-logo.png" alt="llamaMan" width="1000">
 </p>
 
 # <img src="static/images/logo.svg" alt="logo" width="24"> llamaMan

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/nullata/llamaman/main/docs/llamaman-logo-wide.jpg" alt="llamaMan" width="1000">
+  <img src="https://raw.githubusercontent.com/nullata/llamaman/main/docs/llamaman-logo.png" alt="llamaMan" width="1000">
 </p>
 
 # <img src="https://raw.githubusercontent.com/nullata/llamaMan/4d17202d108547537c0dbc13083794274b491fd3/static/images/logo.svg" alt="logo" width="24"> llamaMan
