@@ -74,7 +74,7 @@ core/engines/
   | image | `STRATA_IMAGE` (else the built, then a pulled Strata image) |
   | entrypoint | `sh -c ENTRY_SCRIPT` (`core/engines/strata.py`), under Docker's init; not the image's own (see 2.) |
   | command | none (the script reads env vars only) |
-  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `GGUF_DIR=/models`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`? |
+  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `GGUF_DIR=/models`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `STRATA_ALLOWED_HOSTS`, `SERVE_PORT=8081`, `RELAY_SCRIPT`, `REINSTALL=1`? |
   | ulimits | `memlock=-1` |
   | GPU | NVIDIA `device_requests` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
   | mounts | data volume → `/data`; logs; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/models` (rw, for setup's `.done` marks), when llamaMan holds complete shards; renamed copies are mounted file by file under the published names |
@@ -97,7 +97,10 @@ core/engines/
    runs `/opt/strata/terminal/setup.py --setup --yes --no-start ...` in Control mode (`STRATA_CONTROL_INSTALL=1`,
    `STRATA_INSTALL_DIR=/data/install`: the engine is the image's component) when the run config
    `/data/install/strata-<tag>.json` is missing or `REINSTALL=1`, then execs `serve/server.py --engine strata
-   --config <that file>` with `STRATA_NO_ACQUIRE=1`. `LAYER_SPLIT` is written into the config's `layer_split` at every
+   --config <that file>` with `STRATA_NO_ACQUIRE=1`. The server refuses a non-loopback bind without an API key
+   (`serve/server.py` `main()`: "a non-loopback bind requires an inference API key"), and llamaMan sends backends no
+   key, so it binds `127.0.0.1:8081` and a small TCP relay (`RELAY_SCRIPT`) carries `0.0.0.0:8080` to it. Its Host
+   check still applies through `STRATA_ALLOWED_HOSTS`. `LAYER_SPLIT` is written into the config's `layer_split` at every
    start. On a 0.1.x image (no `/opt/strata/terminal`) it runs that image's `docker-entrypoint.sh`, which reads the
    same variables. GPU pinning uses container numbering: the NVIDIA runtime
    renumbers the host GPUs llamaMan attaches, so host `1,3` becomes `GPUS=0,1`. llamaMan doesn't set `API_KEY`, which

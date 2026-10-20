@@ -27,9 +27,10 @@ What llamaman relies on (upstream file references are to the Strata repo):
     {"status": "ok", ...} before the API-key gate - the same readiness
     contract as llama-server, so the health poller needs no special case.
     Without an API key the server answers only the Host names in
-    STRATA_ALLOWED_HOSTS (serve/server.py host_allowed); it warns about
-    listening on 0.0.0.0 keyless but does not refuse (only `strata launch`
-    does, strata_cli/cli.py _launch_plan).
+    STRATA_ALLOWED_HOSTS (serve/server.py host_allowed), and it refuses to
+    bind anything but loopback without one (server.py main()). So it listens
+    on 127.0.0.1:SERVE_PORT and a TCP relay in the container carries
+    0.0.0.0:PORT to it.
   * One request at a time (serve/server.py v1_status: concurrency.serving=1).
   * It loads 32-62 GB into RAM and page-locks part of it for GPU DMA, so the
     container runs with memlock unlimited. Its setup reads RAM from
@@ -610,6 +611,43 @@ GGUF_MOUNT = "/models"
 # setup.py names it (home() / f"strata-{tag.lower()}.json"); the server is
 # started on that file, not through setup.py's start path, which starts the
 # newest strata-*.json and the volume may hold several models'.
+#
+# serve/server.py refuses a non-loopback bind without an API key
+# (server.py main(): "a non-loopback bind requires an inference API key"), and
+# llamaman sends backends no key. So the server binds 127.0.0.1:SERVE_PORT and
+# RELAY_SCRIPT carries PORT on every address to it. The server's Host check
+# still applies (STRATA_ALLOWED_HOSTS).
+SERVE_PORT = 8081
+
+# Plain TCP relay 0.0.0.0:PORT -> 127.0.0.1:SERVE_PORT. A connection made
+# before the server listens is closed, which the health poller reads as
+# "starting", as it read the refused port before.
+RELAY_SCRIPT = r"""
+import asyncio, os
+async def pipe(r, w):
+    try:
+        while data := await r.read(65536):
+            w.write(data)
+            await w.drain()
+    except OSError:
+        pass
+    finally:
+        w.close()
+async def handle(cr, cw):
+    try:
+        sr, sw = await asyncio.wait_for(
+            asyncio.open_connection("127.0.0.1", int(os.environ["SERVE_PORT"])), 2)
+    except (OSError, asyncio.TimeoutError):
+        cw.close()
+        return
+    await asyncio.gather(pipe(cr, sw), pipe(sr, cw))
+async def main():
+    server = await asyncio.start_server(handle, os.environ["HOST"], int(os.environ["PORT"]))
+    async with server:
+        await server.serve_forever()
+asyncio.run(main())
+"""
+
 ENTRY_SCRIPT = r"""
 set -eu
 T=/opt/strata/terminal
@@ -630,7 +668,8 @@ cfg="$INSTALL/strata-$tag.json"
 export STRATA_CONTROL_INSTALL=1 STRATA_INSTALL_DIR="$INSTALL" PYTHONNOUSERSITE=1 PYTHONPATH="$T"
 cd "$T"
 if [ "${REINSTALL:-0}" = "1" ] || [ ! -f "$cfg" ]; then
-  set -- --setup --yes --no-start --family "$FAMILY" --model "$MODEL" --context "$CONTEXT"     --vision "$VISION" --data-dir /data/Strata-data --host "$HOST" --port "$PORT" --low-ram "${LOW_RAM:-auto}"
+  set -- --setup --yes --no-start --family "$FAMILY" --model "$MODEL" --context "$CONTEXT" \
+    --vision "$VISION" --data-dir /data/Strata-data --host 127.0.0.1 --port "$SERVE_PORT" --low-ram "${LOW_RAM:-auto}"
   if [ -n "${KV:-}" ]; then set -- "$@" --kv "$KV"; fi
   if [ -n "${GPUS:-}" ]; then set -- "$@" --gpus "$GPUS"; fi
   if [ -n "${GPU:-}" ]; then set -- "$@" --gpu "$GPU"; fi
@@ -651,7 +690,8 @@ if [ -n "${GPUS:-}" ]; then
     "$cfg" "${LAYER_SPLIT:-auto}"
 fi
 export STRATA_NO_ACQUIRE=1
-exec "$PY" serve/server.py --engine strata --config "$cfg" --host "$HOST" --port "$PORT"
+"$PY" -c "$RELAY_SCRIPT" &
+exec "$PY" serve/server.py --engine strata --config "$cfg" --host 127.0.0.1 --port "$SERVE_PORT"
 """
 
 
@@ -937,7 +977,8 @@ class StrataEngine(Engine):
         # init reaps and forwards SIGTERM (0.1.x images have no tini).
         kwargs["entrypoint"] = ["sh", "-c", ENTRY_SCRIPT]
         kwargs["init"] = True
-        kwargs.setdefault("environment", {})["STRATA_ALLOWED_HOSTS"] = ",".join(
+        kwargs.setdefault("environment", {}).update(SERVE_PORT=str(SERVE_PORT), RELAY_SCRIPT=RELAY_SCRIPT)
+        kwargs["environment"]["STRATA_ALLOWED_HOSTS"] = ",".join(
             self.allowed_hosts(kw["container_name"], kw.get("config") or {}))
         return kwargs
 

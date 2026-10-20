@@ -137,6 +137,11 @@ class StrataContainerSpecTests(_TmpDirs):
         self.assertEqual(kw["entrypoint"], ["sh", "-c", S.ENTRY_SCRIPT])
         self.assertTrue(kw["init"])
         self.assertNotIn("GGUF_DIR", kw["environment"])  # nothing downloaded yet
+        # The server refuses a keyless non-loopback bind: it listens on
+        # 127.0.0.1:SERVE_PORT behind the relay on PORT.
+        self.assertEqual(kw["environment"]["SERVE_PORT"], str(S.SERVE_PORT))
+        self.assertEqual(kw["environment"]["RELAY_SCRIPT"], S.RELAY_SCRIPT)
+        self.assertNotEqual(S.SERVE_PORT, STRATA.internal_port)
         self.assertEqual(kw["ports"], {8080: 9001})
         self.assertEqual(kw["network"], "llamaman-net")
         env = kw["environment"]
