@@ -5,30 +5,40 @@ mixture-of-experts family on one or more consumer NVIDIA GPUs plus system RAM.
 
 What llamaman relies on (upstream file references are to the Strata repo):
 
-  * The image is built locally (`docker build -t strata .`), never pulled.
-  * Its entrypoint (docker-entrypoint.sh) takes every choice as an env var -
+  * The image is built locally (`docker build -t strata .`) or pulled.
+  * llamaman does not use the image's entrypoint. 0.2.x's docker/entrypoint.sh
+    runs `strata launch` (presets, tuning, a generated API key, its own
+    downloader, a status loop that ends the container) and ignores the
+    0.1.x variables; the engine and its installer are still in the image
+    and take every 0.1.x choice. So ENTRY_SCRIPT is the entrypoint: it reads
     FAMILY, MODEL, CONTEXT, VISION, KV, HOST, PORT, GPU / GPUS, LOW_RAM,
-    REINSTALL - and ignores command arguments, so command is empty here.
-  * Each family x size is set up once into the /data volume (download ~58-111
-    GB, build the "pack", fetch the MTP layer) and recorded as
-    /data/config/strata-<tag>.json. Later starts serve straight from it.
-    Context / vision / KV / LOW_RAM are baked into that config: changing one
-    needs REINSTALL=1 (docker-entrypoint.sh:44), which this engine sends only
-    when the settings differ from the ones it last saw come up healthy.
+    LAYER_SPLIT, REINSTALL and GGUF_DIR, runs /opt/strata/terminal/setup.py
+    once per setup (Control mode: the engine is the image's component, the
+    run config lands in /data/install/strata-<tag>.json) and execs
+    serve/server.py on that config. On a 0.1.x image (no /opt/strata/terminal)
+    it hands the same variables to that image's docker-entrypoint.sh.
+  * Each family x size is set up once into the /data volume (build the
+    "pack", fetch the MTP layer) and recorded as its run config. Later starts
+    serve straight from it. Context / vision / KV / LOW_RAM / GPUs are baked
+    into that config: changing one needs REINSTALL=1, which this engine sends
+    only when the settings differ from the ones it last saw come up healthy.
   * The HTTP port opens only after the model is loaded (serve/server.py
     main(): serve() runs after the engine starts), and /health answers
     {"status": "ok", ...} before the API-key gate - the same readiness
     contract as llama-server, so the health poller needs no special case.
+    Without an API key the server answers only the Host names in
+    STRATA_ALLOWED_HOSTS (serve/server.py host_allowed); it warns about
+    listening on 0.0.0.0 keyless but does not refuse (only `strata launch`
+    does, strata_cli/cli.py _launch_plan).
   * One request at a time (serve/server.py v1_status: concurrency.serving=1).
   * It loads 32-62 GB into RAM and page-locks part of it for GPU DMA, so the
     container runs with memlock unlimited. Its setup reads RAM from
     /proc/meminfo (the host's, not a cgroup limit), so a memory-capped
-    container must ask for LOW_RAM=on itself (Dockerfile comment, INSTALL.md).
-  * Shards already on disk are used instead of downloading when they sit at
-    /data/models/<fam tag><SIZE>/<original name>, case kept (setup.py "#173: a whole file copied in
-    by hand has no finish mark" - it checks them against their own tensor
-    directory), so a model downloaded through llamaman's downloader into
-    MODELS_DIR/strata/<tag>/ is bind-mounted there.
+    container must ask for LOW_RAM=on itself (setup.py --low-ram).
+  * Shards llamaman downloaded (MODELS_DIR/strata/<tag>/) are mounted at
+    /models and passed as GGUF_DIR (setup.py --gguf-dir): setup then never
+    downloads the model, and the server runs with STRATA_NO_ACQUIRE=1.
+    0.2.x no longer reads the 0.1.x /data/models/<tag> folder at all.
 
 Each family x size is a virtual model with the path /strata/<family>-<SIZE>
 (id strata/<family>-<SIZE>) and is its own llamaman instance.
@@ -128,19 +138,27 @@ _CATALOGUE_LOCK = threading.Lock()
 _catalogue_state = {"image": None, "image_id": None, "source": "built-in", "error": None}
 
 # Run inside the image (network off): print setup.py's tables as JSON.
-# setup.py's main() is guarded and it imports only the standard library.
+# setup.py's main() is guarded and it imports only the standard library. It is
+# /opt/strata/terminal/setup.py from 0.2.x, /opt/strata/setup.py before (the
+# entrypoint below runs from the right folder). Families llamaman cannot
+# download as split GGUF shards are left out, with their sizes: ready-made
+# packs ("ready", no hf/file: NVFP4) and single-file models (no {i}: Gyro).
 _DUMP_SCRIPT = r"""
-import json, sys
-sys.path.insert(0, "/opt/strata")
+import json, os, sys
+sys.path.insert(0, os.getcwd())
 sys.argv = ["setup.py"]
 import setup as s
+def usable(f):
+    return not f.get("ready") and f.get("hf") and "{i}" in (f.get("file") or "")
 fam = {k: {"title": f.get("title"), "name": f.get("name"), "hf": f.get("hf"), "file": f.get("file"),
            "shards": f.get("shards", 2), "vision": f.get("vision", True),
-           "experimental": f.get("experimental", False)} for k, f in s.FAMILIES.items()}
-mod = {k: {"download_gb": m.get("download_gb"), "ram_gb": m.get("ram_gb"),
-           "families": list(m.get("families", ("qwen", "swift"))),
-           **{o: m[o] for o in ("vision", "experimental", "file", "shards") if o in m}}
-       for k, m in s.MODELS.items()}
+           "experimental": f.get("experimental", False)} for k, f in s.FAMILIES.items() if usable(f)}
+mod = {}
+for k, m in s.MODELS.items():
+    fams = [f for f in m.get("families", ("qwen", "swift")) if f in fam]
+    if fams and "{i}" in m.get("file", "{i}"):
+        mod[k] = {"download_gb": m.get("download_gb"), "ram_gb": m.get("ram_gb"), "families": fams,
+                  **{o: m[o] for o in ("vision", "experimental", "file", "shards") if o in m}}
 print(json.dumps({"families": fam, "models": mod, "revisions": s.HF_REVISIONS}))
 """
 
@@ -215,8 +233,9 @@ def catalogue_source() -> dict:
 
 
 # Bumped when _DUMP_SCRIPT prints more, so a cached dump of the same image is
-# read again (2: per-model vision / experimental / file / shards).
-_DUMP_VERSION = 2
+# read again (2: per-model vision / experimental / file / shards; 3: 0.2.x
+# images, packs and single-file families left out).
+_DUMP_VERSION = 3
 
 
 def _cache_key(image_id: str) -> str:
@@ -286,7 +305,9 @@ def refresh_catalogue_from_image() -> None:
         if dump is None:
             out = client.containers.run(
                 image_name, remove=True, network_disabled=True, stdout=True, stderr=False,
-                entrypoint=["sh", "-c", 'cd /opt/strata && { .venv/bin/python -c "$LLAMAMAN_DUMP" 2>/dev/null '
+                entrypoint=["sh", "-c", 'if [ -x /opt/strata/terminal/python/bin/python3 ]; then '
+                                        'cd /opt/strata/terminal && exec python/bin/python3 -c "$LLAMAMAN_DUMP"; fi; '
+                                        'cd /opt/strata && { .venv/bin/python -c "$LLAMAMAN_DUMP" 2>/dev/null '
                                         '|| python3 -c "$LLAMAMAN_DUMP"; }'],
                 environment={"LLAMAMAN_DUMP": _DUMP_SCRIPT},
             )
@@ -433,15 +454,6 @@ def setup_tag(family: str, size: str) -> str:
     return f"{prefix}{size.lower()}"
 
 
-def shards_dir_tag(family: str, size: str) -> str:
-    """The folder under /data/models/ setup.py reads this model's shards from:
-    its own tag, fam["tag"] + model with the size's ORIGINAL case
-    (setup.py:3264, used at :3389) - e.g. "IQ3_S", "coder-IQ1_M". Only the
-    entrypoint's config name and the pack folder are lowercased."""
-    prefix = "" if family == "qwen" else f"{family}-"
-    return f"{prefix}{size}"
-
-
 def shard_files(family: str, size: str) -> list[str]:
     file = model_attr(family, size, "file")
     return [file.format(q=size, i=i) for i in range(1, model_attr(family, size, "shards") + 1)]
@@ -586,6 +598,64 @@ def read_log_tail(path: str, max_bytes: int = 64 * 1024) -> str:
 
 
 # ---------------------------------------------------------------------------
+# The container's entrypoint
+# ---------------------------------------------------------------------------
+
+# Where the shards are mounted (GGUF_DIR).
+GGUF_MOUNT = "/models"
+
+# sh -c, under Docker's init (container_spec). The variables are
+# StrataEngine.environment()'s; the flags are setup.py's (0.1.x
+# docker-entrypoint.sh passed the same ones). The run config is named like
+# setup.py names it (home() / f"strata-{tag.lower()}.json"); the server is
+# started on that file, not through setup.py's start path, which starts the
+# newest strata-*.json and the volume may hold several models'.
+ENTRY_SCRIPT = r"""
+set -eu
+T=/opt/strata/terminal
+if [ ! -x "$T/python/bin/python3" ]; then
+  echo "llamaman: 0.1.x image, starting its own entrypoint"
+  cd /opt/strata && exec ./docker-entrypoint.sh
+fi
+PY="$T/python/bin/python3"
+INSTALL=/data/install
+mkdir -p "$INSTALL" /data/Strata-data /data/home /data/state
+# llama.cpp at setup.py's pinned commit ships in the image (as docker/entrypoint.sh links it)
+if [ -d /opt/strata/seed/third_party/llama.cpp ] && [ ! -e "$INSTALL/third_party/llama.cpp" ]; then
+  mkdir -p "$INSTALL/third_party" && ln -s /opt/strata/seed/third_party/llama.cpp "$INSTALL/third_party/llama.cpp"
+fi
+case "$FAMILY" in qwen) prefix="" ;; *) prefix="$FAMILY-" ;; esac
+tag=$(printf '%s%s' "$prefix" "$MODEL" | tr 'A-Z' 'a-z')
+cfg="$INSTALL/strata-$tag.json"
+export STRATA_CONTROL_INSTALL=1 STRATA_INSTALL_DIR="$INSTALL" PYTHONNOUSERSITE=1 PYTHONPATH="$T"
+cd "$T"
+if [ "${REINSTALL:-0}" = "1" ] || [ ! -f "$cfg" ]; then
+  set -- --setup --yes --no-start --family "$FAMILY" --model "$MODEL" --context "$CONTEXT"     --vision "$VISION" --data-dir /data/Strata-data --host "$HOST" --port "$PORT" --low-ram "${LOW_RAM:-auto}"
+  if [ -n "${KV:-}" ]; then set -- "$@" --kv "$KV"; fi
+  if [ -n "${GPUS:-}" ]; then set -- "$@" --gpus "$GPUS"; fi
+  if [ -n "${GPU:-}" ]; then set -- "$@" --gpu "$GPU"; fi
+  if [ -n "${GGUF_DIR:-}" ]; then
+    set -- "$@" --gguf-dir "$GGUF_DIR"
+    echo "Setting up $tag from the GGUF files in $GGUF_DIR"
+  else
+    echo "Setting up $tag: no GGUF files mounted, setup downloads the model"
+  fi
+  "$PY" setup.py "$@"
+fi
+[ -f "$cfg" ] || { echo "[X] setup wrote no run config at $cfg" >&2; exit 1; }
+# Where each later card's layers start: read by the server from the config at
+# every start (serve/server.py layer_split_value), so not part of the setup;
+# with several cards and none given, back to the engine's own split.
+if [ -n "${GPUS:-}" ]; then
+  "$PY" -c 'import json, sys; p = sys.argv[1]; c = json.load(open(p)); c["layer_split"] = sys.argv[2]; json.dump(c, open(p, "w"), indent=1)' \
+    "$cfg" "${LAYER_SPLIT:-auto}"
+fi
+export STRATA_NO_ACQUIRE=1
+exec "$PY" serve/server.py --engine strata --config "$cfg" --host "$HOST" --port "$PORT"
+"""
+
+
+# ---------------------------------------------------------------------------
 # The engine
 # ---------------------------------------------------------------------------
 
@@ -602,8 +672,8 @@ class StrataEngine(Engine):
         "supports_spec_decoding": False,   # it runs its own MTP drafting
         "supports_embeddings": False,
         "virtual_models": True,
-        # Instances of one model share /data/models/<tag> and its setup
-        # config; two at once would run setup over the same files.
+        # Instances of one model share its pack and run config on /data;
+        # two at once would run setup over the same files.
         "single_instance_per_model": True,
         "nvidia_only": True,
     }
@@ -783,7 +853,7 @@ class StrataEngine(Engine):
 
     # ------------------------------------------------------------ container
     def command(self, model_path: str, config: dict) -> list[str]:
-        return []  # the entrypoint reads env vars only
+        return []  # ENTRY_SCRIPT reads env vars only
 
     def _gpu_env(self, config: dict) -> dict:
         """GPU / GPUS for setup.py, in the CONTAINER's numbering.
@@ -811,7 +881,7 @@ class StrataEngine(Engine):
         return v if v in LOW_RAM_CHOICES else "auto"
 
     def setup_settings(self, model_path: str, config: dict) -> dict:
-        """The settings Strata bakes into /data/config/strata-<tag>.json."""
+        """The settings Strata bakes into /data/install/strata-<tag>.json."""
         family, size = parse_model_path(model_path)
         try:
             context = int(config.get("ctx_size") or DEFAULT_CONTEXT)
@@ -855,12 +925,18 @@ class StrataEngine(Engine):
             v = str(config.get(key) if config.get(key) is not None else "").strip()
             if v.isdigit():
                 env[var] = v
+        if self._shard_volumes(model_path, config):
+            env["GGUF_DIR"] = GGUF_MOUNT
         if self.needs_reinstall(model_path, config):
             env["REINSTALL"] = "1"
         return env
 
     def container_spec(self, **kw) -> dict:
         kwargs = super().container_spec(**kw)
+        # ENTRY_SCRIPT, not the image's `strata launch` entrypoint; Docker's
+        # init reaps and forwards SIGTERM (0.1.x images have no tini).
+        kwargs["entrypoint"] = ["sh", "-c", ENTRY_SCRIPT]
+        kwargs["init"] = True
         kwargs.setdefault("environment", {})["STRATA_ALLOWED_HOSTS"] = ",".join(
             self.allowed_hosts(kw["container_name"], kw.get("config") or {}))
         return kwargs
@@ -901,28 +977,27 @@ class StrataEngine(Engine):
         from config import HOST_STRATA_DATA_DIR, STRATA_DATA_VOLUME
         return HOST_STRATA_DATA_DIR or STRATA_DATA_VOLUME
 
+    def _shard_volumes(self, model_path: str, config: dict) -> dict:
+        """The shards' bind mounts at GGUF_MOUNT: the file it was launched
+        from (launch_instance), else llamaman's own download folder for it."""
+        family, size = parse_model_path(model_path)
+        mounts = shard_mounts_for_file(config.get("engine_source_path"))
+        # rw: setup writes a <shard>.done mark beside each file it accepts.
+        if mounts and any(os.path.basename(f) != pub for f, pub in mounts):
+            # Renamed copies: mounted under the published names setup.py
+            # looks for first (gguf_dir_shards).
+            return {_host_path_for_models_subdir(f): {"bind": f"{GGUF_MOUNT}/{pub}", "mode": "rw"}
+                    for f, pub in mounts}
+        shards = os.path.dirname(mounts[0][0]) if mounts else local_shard_dir(family, size)
+        return {_host_path_for_models_subdir(shards): {"bind": GGUF_MOUNT, "mode": "rw"}} if shards else {}
+
     def volumes(self, model_path: str, config: dict) -> dict:
         from config import HOST_LOGS_DIR, LOGS_DIR
-        vols = {
+        return {
             self.data_mount_source(): {"bind": "/data", "mode": "rw"},
             HOST_LOGS_DIR: {"bind": LOGS_DIR, "mode": "rw"},
+            **self._shard_volumes(model_path, config),
         }
-        family, size = parse_model_path(model_path)
-        target = f"/data/models/{shards_dir_tag(family, size)}"
-        # The file it was launched from (launch_instance), else llamaman's
-        # own download folder for it.
-        mounts = shard_mounts_for_file(config.get("engine_source_path"))
-        if mounts and any(os.path.basename(f) != pub for f, pub in mounts):
-            # Renamed copies: setup.py looks for the published names, so each
-            # file is mounted under its own.
-            for f, pub in mounts:
-                vols[_host_path_for_models_subdir(f)] = {"bind": f"{target}/{pub}", "mode": "rw"}
-            return vols
-        shards = os.path.dirname(mounts[0][0]) if mounts else local_shard_dir(family, size)
-        if shards:
-            # rw: setup writes a <shard>.done mark beside each file it accepts.
-            vols[_host_path_for_models_subdir(shards)] = {"bind": target, "mode": "rw"}
-        return vols
 
     def ulimits(self, config: dict) -> list:
         import docker

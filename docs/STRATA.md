@@ -72,11 +72,12 @@ core/engines/
   | | |
   |---|---|
   | image | `STRATA_IMAGE` (else the built, then a pulled Strata image) |
-  | command | none (the entrypoint reads env vars only) |
-  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`? |
+  | entrypoint | `sh -c ENTRY_SCRIPT` (`core/engines/strata.py`), under Docker's init; not the image's own (see 2.) |
+  | command | none (the script reads env vars only) |
+  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `GGUF_DIR=/models`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`? |
   | ulimits | `memlock=-1` |
   | GPU | NVIDIA `device_requests` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
-  | mounts | data volume → `/data`; logs; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>` (`<family>-<SIZE>` for non-qwen; setup.py's case-sensitive shard folder) (rw), when llamaMan holds complete shards |
+  | mounts | data volume → `/data`; logs; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/models` (rw, for setup's `.done` marks), when llamaMan holds complete shards; renamed copies are mounted file by file under the published names |
   | mem_limit | from System Memory Limit (forces `LOW_RAM=on`) |
   | network / ports / labels | as for llama-server (`llamaman-net`, `8080 → host port`, `llamaman.*`) |
 
@@ -88,15 +89,24 @@ core/engines/
    refused, so llamaMan's existing health check (`status == "ok"`) needs no special case. `/v1/models` returns an empty
    list while the model is unloaded in lazy mode (`server.py:2190`), so it is not a good readiness signal.
    `/v1/status` needs the API key when one is set.
-2. **Settings.** Everything is passed as an env var read by `docker-entrypoint.sh`: `HOST`, `PORT`, `API_KEY`,
-   `GPU` / `GPUS` / `LAYER_SPLIT`, `LOW_RAM`, `KV`, `CONTEXT`, `VISION` (`:14-24`). Command arguments are ignored,
-   because the entrypoint rebuilds `$@` (`:42`, `:65`). GPU pinning uses container numbering: the NVIDIA runtime
+2. **Settings.** llamaMan passes the 0.1.x env contract (`HOST`, `PORT`, `GPU` / `GPUS` / `LAYER_SPLIT`,
+   `LOW_RAM`, `KV`, `CONTEXT`, `VISION`, `REINSTALL`, `GGUF_DIR`) to its own entrypoint script. From 0.2.x the image's
+   `docker/entrypoint.sh` runs `strata launch` instead: it ignores those variables, requires an API key for anything
+   but loopback (`strata_cli/cli.py` `_launch_plan`), generates one if none is given, downloads whatever it can't
+   find, and ends the container from a status loop. The installer and server are still in the image, so the script
+   runs `/opt/strata/terminal/setup.py --setup --yes --no-start ...` in Control mode (`STRATA_CONTROL_INSTALL=1`,
+   `STRATA_INSTALL_DIR=/data/install`: the engine is the image's component) when the run config
+   `/data/install/strata-<tag>.json` is missing or `REINSTALL=1`, then execs `serve/server.py --engine strata
+   --config <that file>` with `STRATA_NO_ACQUIRE=1`. `LAYER_SPLIT` is written into the config's `layer_split` at every
+   start. On a 0.1.x image (no `/opt/strata/terminal`) it runs that image's `docker-entrypoint.sh`, which reads the
+   same variables. GPU pinning uses container numbering: the NVIDIA runtime
    renumbers the host GPUs llamaMan attaches, so host `1,3` becomes `GPUS=0,1`. llamaMan doesn't set `API_KEY`, which
    matches how it runs llama-server (no key); its own proxy and auth sit in front.
-3. **Reusing GGUFs on disk.** `setup.py` has `--gguf-dir` (`setup.py:2954`), but the entrypoint never forwards it.
-   Setup does, however, accept whole shards that are already at `/data/models/<fam tag><SIZE>/<original name>` (e.g. `IQ3_S`, `coder-IQ1_M`; case-sensitive): it checks each
-   against its own tensor directory and marks it done (`setup.py:3389-3405`, "#173"). llamaMan therefore bind-mounts
-   its copy there (read-write, for the `.done` marks), and only once its own download of those shards has completed.
+3. **Reusing GGUFs on disk.** llamaMan mounts its completed download of the shards at `/models` and sets
+   `GGUF_DIR=/models`, which the script passes as `setup.py --gguf-dir` (0.1.x's entrypoint forwards `GGUF_DIR` too).
+   With `--gguf-dir` setup never downloads the model; it checks each shard against its own tensor directory. 0.2.x no
+   longer reads the 0.1.x `/data/models/<tag>` folder, which is why a 0.2.x image started through its own entrypoint
+   downloads the model again.
    Shards are fetched from the Hugging Face revisions Strata pins (`setup.py:65-70`, mirrored in
    `core/engines/strata.py`). The MTP layer (~5 GB) and the pack are still prepared inside the container.
 4. **Memory limit / memlock.** Setup reads RAM from `/proc/meminfo`, which is the host's total, so a capped container
@@ -107,8 +117,8 @@ core/engines/
    source, a missing memlock limit looks like a slowdown rather than a failure, but **I couldn't verify that without a
    GPU**. llamaMan always sets it.
 
-Also from the source: Strata serves one request at a time (`server.py:1323`). The Dockerfile sets `STRATA_EXECV=1`,
-so the server is PID 1 and `docker stop` reaches it. A container stopped mid-download resumes from its `.part` files
+Also from the source: Strata serves one request at a time (`server.py:1323`). The container runs with Docker's init,
+and the script execs the server, so `docker stop` reaches it. A container stopped mid-download resumes from its `.part` files
 on the next start.
 
 ## Design decisions
@@ -139,8 +149,8 @@ on the next start.
 - The exact log format on a real first start. The stage parser follows `setup.py`'s `step()` / `download()` output
   and the server's startup prints.
 - Behaviour without `memlock=-1`, and the RAM actually used under `LOW_RAM=on` with a container limit.
-- Nested bind mount (`/data/models/<tag>` over a named volume at `/data`) on the Docker versions in use. Docker
-  supports nested mounts, but this hasn't been run here.
+- The entrypoint script against a real 0.2.x image (setup in Control mode, then `serve/server.py`). It was checked
+  against the upstream source and `sh -n`, and the catalogue dump against the real 0.2.x `setup.py` tables.
 
 ## Known limitations
 
@@ -195,8 +205,8 @@ free disk.
    - Pick another model (e.g. `strata/qwen-Q2_0`) and click *Pre-download with llamaMan*.
    - The Downloads tab shows the pinned-revision download.
    - Launching during the download is refused.
-   - After it completes, launch: `docker inspect` shows `MODELS_DIR/strata/q2_0/Q2_0 → /data/models/Q2_0`, and the
-     log shows no shard download (only the MTP layer and pack).
+   - After it completes, launch: `docker inspect` shows `MODELS_DIR/strata/q2_0/Q2_0 → /models` and
+     `GGUF_DIR=/models`, and the log shows no shard download (only the MTP layer and pack).
 10. **Stop / remove:** stop the instance. The container is removed, and Remove clears the card.
 11. **Restart llamaMan with a Strata instance running:**
     - It is re-attached (state restore), or adopted if the state was lost: delete it from `state.json` and restart.

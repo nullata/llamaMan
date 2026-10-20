@@ -297,7 +297,7 @@ class ShardReadinessTests(_Isolated):
         cfg = run_mock.call_args.args[4]
         with patch("config.HOST_MODELS_DIR", self.models_dir):
             vols = STRATA.volumes(QWEN, cfg)
-        self.assertEqual(vols[d], {"bind": "/data/models/IQ2_XS", "mode": "rw"})
+        self.assertEqual(vols[d], {"bind": "/models", "mode": "rw"})
 
     def test_other_names_of_a_supported_quant_match(self):
         for name, want in (
@@ -330,7 +330,7 @@ class ShardReadinessTests(_Isolated):
             vols = STRATA.volumes(QWEN, {"engine_source_path": src})
         for n, pub in zip(own, S.shard_files("qwen", "IQ2_XS")):
             self.assertEqual(vols[f"/host/models/uploads/{n}"],
-                             {"bind": f"/data/models/IQ2_XS/{pub}", "mode": "rw"})
+                             {"bind": f"/models/{pub}", "mode": "rw"})
         os.remove(os.path.join(d, own[0]))
         self.assertIn(own[0], STRATA.launch_blocker(src))
 
@@ -340,7 +340,7 @@ class ShardReadinessTests(_Isolated):
         with patch("config.HOST_MODELS_DIR", "/host/models"):
             vols = STRATA.volumes(QWEN, {"engine_source_path": src})
         rel = os.path.relpath(d, self.models_dir)
-        self.assertEqual(vols[f"/host/models/{rel}"], {"bind": "/data/models/IQ2_XS", "mode": "rw"})
+        self.assertEqual(vols[f"/host/models/{rel}"], {"bind": "/models", "mode": "rw"})
 
     def test_plain_file_cannot_run_on_strata(self):
         plain = os.path.join(self.models_dir, "chat-Q4_K_M.gguf")
