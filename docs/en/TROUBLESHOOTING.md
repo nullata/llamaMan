@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The full symptom → fix table. The [README](../README.md#troubleshooting) keeps the eight most common first-run rows; everything else is here.
+The full symptom → fix table. The [README](../../README.md#troubleshooting) keeps the nine most common first-run rows; everything else is here.
 
 | Symptom | Fix |
 |---|---|

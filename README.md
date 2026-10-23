@@ -4,9 +4,11 @@
 
 # <img src="static/images/logo.svg" alt="logo" width="24"> llamaMan
 
+**English** · [简体中文](docs/zh-CN/README.md) · [日本語](docs/ja/README.md) · [Deutsch](docs/de/README.md) · [Français](docs/fr/README.md) · [Español](docs/es/README.md) · [Português](docs/pt-BR/README.md) · [Русский](docs/ru/README.md)
+
 **What it is.** A browser UI + API front-end for running multiple [llama.cpp](https://github.com/ggml-org/llama.cpp) server instances, across one machine or a small cluster of them. Ships an Ollama-compatible proxy so it drops in for [Open WebUI](https://github.com/open-webui/open-webui).
 
-**What's different.** llamaMan itself has **no llama.cpp code and no GPU dependency** - it spawns `ghcr.io/ggml-org/llama.cpp:server-*` containers as siblings over the Docker socket. Update llama.cpp without touching llamaMan: `docker pull` a newer `server-*` image. The same spawn-and-proxy machinery is engine-agnostic: [Strata](docs/STRATA.md) instances run alongside llama.cpp ones, launched, monitored, proxied, and slept the same way.
+**What's different.** llamaMan itself has **no llama.cpp code and no GPU dependency** - it spawns `ghcr.io/ggml-org/llama.cpp:server-*` containers as siblings over the Docker socket. Update llama.cpp without touching llamaMan: `docker pull` a newer `server-*` image. The same spawn-and-proxy machinery is engine-agnostic: [Strata](docs/en/STRATA.md) instances run alongside llama.cpp ones, launched, monitored, proxied, and slept the same way.
 
 > llama-server flag semantics are the source of truth on llama.cpp's side: **[server CLI reference](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)**.
 
@@ -63,12 +65,12 @@ For NVIDIA native VRAM monitoring, also uncomment `deploy.resources.reservations
 
 > **Security note:** the mounted `/var/run/docker.sock` gives the container full control of Docker on the host. Standard Docker-socket-access implications apply.
 
-Running bare-metal (dev, WSL)? See [Running bare-metal](docs/CONFIGURATION.md#running-bare-metal).
+Running bare-metal (dev, WSL)? See [Running bare-metal](docs/en/CONFIGURATION.md#running-bare-metal).
 
 ## Your first model
 
 1. **Get a model.** Either drop a `.gguf` into your models directory, or open the UI, pick a HuggingFace repo under **Downloads**, and let llamaMan pull it.
-2. **Launch it.** Select the model in the sidebar, click **Launch**. llamaMan spawns a llama-server container and the instance appears with a status badge. Defaults (4096 ctx, auto GPU layers) work for most models; **Save Preset** remembers your settings. Every launch field is documented in [Launch settings](docs/LAUNCH-SETTINGS.md).
+2. **Launch it.** Select the model in the sidebar, click **Launch**. llamaMan spawns a llama-server container and the instance appears with a status badge. Defaults (4096 ctx, auto GPU layers) work for most models; **Save Preset** remembers your settings. Every launch field is documented in [Launch settings](docs/en/LAUNCH-SETTINGS.md).
 3. **Create an API key.** Under **API Keys**, create one (`llm-xxxxxxxxxx`). Model endpoints require a bearer token by default.
 4. **Point your client at it.** Any OpenAI or Ollama client works against `:42069`. For Open WebUI:
 
@@ -82,7 +84,7 @@ open-webui:
 
 Open WebUI lists your models via `/api/tags` (by GGUF filename stem unless you set a **Display Name**); picking one auto-starts it, waits until healthy, then proxies. Set a per-model **Display Name** to show a friendly name instead of the raw quant filename.
 
-> **Cap caveat:** the sample compose ships `LLAMAMAN_MAX_MODELS=1`. With a cap set, the Ollama connection evicts the LRU model when full, but the OpenAI connection (`OPENAI_API_BASE_URLS`) returns **503** by default - pick one path or raise the cap. Rules: [Model Eviction](docs/MODELS.md#model-eviction).
+> **Cap caveat:** the sample compose ships `LLAMAMAN_MAX_MODELS=1`. With a cap set, the Ollama connection evicts the LRU model when full, but the OpenAI connection (`OPENAI_API_BASE_URLS`) returns **503** by default - pick one path or raise the cap. Rules: [Model Eviction](docs/en/MODELS.md#model-eviction).
 
 If something goes wrong, [Troubleshooting](#troubleshooting) below covers the common first-run failures.
 
@@ -93,7 +95,7 @@ Two credential types:
 - **Session cookies** for the UI (created via `/setup` on first launch)
 - **API keys** for external clients (`Authorization: Bearer llm-xxxxxxxxxx`), managed under **API Keys** in the UI
 
-The **"Require authentication for all endpoints"** toggle (on by default) controls whether model-serving endpoints demand a bearer token. Details: [Authentication](docs/CONFIGURATION.md#authentication-detail).
+The **"Require authentication for all endpoints"** toggle (on by default) controls whether model-serving endpoints demand a bearer token. Details: [Authentication](docs/en/CONFIGURATION.md#authentication-detail).
 
 ## Architecture
 
@@ -141,24 +143,24 @@ flowchart LR
 
 The single-node picture (default) is just the top half - one llamaman container, N `llama-server` siblings on the local Docker daemon, no cluster peers, JSON files instead of the shared DB. Clustering is opt-in and additive.
 
-How it works in depth - request flow, queue-aware dispatch, failure behavior, design trade-offs: [Architecture](docs/ARCHITECTURE.md).
+How it works in depth - request flow, queue-aware dispatch, failure behavior, design trade-offs: [Architecture](docs/en/ARCHITECTURE.md).
 
 ## Documentation
 
 | Guide | What's in it |
 |---|---|
-| [Launch settings](docs/LAUNCH-SETTINGS.md) | Every launch-form field and its llama-server flag: ctx, KV cache, GPU layers, MoE offload, spec decoding, sampling overrides, concurrency & queueing, live preset updates, [Image & PDF input](docs/LAUNCH-SETTINGS.md#image--pdf-input), [Anti-Loop](docs/LAUNCH-SETTINGS.md#anti-loop), per-instance proxy, idle timeout |
-| [Models](docs/MODELS.md) | Display names, model updates, [Decision Models](docs/MODELS.md#decision-models) (`/v1/systemone`), [Model Eviction](docs/MODELS.md#model-eviction), download settings, Docker image management, model archive, backup & restore, cleanup |
-| [Configuration & storage](docs/CONFIGURATION.md) | Bare-metal installs, auth detail, GPU stats, request recording, JSON vs MariaDB backends, [surviving a DB outage](docs/CONFIGURATION.md#surviving-a-database-outage-local-mirror), and the full [Environment Variables](docs/CONFIGURATION.md#environment-variables) reference |
-| [Clustering](docs/CLUSTERING.md) | Multi-node setup: shared DB, heartbeats, shared-queue load balancing |
-| [Knowledge Base & MCP](docs/KNOWLEDGE-BASE.md) | Topics, embeddings, MCP endpoint, access modes |
-| [Strata](docs/STRATA.md) | The second inference engine: setup, catalogue, limits, design notes |
-| [REST API](docs/API.md) | Core endpoints: instances, downloads, presets, settings, request log, launch-body quirks |
-| [Troubleshooting](docs/TROUBLESHOOTING.md) | The full symptom → fix table |
+| [Launch settings](docs/en/LAUNCH-SETTINGS.md) | Every launch-form field and its llama-server flag: ctx, KV cache, GPU layers, MoE offload, spec decoding, sampling overrides, concurrency & queueing, live preset updates, [Image & PDF input](docs/en/LAUNCH-SETTINGS.md#image--pdf-input), [Anti-Loop](docs/en/LAUNCH-SETTINGS.md#anti-loop), per-instance proxy, idle timeout |
+| [Models](docs/en/MODELS.md) | Display names, model updates, [Decision Models](docs/en/MODELS.md#decision-models) (`/v1/systemone`), [Model Eviction](docs/en/MODELS.md#model-eviction), download settings, Docker image management, model archive, backup & restore, cleanup |
+| [Configuration & storage](docs/en/CONFIGURATION.md) | Bare-metal installs, auth detail, GPU stats, request recording, JSON vs MariaDB backends, [surviving a DB outage](docs/en/CONFIGURATION.md#surviving-a-database-outage-local-mirror), and the full [Environment Variables](docs/en/CONFIGURATION.md#environment-variables) reference |
+| [Clustering](docs/en/CLUSTERING.md) | Multi-node setup: shared DB, heartbeats, shared-queue load balancing |
+| [Knowledge Base & MCP](docs/en/KNOWLEDGE-BASE.md) | Topics, embeddings, MCP endpoint, access modes |
+| [Strata](docs/en/STRATA.md) | The second inference engine: setup, catalogue, limits, design notes |
+| [REST API](docs/en/API.md) | Core endpoints: instances, downloads, presets, settings, request log, launch-body quirks |
+| [Troubleshooting](docs/en/TROUBLESHOOTING.md) | The full symptom → fix table |
 
 ## Environment Variables
 
-The ones you'll touch on day one (full reference: [Environment Variables](docs/CONFIGURATION.md#environment-variables)):
+The ones you'll touch on day one (full reference: [Environment Variables](docs/en/CONFIGURATION.md#environment-variables)):
 
 | Variable | Default | Description |
 |---|---|---|
@@ -179,10 +181,10 @@ The ones you'll touch on day one (full reference: [Environment Variables](docs/C
 | GPU stats unavailable | NVIDIA: uncomment the `deploy.resources.reservations` block. AMD/Intel: ensure `/sys/class/drm:ro` is mounted |
 | Model not showing in OpenWebUI | Ensure `OLLAMA_BASE_URL=http://llamaman:42069`. Check `/api/tags` returns models |
 | OpenWebUI gets 401 | `require_auth` is on (default). Create an API key and set `OPENAI_API_KEYS` in OpenWebUI |
-| OpenAI client gets 503 when models are full | `LLAMAMAN_MAX_MODELS` cap reached and the OpenAI API can't evict by default. Raise the cap or enable the eviction toggles: [Model Eviction](docs/MODELS.md#model-eviction) |
+| OpenAI client gets 503 when models are full | `LLAMAMAN_MAX_MODELS` cap reached and the OpenAI API can't evict by default. Raise the cap or enable the eviction toggles: [Model Eviction](docs/en/MODELS.md#model-eviction) |
 | Port conflict | The form auto-suggests an unused port; adjust if needed |
 
-Full table: [Troubleshooting](docs/TROUBLESHOOTING.md).
+Full table: [Troubleshooting](docs/en/TROUBLESHOOTING.md).
 
 ## Credits
 

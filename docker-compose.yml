@@ -18,7 +18,7 @@ services:
       - ./models:/models
       - ./data:/data
       - ./logs:/tmp/llama-logs
-      # Optional model archive volume (docs/MODELS.md, "Model Archive"); also
+      # Optional model archive volume (docs/en/MODELS.md, "Model Archive"); also
       # set ARCHIVE_DIR=/archive below.
       # - /mnt/user/backup/llms:/archive
       # Docker socket - allows llamaman to spawn llama-server containers
@@ -85,7 +85,7 @@ services:
       # mounted above. Enables Archive / Restore in the model list.
       # - ARCHIVE_DIR=/archive
       #
-      # Strata engine (optional, NVIDIA only) - see docs/STRATA.md.
+      # Strata engine (optional, NVIDIA only) - see docs/en/STRATA.md.
       # Easiest build path: Settings -> Docker Images -> build Strata from the
       # repository, on this node. Or build it yourself in a clone of
       # github.com/Niko1221/Strata: docker build -t strata .

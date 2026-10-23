@@ -1,6 +1,6 @@
 # Launch settings
 
-Every field on the launch form, what it maps to, and the behavior notes. For the four-step "how to launch" walkthrough, see the [README](../README.md#your-first-model).
+Every field on the launch form, what it maps to, and the behavior notes. For the four-step "how to launch" walkthrough, see the [README](../../README.md#your-first-model).
 
 ## Contents
 
