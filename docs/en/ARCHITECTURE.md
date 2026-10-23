@@ -1,6 +1,6 @@
 # Architecture, request flow & design decisions
 
-How llamaMan works under the hood. The single-node picture is in the [README](../README.md#architecture); this page adds the cluster view plus the deep detail.
+How llamaMan works under the hood. The single-node picture is in the [README](../../README.md#architecture); this page adds the cluster view plus the deep detail.
 
 ## Contents
 
