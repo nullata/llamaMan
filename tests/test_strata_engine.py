@@ -86,11 +86,6 @@ class CatalogueTests(unittest.TestCase):
                     "/strata/nope-IQ2_XS", "/models/qwen-IQ2_XS.gguf", None, ""):
             self.assertIsNone(S.parse_model_path(bad), bad)
 
-    def test_shards_dir_tag_matches_setup_py(self):
-        self.assertEqual(S.shards_dir_tag("qwen", "IQ3_S"), "IQ3_S")
-        self.assertEqual(S.shards_dir_tag("coder", "IQ1_M"), "coder-IQ1_M")
-        self.assertEqual(S.shards_dir_tag("unsloth", "UD-Q4_K_XL"), "unsloth-UD-Q4_K_XL")
-
     def test_setup_tag_matches_entrypoint(self):
         # docker-entrypoint.sh: qwen has an empty family prefix.
         self.assertEqual(S.setup_tag("qwen", "IQ2_XS"), "iq2_xs")
@@ -138,7 +133,15 @@ class StrataContainerSpecTests(_TmpDirs):
     def test_basic_spec(self):
         kw = self._spec()
         self.assertEqual(kw["image"], "strata:latest")
-        self.assertIsNone(kw["command"])  # entrypoint reads env only
+        self.assertIsNone(kw["command"])  # ENTRY_SCRIPT reads env only
+        self.assertEqual(kw["entrypoint"], ["sh", "-c", S.ENTRY_SCRIPT])
+        self.assertTrue(kw["init"])
+        self.assertNotIn("GGUF_DIR", kw["environment"])  # nothing downloaded yet
+        # The server refuses a keyless non-loopback bind: it listens on
+        # 127.0.0.1:SERVE_PORT behind the relay on PORT.
+        self.assertEqual(kw["environment"]["SERVE_PORT"], str(S.SERVE_PORT))
+        self.assertEqual(kw["environment"]["RELAY_SCRIPT"], S.RELAY_SCRIPT)
+        self.assertNotEqual(S.SERVE_PORT, STRATA.internal_port)
         self.assertEqual(kw["ports"], {8080: 9001})
         self.assertEqual(kw["network"], "llamaman-net")
         env = kw["environment"]
@@ -241,9 +244,10 @@ class StrataContainerSpecTests(_TmpDirs):
         for name in S.shard_files("qwen", "IQ2_XS"):
             open(os.path.join(d, name), "w").close()
         vols = self._spec()["volumes"]
-        # setup.py reads shards from /data/models/<fam tag + SIZE>, case kept.
+        # Passed to setup.py as --gguf-dir.
         self.assertEqual(vols["/host/models/strata/iq2_xs/IQ2_XS"],
-                         {"bind": "/data/models/IQ2_XS", "mode": "rw"})
+                         {"bind": "/models", "mode": "rw"})
+        self.assertEqual(self._spec()["environment"]["GGUF_DIR"], "/models")
 
     def test_partial_shard_set_not_mounted(self):
         d = os.path.join(self.models_dir, "strata", "iq2_xs")
