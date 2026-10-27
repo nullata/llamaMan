@@ -228,17 +228,24 @@ def cuda_architectures() -> str:
         return ""
 
 
-def build_image(archs: str = "") -> str:
+def build_image(archs: str = "", sha: str | None = None) -> str:
     """Build STRATA_BUILD_IMAGE from STRATA_SRC_DIR with BuildKit, for the CUDA
-    architectures `archs` (empty: the Dockerfile's default). Returns the image id."""
+    architectures `archs` (empty: the Dockerfile's default). `sha` is the
+    commit the sources are from: the download has no .git, and Strata's
+    Terminal stage refuses to package without STRATA_COMMIT. Returns the image id."""
     from config import STRATA_BUILD_IMAGE, STRATA_SRC_DIR
     from core.helpers import get_docker_client
 
     api = get_docker_client().api
     params = {"t": STRATA_BUILD_IMAGE, "version": "2", "rm": "1", "forcerm": "1",
               "dockerfile": CONTEXT_DOCKERFILE}
+    buildargs = {}
     if archs:
-        params["buildargs"] = json.dumps({"CUDA_ARCHITECTURES": archs})
+        buildargs["CUDA_ARCHITECTURES"] = archs
+    if sha:
+        buildargs["STRATA_COMMIT"] = sha
+    if buildargs:
+        params["buildargs"] = json.dumps(buildargs)
     image_id = None
     pull_base_images(STRATA_SRC_DIR)
     context = _build_context(STRATA_SRC_DIR)
@@ -318,7 +325,7 @@ def _run(trigger: str) -> None:
         _set(status="building", message=f"Building {STRATA_BUILD_IMAGE}")
         logger.info("Strata: building %s from %s (%s)", STRATA_BUILD_IMAGE, src["repo"], (sha or "?")[:7])
         archs = cuda_architectures()
-        image_id = build_image(archs)
+        image_id = build_image(archs, sha)
         _record_build(sha, image_id, archs)
         # Strata shows in the launch form once its image exists: re-read now,
         # not on the poller's next pass.

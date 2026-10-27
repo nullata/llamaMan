@@ -246,7 +246,7 @@ class RunTests(_SrcDirCase):
         self._make_source(SHA1)
         dl, build, data = self._run("auto", SHA2, {"built_sha": SHA1})
         dl.assert_called_once_with(SHA2)
-        build.assert_called_once_with("86;89")       # this node's GPU generations
+        build.assert_called_once_with("86;89", SHA2)  # this node's GPU generations, the new commit
         self.assertEqual((data["strata"]["built_sha"], data["strata"]["built_archs"]), (SHA2, "86;89"))
         self.assertEqual(strata_build.get_state()["status"], "done")
         self.refresh.assert_called_once()            # launch form sees the image at once
@@ -369,7 +369,7 @@ class DownloadSourceTests(_SrcDirCase):
 
 class BuildImageTests(_SrcDirCase):
 
-    def _build(self, chunks, cuda=""):
+    def _build(self, chunks, cuda="", sha=None):
         self._make_source()
         api = MagicMock()
         api._url.side_effect = lambda p: "http+docker://localhost" + p
@@ -377,7 +377,7 @@ class BuildImageTests(_SrcDirCase):
         api.pull.return_value = iter([{"status": "Pull complete"}])
         client = MagicMock(api=api)
         with patch("core.helpers.get_docker_client", return_value=client):
-            return strata_build.build_image(cuda), api
+            return strata_build.build_image(cuda, sha), api
 
     def test_buildkit_build_with_progress(self):
         trace = base64.b64encode(b"\x0a\x10junk[2/5] RUN pip install -r requirements.txt\x12\x00").decode()
@@ -393,6 +393,12 @@ class BuildImageTests(_SrcDirCase):
                          ("2", "strata:latest", strata_build.CONTEXT_DOCKERFILE))
         self.assertEqual(json.loads(params["buildargs"]), {"CUDA_ARCHITECTURES": "89"})
         self.assertIn("[2/5] RUN pip install -r requirements.txt", msgs)
+
+    def test_source_commit_passed(self):
+        # The download has no .git: Strata's Terminal stage needs STRATA_COMMIT.
+        _, api = self._build([{"id": "moby.image.id", "aux": {"ID": "sha256:feed"}}], sha=SHA1)
+        params = api._post.call_args.kwargs["params"]
+        self.assertEqual(json.loads(params["buildargs"]), {"STRATA_COMMIT": SHA1})
 
     def test_build_error_raises(self):
         with self.assertRaisesRegex(RuntimeError, "exit code 2"):
