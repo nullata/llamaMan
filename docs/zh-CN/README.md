@@ -4,7 +4,7 @@
 
 # <img src="../../static/images/logo.svg" alt="logo" width="24"> llamaMan
 
-[English](../../README.md) · **简体中文** · [日本語](../ja/README.md) · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Español](../es/README.md) · [Português](../pt-BR/README.md) · [Русский](../ru/README.md)
+[English](../../README.md) · **简体中文** · [日本語](../ja/README.md) · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Español](../es/README.md) · [Português](../pt-BR/README.md) · [Русский](../ru/README.md) · [Български](../bg/README.md)
 
 **这是什么。** 一个用于在单台机器或小型集群上运行多个 [llama.cpp](https://github.com/ggml-org/llama.cpp) server 实例的浏览器 UI + API 前端。内置 Ollama 兼容 proxy，可无缝接入 [Open WebUI](https://github.com/open-webui/open-webui)。
 

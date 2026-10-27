@@ -4,7 +4,7 @@
 
 # <img src="static/images/logo.svg" alt="logo" width="24"> llamaMan
 
-**English** · [简体中文](docs/zh-CN/README.md) · [日本語](docs/ja/README.md) · [Deutsch](docs/de/README.md) · [Français](docs/fr/README.md) · [Español](docs/es/README.md) · [Português](docs/pt-BR/README.md) · [Русский](docs/ru/README.md)
+**English** · [简体中文](docs/zh-CN/README.md) · [日本語](docs/ja/README.md) · [Deutsch](docs/de/README.md) · [Français](docs/fr/README.md) · [Español](docs/es/README.md) · [Português](docs/pt-BR/README.md) · [Русский](docs/ru/README.md) · [Български](docs/bg/README.md)
 
 **What it is.** A browser UI + API front-end for running multiple [llama.cpp](https://github.com/ggml-org/llama.cpp) server instances, across one machine or a small cluster of them. Ships an Ollama-compatible proxy so it drops in for [Open WebUI](https://github.com/open-webui/open-webui).
 

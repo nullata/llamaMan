@@ -4,7 +4,7 @@
 
 # <img src="../../static/images/logo.svg" alt="logo" width="24"> llamaMan
 
-[English](../../README.md) · [简体中文](../zh-CN/README.md) · [日本語](../ja/README.md) · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Español](../es/README.md) · [Português](../pt-BR/README.md) · **Русский**
+[English](../../README.md) · [简体中文](../zh-CN/README.md) · [日本語](../ja/README.md) · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Español](../es/README.md) · [Português](../pt-BR/README.md) · **Русский** · [Български](../bg/README.md)
 
 **Что это.** Браузерный UI + API-фронтенд для запуска нескольких инстансов сервера [llama.cpp](https://github.com/ggml-org/llama.cpp), на одной машине или на небольшом кластере таких машин. В комплекте прокси, совместимый с Ollama, поэтому его можно напрямую подключить к [Open WebUI](https://github.com/open-webui/open-webui).
 

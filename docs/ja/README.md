@@ -4,7 +4,7 @@
 
 # <img src="../../static/images/logo.svg" alt="logo" width="24"> llamaMan
 
-[English](../../README.md) · [简体中文](../zh-CN/README.md) · **日本語** · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Español](../es/README.md) · [Português](../pt-BR/README.md) · [Русский](../ru/README.md)
+[English](../../README.md) · [简体中文](../zh-CN/README.md) · **日本語** · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Español](../es/README.md) · [Português](../pt-BR/README.md) · [Русский](../ru/README.md) · [Български](../bg/README.md)
 
 **概要:** 単一のマシンまたは小規模なクラスタ全体で、複数の [llama.cpp](https://github.com/ggml-org/llama.cpp) サーバーインスタンスを実行するためのブラウザ UI + API フロントエンド。[Open WebUI](https://github.com/open-webui/open-webui) にそのまま組み込める Ollama 互換プロキシを同梱しています。
 
