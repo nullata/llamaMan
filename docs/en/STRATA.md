@@ -1,10 +1,10 @@
 # Strata engine
 
-*(opt-in, NVIDIA only)* [Strata](https://github.com/Niko1221/Strata) runs the Qwen3.8-Flash-Next mixture-of-experts family (and its Coder, Swift 1.5 and Unsloth variants) on consumer NVIDIA GPUs plus system RAM. llamaMan can launch, monitor, proxy, sleep/wake and stop Strata instances next to llama.cpp ones. llama.cpp behaviour does not change: the engine layer (`core/engines/`) keeps the llama.cpp launch byte-for-byte identical (snapshot-tested).
+*(opt-in, NVIDIA only)* [Strata](https://github.com/Niko1221/Strata) runs the Qwen3.8-Flash-Next mixture-of-experts family (and its Coder, Swift 1.5 and Unsloth variants) and Qwen3.6-35B-A3B on consumer NVIDIA GPUs plus system RAM. llamaMan can launch, monitor, proxy, sleep/wake and stop Strata instances next to llama.cpp ones. llama.cpp behaviour does not change: the engine layer (`core/engines/`) keeps the llama.cpp launch byte-for-byte identical (snapshot-tested).
 
 ## Contents
 
-- [Getting started](#getting-started) · [Limits and behaviour](#limits-and-behaviour) · [Design notes and verification](#design-notes-and-verification)
+- [Getting started](#getting-started) · [Qwen3.6-35B-A3B and fine-tunes](#qwen36-35b-a3b-and-fine-tunes) · [Limits and behaviour](#limits-and-behaviour) · [Design notes and verification](#design-notes-and-verification)
 
 ## Getting started
 
@@ -18,7 +18,7 @@ docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (f
 
 **2. Enable it** on the llamaMan node: `STRATA_ENABLED=true` (see [Strata variables](CONFIGURATION.md#strata)). Settings → Docker Images then shows *Manage Strata images*: the pulled Strata images, the built one (downloaded and built commits, the build button) and their auto-update. The launch form offers Strata once one of them is on the node.
 
-**3. Launch.** The model library gains one virtual entry per family × size: `strata/qwen-Q2_0`, `strata/qwen-IQ2_XS`, `strata/qwen-IQ3_XXS`, `strata/qwen-IQ3_S`, `strata/swift-IQ2_XS`, `strata/swift-IQ3_XXS`, `strata/coder-IQ1_M`, `strata/unsloth-UD-Q4_K_XL` *(experimental)*. Each is its own instance and container, so switching models works like llama.cpp: launch or wake another instance, with the usual [eviction](MODELS.md#model-eviction) rules (a Strata instance is one chat model). The entries also appear in `/api/tags` and `/v1/models`, and requests may use the id (`strata/qwen-IQ2_XS`, any case, `:tag` ignored) or Strata's own served name (`qwen3.8-flash-next-iq2_xs`).
+**3. Launch.** The model library gains one virtual entry per family × size: `strata/qwen-Q2_0`, `strata/qwen-IQ2_XS`, `strata/qwen-IQ3_XXS`, `strata/qwen-IQ3_S`, `strata/swift-IQ2_XS`, `strata/swift-IQ3_XXS`, `strata/coder-IQ1_M`, `strata/unsloth-UD-Q4_K_XL` *(experimental)*, `strata/qwen36-UD-Q4_K_XL`, `strata/qwen36-UD-Q6_K_XL`, `strata/qwen36-Q8_0`. Each is its own instance and container, so switching models works like llama.cpp: launch or wake another instance, with the usual [eviction](MODELS.md#model-eviction) rules (a Strata instance is one chat model). The entries also appear in `/api/tags` and `/v1/models`, and requests may use the id (`strata/qwen-IQ2_XS`, any case, `:tag` ignored) or Strata's own served name (`qwen3.8-flash-next-iq2_xs`).
 
 The launch form hides the llama.cpp-only fields (GPU layers, MoE, threads, parallel, KV types, flash attention, spec decoding, mmproj, DRY, extra args) and shows **Image Input** (no / GPU / CPU), **KV Cache** (Strata default int8, `int8`, `q4_0`, `k8v4`) and **Low-RAM Mode** (auto / on / off). The API rejects llama.cpp-only fields set for a Strata model.
 
@@ -27,9 +27,28 @@ The launch form hides the llama.cpp-only fields (GPU layers, MoE, threads, paral
 - **Let Strata download** into its `/data` volume (default).
 - **Pre-download with llamaMan** (button in the Strata section, or `POST /api/engines/strata/download`): an ordinary entry in the Downloads tab (progress, pause/resume, retry, HF tokens, speed limits) that fetches the shards from the Hugging Face revision Strata pins into `MODELS_DIR/strata/<tag>/`. Once complete they are bind-mounted into the container and Strata's setup uses them instead of downloading. A launch is refused while that download is still running. The MTP layer (~5 GB) and the pack are still prepared by Strata on the first start.
 
+## Qwen3.6-35B-A3B and fine-tunes
+
+Qwen3.6-35B-A3B has its own engine path in Strata and is a single GGUF file, with no pack or separate MTP layer.
+
+| Size | Download | RAM |
+|---|---|---|
+| `UD-Q4_K_XL` | 22.9 GB | 32 GB |
+| `UD-Q6_K_XL` | 32.6 GB | 44 GB |
+| `Q8_0` | 37.8 GB | 52 GB |
+
+**Fine-tunes work.** Any single GGUF in the model library can run on Strata if its name ends in one of those sizes and either its name contains `35B-A3B` or the file's architecture is `qwen35moe`. llamaMan mounts it under the published name, and Strata warns about a different build but doesn't refuse it. Clients address it as `strata/qwen36-<size>`, as `qwen3.6-35b-a3b-<size>`, or through a queue group name, not by the fine-tune's own name.
+
+- **Requests at once.** The launch form's **Requests at Once** field (`strata_parallel`, 1 to 8, default 1) sets how many requests run together, and Max Concurrent follows it. Each extra slot takes about 1.5 GB of VRAM at 32K context away from the experts, and on 12 or 16 GB cards in hybrid mode more slots make every request slower. Changing it needs no new setup.
+- **Context** is limited to 262144 tokens, the model's trained length.
+- **Images are off for now.** Its image encoder isn't downloaded or mounted yet.
+- **One GPU.** Strata uses only the first GPU on this path. KV Cache, Low-RAM Mode and Layer Split don't apply and are hidden.
+- **Switching files sets up again.** Two files of the same size share one model id, one run config and one tokenizer on the volume. Launching a different file runs setup and rebuilds the tokenizer, and they can't run side by side on one node.
+- **Older images.** If the image's engine doesn't have this family, setup stops and the instance card says to update the image.
+
 ## Limits and behaviour
 
-- **One request at a time.** Max Concurrent is forced to 1; further requests queue in llamaMan's gate (Max Queue Depth, then 429).
+- **One request at a time** (except [Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes)). Max Concurrent is forced to 1; further requests queue in llamaMan's gate (Max Queue Depth, then 429).
 - **RAM.** Strata loads 32-62 GB into RAM (`--ulimit memlock=-1` is always set). A **System Memory Limit** forces Low-RAM mode on, because Strata's setup reads the host's RAM and cannot see a container limit; the UI warns below ~64 GB.
 - **Settings are baked into Strata's setup.** Context / image input / KV / Low-RAM / GPU pinning are recorded per model on the data volume. llamaMan remembers the settings each model last came up healthy with and passes `REINSTALL=1` only when they change (the files are reused).
 - **Idle timeout** works (sleep stops the container; the next request wakes it), but a cold start takes minutes and the waking request waits for it (`STRATA_LOAD_TIMEOUT`).

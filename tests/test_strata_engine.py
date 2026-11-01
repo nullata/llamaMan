@@ -70,6 +70,7 @@ class CatalogueTests(unittest.TestCase):
             "strata/swift-IQ2_XS", "strata/swift-IQ3_XXS",
             "strata/coder-IQ1_M",
             "strata/unsloth-UD-Q4_K_XL", "strata/unsloth-UD-IQ4_XS",
+            "strata/qwen36-UD-Q4_K_XL", "strata/qwen36-UD-Q6_K_XL", "strata/qwen36-Q8_0",
         })
 
     def test_served_name_matches_setup_py(self):

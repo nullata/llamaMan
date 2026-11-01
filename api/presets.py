@@ -250,7 +250,7 @@ def api_preset_save(model_path):
     if engine != DEFAULT_ENGINE:
         data["engine"] = engine
         data.update(engine_options)
-    ENGINES[engine].enforce_capabilities(data)
+    ENGINES[engine].enforce_capabilities(data, model_path)
 
     # Cluster: when a target node is named, the form's hardware fields are that
     # node's override; the shared base hardware is kept from the existing preset.
@@ -325,7 +325,7 @@ def _apply_live_preset_changes(model_path: str, preset: dict) -> None:
             for f in _LIVE_PROXY_SAMPLING_FIELDS:
                 if f in preset:
                     config[f] = preset[f]
-            get_engine(config, model_path).enforce_capabilities(config)
+            get_engine(config, model_path).enforce_capabilities(config, model_path)
             touched.append(inst["id"])
 
     for inst_id in touched:

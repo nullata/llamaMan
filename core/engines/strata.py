@@ -31,7 +31,8 @@ What llamaman relies on (upstream file references are to the Strata repo):
     bind anything but loopback without one (server.py main()). So it listens
     on 127.0.0.1:SERVE_PORT and a TCP relay in the container carries
     0.0.0.0:PORT to it.
-  * One request at a time (serve/server.py v1_status: concurrency.serving=1).
+  * One request at a time (serve/server.py v1_status: concurrency.serving=1),
+    except an own-path family asked for several (strata_parallel, 1-8).
   * It loads 32-62 GB into RAM and page-locks part of it for GPU DMA, so the
     container runs with memlock unlimited. Its setup reads RAM from
     /proc/meminfo (the host's, not a cgroup limit), so a memory-capped
@@ -43,6 +44,12 @@ What llamaman relies on (upstream file references are to the Strata repo):
 
 Each family x size is a virtual model with the path /strata/<family>-<SIZE>
 (id strata/<family>-<SIZE>) and is its own llamaman instance.
+
+Own-path families (setup.py OWN_PATH_FAMILIES: Qwen3.6-35B-A3B) differ: one GGUF
+and no pack, sizes of their own (family_sizes), and any file that fits is mounted
+under the published name, which is how a fine-tune runs. Setup verifies that
+file but keeps one run config and one tokenizer per size, so the source file is
+part of the setup fingerprint and a setup rebuilds the tokenizer.
 """
 
 import copy
@@ -67,6 +74,7 @@ HF_REVISIONS = {
     "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF": "b22d729eae29b5796f76fb70f91aef549b9fc52c",
     "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF": "5348543e0147355ac9cbcb031184a3546350988e",
     "unsloth/Qwen3.8-Flash-Next-GGUF": "38bb39ee97821de2c9009abb7e93950eec396e66",
+    "unsloth/Qwen3.6-35B-A3B-MTP-GGUF": "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d",
 }
 
 # setup.py FAMILIES. `served` is the model name Strata's own /v1/models
@@ -97,6 +105,21 @@ FAMILIES = {
         "file": "Qwen3.8-Flash-Next-{q}-0000{i}-of-00004.gguf", "shards": 4,
         "vision": False, "experimental": False,
     },
+    # setup.py OWN_PATH_FAMILIES: an engine path of its own and a single GGUF, so
+    # no pack and no MTP layer to fetch, one GPU, up to PARALLEL_MAX requests at
+    # once. Sizes are the family's own (`models`): this UD-Q4_K_XL is not SIZES'.
+    # Images are off for now: its mmproj would need its own download and mount.
+    "qwen36": {
+        "title": "Qwen3.6-35B-A3B", "served": "qwen3.6-35b-a3b",
+        "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "subdir": False,
+        "file": "Qwen3.6-35B-A3B-{q}.gguf", "shards": 1,
+        "vision": False, "experimental": False, "own_path": True, "arch": "qwen35moe",
+        "models": {
+            "UD-Q4_K_XL": {"download_gb": 22.9, "ram_gb": 32},
+            "UD-Q6_K_XL": {"download_gb": 32.6, "ram_gb": 44},
+            "Q8_0": {"download_gb": 37.8, "ram_gb": 52},
+        },
+    },
 }
 
 # setup.py MODELS: which families ship each size, and what it costs. A size
@@ -118,9 +141,28 @@ SIZES = {
 _MODEL_OVERRIDES = ("vision", "experimental", "file", "shards")
 
 
+# setup.py: "the model's trained length; no rope scaling on this path yet", and
+# PARALLEL_MAX, the most requests a config's "parallel" asks the engine for.
+OWN_PATH_MAX_CONTEXT = 262144
+PARALLEL_MAX = 8
+
+
+def is_own_path(family: str) -> bool:
+    return bool(FAMILIES.get(family, {}).get("own_path"))
+
+
+def family_sizes(family: str) -> dict:
+    """{size: its entry} for one family. An own-path family keeps its own, whose
+    names may collide with SIZES'."""
+    fam = FAMILIES.get(family, {})
+    if fam.get("models"):
+        return fam["models"]
+    return {s: m for s, m in SIZES.items() if family in m["families"]}
+
+
 def model_attr(family: str, size: str, key: str):
     """A size's own value for `key` (one of _MODEL_OVERRIDES), else its family's."""
-    v = SIZES.get(size, {}).get(key)
+    v = family_sizes(family).get(size, {}).get(key)
     return FAMILIES[family][key] if v is None else v
 
 # docker-entrypoint.sh's own default, and setup.py's CONTEXTS menu.
@@ -144,6 +186,8 @@ _catalogue_state = {"image": None, "image_id": None, "source": "built-in", "erro
 # entrypoint below runs from the right folder). Families llamaman cannot
 # download as split GGUF shards are left out, with their sizes: ready-made
 # packs ("ready", no hf/file: NVFP4) and single-file models (no {i}: Gyro).
+# The exception is OWN_PATH_FAMILIES (PREVIEW_FAMILIES before): a single file too,
+# but one setup takes from --gguf-dir. Their sizes come from their own sha256 table.
 _DUMP_SCRIPT = r"""
 import json, os, sys
 sys.path.insert(0, os.getcwd())
@@ -160,7 +204,15 @@ for k, m in s.MODELS.items():
     if fams and "{i}" in m.get("file", "{i}"):
         mod[k] = {"download_gb": m.get("download_gb"), "ram_gb": m.get("ram_gb"), "families": fams,
                   **{o: m[o] for o in ("vision", "experimental", "file", "shards") if o in m}}
-print(json.dumps({"families": fam, "models": mod, "revisions": s.HF_REVISIONS}))
+own = {}
+for k, f in (getattr(s, "OWN_PATH_FAMILIES", None) or getattr(s, "PREVIEW_FAMILIES", {})).items():
+    file = f.get("file") or ""
+    if f.get("hf") and "{q}" in file and "{i}" not in file:
+        own[k] = {"title": f.get("title"), "name": f.get("name"), "hf": f.get("hf"), "file": file,
+                  "arch": f.get("arch"),
+                  "models": {q: {"ram_gb": m.get("ram_gb"), "bytes": f["sha256"][file.format(q=q)][0]}
+                             for q, m in f["models"].items()}}
+print(json.dumps({"families": fam, "models": mod, "own_path": own, "revisions": s.HF_REVISIONS}))
 """
 
 
@@ -206,11 +258,39 @@ def catalogue_from_dump(dump: dict) -> tuple[dict, dict, dict]:
                     raise ValueError(f"size {key}: {m['shards']} shards")
                 size["shards"] = int(m["shards"])
             sizes[str(key)] = size
+        for key, f in (dump.get("own_path") or {}).items():
+            own = _own_path_family(key, f, revisions)
+            if own:
+                families[str(key)] = own
     except (KeyError, TypeError, AttributeError) as e:
         raise ValueError(f"unexpected table shape ({type(e).__name__}: {e})") from e
     if not families or not sizes:
         raise ValueError("empty tables")
     return families, sizes, revisions
+
+
+def _own_path_family(key: str, f: dict, revisions: dict) -> dict | None:
+    """One _DUMP_SCRIPT own_path entry -> a FAMILIES entry. None when it doesn't
+    fit: an extra family llamaman can't use mustn't cost it the whole list."""
+    from config import logger
+    hf = str(f.get("hf") or "")
+    repo = next((r for r in revisions if r in hf), None)
+    file = str(f.get("file") or "")
+    try:
+        models = {str(q): {"download_gb": round(int(m["bytes"]) / 1e9, 1), "ram_gb": int(m["ram_gb"])}
+                  for q, m in f["models"].items()}
+    except (KeyError, TypeError, ValueError, AttributeError):
+        models = {}
+    if not repo or "{q}" not in file or "{i}" in file or not models:
+        logger.warning("strata: leaving out own-path family %s: unexpected entry", key)
+        return None
+    return {
+        "title": str(f.get("title") or key), "served": str(f.get("name") or key),
+        "repo": repo, "subdir": False, "file": file, "shards": 1,
+        # Images stay off, as in the built-in entry: see FAMILIES.
+        "vision": False, "experimental": False, "own_path": True,
+        "arch": str(f.get("arch") or ""), "models": models,
+    }
 
 
 def _apply_catalogue(families: dict, sizes: dict, revisions: dict) -> None:
@@ -235,8 +315,8 @@ def catalogue_source() -> dict:
 
 # Bumped when _DUMP_SCRIPT prints more, so a cached dump of the same image is
 # read again (2: per-model vision / experimental / file / shards; 3: 0.2.x
-# images, packs and single-file families left out).
-_DUMP_VERSION = 3
+# images, packs and single-file families left out; 4: own-path families).
+_DUMP_VERSION = 4
 
 
 def _cache_key(image_id: str) -> str:
@@ -332,7 +412,7 @@ def refresh_catalogue_from_image() -> None:
         except OSError:
             pass
     logger.info("strata: model list read from %s (%s): %d models",
-                image_name, image_id[:19], sum(len(m["families"]) for m in tables[1].values()))
+                image_name, image_id[:19], len(catalogue()))
 
 
 DEFAULT_CONTEXT = 32768
@@ -366,12 +446,14 @@ def model_for_file(path: str | None) -> tuple[str, str] | None:
     if not isinstance(path, str) or not path.lower().endswith(".gguf"):
         return None
     name = os.path.basename(path)
-    for family, fam in FAMILIES.items():
-        for size, meta in SIZES.items():
-            if family in meta["families"] and name in shard_files(family, size):
+    for family in FAMILIES:
+        for size in family_sizes(family):
+            if name in shard_files(family, size):
                 return family, size
     m = _SHARD_RE.match(name)
-    q = _QUANT_RE.search(m.group("stem")) if m else None
+    if not m:
+        return _own_path_model_for_file(path, name)
+    q = _QUANT_RE.search(m.group("stem"))
     size = next((s for s in SIZES if q and s.lower() == q.group(1).lower()), None)
     if not size:
         return None
@@ -384,6 +466,35 @@ def model_for_file(path: str | None) -> tuple[str, str] | None:
     return family, size
 
 
+def _own_path_model_for_file(path: str, name: str) -> tuple[str, str] | None:
+    """An unsplit GGUF -> (own-path family, size). A fine-tune counts (setup warns
+    about a different build and never refuses one) if it ends in a size the family
+    publishes, the only sizes setup takes, and is that model: by name, else by the
+    GGUF's architecture, which is what Strata's own preflight goes by."""
+    q = _QUANT_RE.search(name[:-len(".gguf")])
+    if not q:
+        return None
+    for family, fam in FAMILIES.items():
+        if not fam.get("own_path"):
+            continue
+        size = next((s for s in fam["models"] if s.lower() == q.group(1).lower()), None)
+        if not size:
+            continue
+        served = fam["served"]
+        hints = (served, served.partition("-")[2])
+        if any(h and h in name.lower() for h in hints) or _gguf_arch(path) == fam.get("arch"):
+            return family, size
+    return None
+
+
+def _gguf_arch(path: str) -> str | None:
+    from api.models import get_cached_gguf_metadata
+    try:
+        return get_cached_gguf_metadata(path).get("general.architecture")
+    except Exception:
+        return None
+
+
 def _shard_pairs(path: str, parsed: tuple[str, str]) -> list[tuple[str, str]]:
     """(the sibling shard's path, its published name) for every shard of the
     model `path` belongs to, whether or not they exist."""
@@ -391,6 +502,8 @@ def _shard_pairs(path: str, parsed: tuple[str, str]) -> list[tuple[str, str]]:
     name = os.path.basename(path)
     if name in published:
         own = published
+    elif not _SHARD_RE.match(name):
+        own = [name]                 # a single file under its own name
     else:
         stem = _SHARD_RE.match(name).group("stem")
         own = ["%s-%05d-of-%05d.gguf" % (stem, i, len(published)) for i in range(1, len(published) + 1)]
@@ -433,12 +546,10 @@ def parse_model_path(model_path: str | None) -> tuple[str, str] | None:
     if not sep:
         return None
     family = family.lower()
-    size_key = next((s for s in SIZES if s.lower() == size.lower()), None)
-    if family not in FAMILIES or size_key is None:
+    if family not in FAMILIES:
         return None
-    if family not in SIZES[size_key]["families"]:
-        return None
-    return family, size_key
+    size_key = next((s for s in family_sizes(family) if s.lower() == size.lower()), None)
+    return (family, size_key) if size_key else None
 
 
 def model_path_for(family: str, size: str) -> str:
@@ -470,9 +581,7 @@ def catalogue() -> list[dict]:
     """Every family x size Strata can set up, as virtual model entries."""
     out = []
     for family, fam in FAMILIES.items():
-        for size, meta in SIZES.items():
-            if family not in meta["families"]:
-                continue
+        for size, meta in family_sizes(family).items():
             out.append({
                 "id": model_id_for(family, size),
                 "path": model_path_for(family, size),
@@ -485,6 +594,7 @@ def catalogue() -> list[dict]:
                 "ram_gb": meta["ram_gb"],
                 "vision": model_attr(family, size, "vision"),
                 "experimental": model_attr(family, size, "experimental"),
+                "own_path": is_own_path(family),
             })
     return out
 
@@ -548,6 +658,8 @@ _STEP_RE = re.compile(r"=== Step (\d+): (.+?) ===")
 _PROGRESS_RE = re.compile(r"([\w.\-]+\.gguf|[\w .\-]+): +([\d.]+) / ([\d.]+) GB \((\d+)%\)")
 _STAGE_BY_STEP = {1: "setting up", 2: "setting up", 3: "setting up", 4: "setting up",
                   5: "downloading", 6: "preparing pack", 7: "loading"}
+# setup.py install_own_path, on an image whose engine doesn't have the family yet.
+_ENGINE_TOO_OLD_RE = re.compile(r"this engine \(.*?\) does not run (.+?) yet")
 
 
 def load_stage_from_log(text: str) -> dict | None:
@@ -560,13 +672,17 @@ def load_stage_from_log(text: str) -> dict | None:
     if not text:
         return None
     if "Setup stopped" in text[-4000:]:
-        return {"stage": "setup failed", "detail": "see the log", "percent": None}
+        old = _ENGINE_TOO_OLD_RE.search(text[-4000:])
+        detail = f"this Strata image can't run {old.group(1)} yet: update it" if old else "see the log"
+        return {"stage": "setup failed", "detail": detail, "percent": None}
     stage, detail, percent = None, "", None
     step_pos = -1
     for m in _STEP_RE.finditer(text):
         step_pos = m.end()
         stage = _STAGE_BY_STEP.get(int(m.group(1)), "setting up")
         detail = m.group(2)
+        if "start script" in detail:     # an own-path family's last step: nothing is loading yet
+            stage = "setting up"
     load_pos = max(text.rfind("loading the model"), text.rfind("loading the vision encoder"))
     if load_pos > step_pos:
         stage, detail = "loading", "loading the model into RAM and VRAM"
@@ -668,6 +784,10 @@ cfg="$INSTALL/strata-$tag.json"
 export STRATA_CONTROL_INSTALL=1 STRATA_INSTALL_DIR="$INSTALL" PYTHONNOUSERSITE=1 PYTHONPATH="$T"
 cd "$T"
 if [ "${REINSTALL:-0}" = "1" ] || [ ! -f "$cfg" ]; then
+  # An own-path family's pack is only the tokenizer read from its GGUF, and setup
+  # keeps one that exists: without this a different fine-tune of that size would
+  # be served with the last one's.
+  if [ -n "${PARALLEL:-}" ]; then rm -rf "/data/Strata-data/packs/$tag"; fi
   set -- --setup --yes --no-start --family "$FAMILY" --model "$MODEL" --context "$CONTEXT" \
     --vision "$VISION" --data-dir /data/Strata-data --host 127.0.0.1 --port "$SERVE_PORT" --low-ram "${LOW_RAM:-auto}"
   if [ -n "${KV:-}" ]; then set -- "$@" --kv "$KV"; fi
@@ -688,6 +808,12 @@ fi
 if [ -n "${GPUS:-}" ]; then
   "$PY" -c 'import json, sys; p = sys.argv[1]; c = json.load(open(p)); c["layer_split"] = sys.argv[2]; json.dump(c, open(p, "w"), indent=1)' \
     "$cfg" "${LAYER_SPLIT:-auto}"
+fi
+# Requests at once (own-path families): also read from the config at every start,
+# so changing it needs no setup. 1 clears the key rather than leaving an old N.
+if [ -n "${PARALLEL:-}" ]; then
+  "$PY" -c 'import json, sys; p = sys.argv[1]; n = int(sys.argv[2]); c = json.load(open(p)); c.pop("parallel", None); c.update({"parallel": n} if n > 1 else {}); json.dump(c, open(p, "w"), indent=1)' \
+    "$cfg" "$PARALLEL"
 fi
 export STRATA_NO_ACQUIRE=1
 "$PY" -c "$RELAY_SCRIPT" &
@@ -718,7 +844,7 @@ class StrataEngine(Engine):
         "nvidia_only": True,
     }
     option_keys = ("strata_vision", "strata_kv", "strata_low_ram", "strata_layer_split",
-                   "strata_watchdog_s", "strata_watchdog_io_s")
+                   "strata_watchdog_s", "strata_watchdog_io_s", "strata_parallel")
     launch_fields = frozenset({
         "ctx_size", "memory_limit", "gpu_devices", "image",
         "idle_timeout_min", "max_concurrent", "max_queue_depth",
@@ -732,8 +858,23 @@ class StrataEngine(Engine):
         "loop_detect_scan_interval_s", "loop_detect_scan_every_n_tokens",
         "pdf_input_enabled", "pdf_extract_text_first", "pdf_dpi", "pdf_max_pages",
         "strata_vision", "strata_kv", "strata_low_ram", "strata_layer_split",
-        "strata_watchdog_s", "strata_watchdog_io_s",
+        "strata_watchdog_s", "strata_watchdog_io_s", "strata_parallel",
     })
+
+    def max_concurrency_for(self, config: dict, model_path: str | None = None) -> int:
+        # One request at a time, except an own-path family with strata_parallel
+        # slots. The gate follows the slots, so there is one source of truth.
+        parsed = parse_model_path(model_path)
+        if parsed and is_own_path(parsed[0]):
+            return self._parallel(config)
+        return 1
+
+    @staticmethod
+    def _parallel(config: dict) -> int:
+        try:
+            return min(PARALLEL_MAX, max(1, int(config.get("strata_parallel") or 1)))
+        except (TypeError, ValueError):
+            return 1
 
     # ------------------------------------------------------------- paths/ids
     def owns_model_path(self, model_path: str | None) -> bool:
@@ -767,6 +908,8 @@ class StrataEngine(Engine):
                 "ram_gb": m["ram_gb"],
                 "vision": m["vision"],
                 "experimental": m["experimental"],
+                "own_path": m["own_path"],
+                "max_context": OWN_PATH_MAX_CONTEXT if m["own_path"] else None,
                 "local_shards": local_shard_dir(m["family"], m["size"]) is not None,
                 "download": self._download_summary(m["family"], m["size"]),
             })
@@ -794,7 +937,7 @@ class StrataEngine(Engine):
             "revision": HF_REVISIONS[repo],
             "dest_path": shards_base_dir(family, size),
             "model_id": model_id_for(family, size),
-            "download_gb": SIZES[size]["download_gb"],
+            "download_gb": family_sizes(family)[size]["download_gb"],
         }
 
     def launch_blocker(self, model_path: str) -> str | None:
@@ -824,7 +967,7 @@ class StrataEngine(Engine):
         if not parsed:
             return {}
         family, size = parsed
-        arch = FAMILIES[family]["served"]
+        arch = FAMILIES[family].get("arch") or FAMILIES[family]["served"]
         # context_length: what a launch without a preset gets
         # (docker-entrypoint.sh CONTEXT default); _effective_ctx_for_model
         # prefers a running instance's or the preset's ctx over this.
@@ -862,6 +1005,11 @@ class StrataEngine(Engine):
             return {}, f"strata_vision must be one of {', '.join(VISION_CHOICES)}"
         if vision != "no" and not model_attr(family, size, "vision"):
             return {}, f"{FAMILIES[family]['title']} {size} has no image encoder; strata_vision must be 'no'"
+        parallel_raw = str(body.get("strata_parallel") if body.get("strata_parallel") is not None else "").strip()
+        if is_own_path(family):
+            return self._parse_own_path_options(body, family, size, vision, parallel_raw)
+        if parallel_raw not in ("", "1"):
+            return {}, f"{FAMILIES[family]['title']} serves one request at a time; strata_parallel must be 1"
         kv = str(body.get("strata_kv") or "").strip().lower()
         if kv not in KV_CHOICES:
             return {}, "strata_kv must be one of int8, q4_0, k8v4 (or empty for Strata's default)"
@@ -882,6 +1030,32 @@ class StrataEngine(Engine):
             watchdog[key] = str(int(raw)) if raw else ""
         return {"strata_vision": vision, "strata_kv": kv, "strata_low_ram": low_ram,
                 "strata_layer_split": split, **watchdog}, None
+
+    def _parse_own_path_options(self, body: dict, family: str, size: str, vision: str,
+                                parallel_raw: str) -> tuple[dict, str | None]:
+        """An own-path family's options. KV, low-RAM and the layer split are
+        Flash-Next settings (setup warns and ignores them): kept at their defaults
+        so a value left in a form can't cost a pointless setup pass."""
+        title = FAMILIES[family]["title"]
+        if not parallel_raw.isdigit() or not 1 <= int(parallel_raw or 0) <= PARALLEL_MAX:
+            if parallel_raw:
+                return {}, f"strata_parallel must be a whole number from 1 to {PARALLEL_MAX}"
+            parallel_raw = "1"
+        try:
+            context = int(body.get("ctx_size") or 0)
+        except (TypeError, ValueError):
+            context = 0
+        if context > OWN_PATH_MAX_CONTEXT:
+            return {}, (f"{title} is trained for up to {OWN_PATH_MAX_CONTEXT} tokens of context and "
+                        "has no rope scaling yet")
+        watchdog = {}
+        for key in ("strata_watchdog_s", "strata_watchdog_io_s"):
+            raw = str(body.get(key) if body.get(key) is not None else "").strip()
+            if raw and not raw.isdigit():
+                return {}, f"{key} must be empty (Strata's default) or whole seconds, 0 = off"
+            watchdog[key] = str(int(raw)) if raw else ""
+        return {"strata_vision": vision, "strata_kv": "", "strata_low_ram": "auto",
+                "strata_layer_split": "", "strata_parallel": int(parallel_raw), **watchdog}, None
 
     records_web_hosts = True
 
@@ -927,7 +1101,7 @@ class StrataEngine(Engine):
             context = int(config.get("ctx_size") or DEFAULT_CONTEXT)
         except (TypeError, ValueError):
             context = DEFAULT_CONTEXT
-        return {
+        settings = {
             "family": family,
             "model": size,
             "context": context,
@@ -936,6 +1110,27 @@ class StrataEngine(Engine):
             "low_ram": self._low_ram(config),
             "gpus": self._gpu_env(config),
         }
+        # Two fine-tunes of one size share a virtual model, and upstream gives that
+        # one run config and one tokenizer. So the file is part of the setup: only
+        # for these families, or an upgrade would re-set-up every Flash-Next install.
+        if is_own_path(family):
+            settings["source"] = self._source_identity(family, size, config)
+        return settings
+
+    @staticmethod
+    def _source_identity(family: str, size: str, config: dict) -> str:
+        """Which file this setup is of: its path, size and modification time."""
+        mounts = shard_mounts_for_file(config.get("engine_source_path"))
+        if mounts:
+            path = mounts[0][0]
+        else:
+            folder = local_shard_dir(family, size)
+            path = os.path.join(folder, shard_files(family, size)[0]) if folder else ""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return path
+        return f"{path}|{st.st_size}|{int(st.st_mtime)}"
 
     def environment(self, model_path: str, config: dict) -> dict:
         s = self.setup_settings(model_path, config)
@@ -951,6 +1146,10 @@ class StrataEngine(Engine):
         if s["kv"]:
             env["KV"] = s["kv"]
         env.update(s["gpus"])
+        # Runtime only, like LAYER_SPLIT: its presence also marks an own-path
+        # family for ENTRY_SCRIPT.
+        if is_own_path(s["family"]):
+            env["PARALLEL"] = str(self._parallel(config))
         # Where each later card's layers start; only means something across
         # several cards. The entrypoint passes it at every start, so it is not
         # part of the setup fingerprint (no REINSTALL to change it).
@@ -1024,9 +1223,10 @@ class StrataEngine(Engine):
         family, size = parse_model_path(model_path)
         mounts = shard_mounts_for_file(config.get("engine_source_path"))
         # rw: setup writes a <shard>.done mark beside each file it accepts.
-        if mounts and any(os.path.basename(f) != pub for f, pub in mounts):
-            # Renamed copies: mounted under the published names setup.py
-            # looks for first (gguf_dir_shards).
+        if mounts and (is_own_path(family) or any(os.path.basename(f) != pub for f, pub in mounts)):
+            # Renamed copies: mounted under the published names setup.py looks
+            # for first (gguf_dir_shards). Likewise any single file, which may sit
+            # right in MODELS_DIR: its folder is not the container's to write to.
             return {_host_path_for_models_subdir(f): {"bind": f"{GGUF_MOUNT}/{pub}", "mode": "rw"}
                     for f, pub in mounts}
         shards = os.path.dirname(mounts[0][0]) if mounts else local_shard_dir(family, size)
