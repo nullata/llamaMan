@@ -26,15 +26,21 @@ import core.engines.strata as S
 def dump_of_builtin():
     """What _DUMP_SCRIPT prints for the setup.py the built-in copy came from."""
     families, sizes, revisions = copy.deepcopy(S._BUILTIN_CATALOGUE)
-    fam = {}
+    fam, own = {}, {}
     for key, f in families.items():
+        if f.get("own_path"):
+            hf = f"https://huggingface.co/{f['repo']}/resolve/{revisions[f['repo']]}/"
+            own[key] = {"title": f["title"], "name": f["served"], "hf": hf, "file": f["file"], "arch": f["arch"],
+                        "models": {q: {"ram_gb": m["ram_gb"], "bytes": int(m["download_gb"] * 1e9)}
+                                   for q, m in f["models"].items()}}
+            continue
         hf = f"https://huggingface.co/{f['repo']}/resolve/{revisions[f['repo']]}/" + ("{q}/" if f["subdir"] else "")
         fam[key] = {"title": f["title"], "name": f["served"], "hf": hf, "file": f["file"],
                     "shards": f["shards"], "vision": f["vision"], "experimental": f["experimental"]}
     mod = {k: {"download_gb": m["download_gb"], "ram_gb": m["ram_gb"], "families": list(m["families"]),
                **{o: m[o] for o in S._MODEL_OVERRIDES if o in m}}
            for k, m in sizes.items()}
-    return {"families": fam, "models": mod, "revisions": revisions}
+    return {"families": fam, "models": mod, "own_path": own, "revisions": revisions}
 
 
 def dump_with_new_size():

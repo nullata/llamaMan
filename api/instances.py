@@ -195,7 +195,7 @@ def _merge_preset_into_config(model_path: str, config: dict) -> dict:
             if key in preset:
                 merged[key] = preset[key]
     # No-op for llama.cpp; e.g. keeps Strata's gate at 1 whatever the preset says.
-    return get_engine(config, model_path).enforce_capabilities(merged)
+    return get_engine(config, model_path).enforce_capabilities(merged, model_path)
 
 
 def _parse_required_positive_int(body: dict, field_name: str) -> tuple[int | None, str | None]:
@@ -707,7 +707,8 @@ def launch_instance(model_path, port, n_gpu_layers=-1, n_cpu_moe_layers=0,
         "max_concurrent": max_concurrent,
         "embedding_model": embedding_model,
         "spec_enabled": spec_enabled,
-    })
+        **(engine_options or {}),
+    }, model_path)
     max_concurrent = clamped["max_concurrent"]
     embedding_model = clamped["embedding_model"]
     spec_enabled = clamped["spec_enabled"]

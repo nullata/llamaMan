@@ -235,14 +235,24 @@ async function refreshStrataSection() {
     summary.textContent = parts.join(' · ');
   }
 
+  // An own-path family (Qwen3.6): its own context limit and requests at once;
+  // KV, low-RAM and the layer split are Flash-Next settings it doesn't use.
+  const own = !!m.own_path;
   const dl = document.getElementById('strata-context-options');
-  if (dl && dl.childElementCount === 0) {
-    (info.context_choices || []).forEach(v => {
+  if (dl) {
+    dl.innerHTML = '';
+    (info.context_choices || []).filter(v => !own || v <= (m.max_context || v)).forEach(v => {
       const opt = document.createElement('option');
       opt.value = v;
       dl.appendChild(opt);
     });
   }
+  ['f-strata-kv', 'f-strata-low-ram', 'f-strata-layer-split'].forEach(id => {
+    const group = document.getElementById(id)?.closest('.form-group');
+    if (group) group.style.display = own ? 'none' : '';
+  });
+  const parallelGroup = document.getElementById('f-strata-parallel')?.closest('.form-group');
+  if (parallelGroup) parallelGroup.style.display = own ? '' : 'none';
   const ctx = document.getElementById('f-ctx-size');
   if (ctx && !ctx.value) ctx.value = 32768;
 
@@ -285,6 +295,8 @@ function applyStrataPresetToLaunchForm(p) {
   if (lr) lr.value = ['auto', 'on', 'off'].includes(p.strata_low_ram) ? p.strata_low_ram : 'auto';
   const ls = document.getElementById('f-strata-layer-split');
   if (ls) ls.value = p.strata_layer_split || '';
+  const par = document.getElementById('f-strata-parallel');
+  if (par) par.value = p.strata_parallel || 1;
   for (const [id, key] of [['f-strata-watchdog-s', 'strata_watchdog_s'], ['f-strata-watchdog-io-s', 'strata_watchdog_io_s']]) {
     const el = document.getElementById(id);
     if (el) el.value = p[key] ?? '';
@@ -306,12 +318,13 @@ function readStrataLaunchForm() {
   const ctxSize = parseInt(ctxSizeRaw, 10);
   if (!Number.isInteger(ctxSize) || ctxSize <= 0) throw new Error('Context size must be a positive integer');
   const val = id => document.getElementById(id);
+  const parallel = launchEngineModel?.own_path ? (parseInt(val('f-strata-parallel')?.value, 10) || 1) : 1;
   const body = {
     engine: 'strata',
     ctx_size: ctxSize,
     gpu_devices: val('f-gpu-devices').value.trim(),
     idle_timeout_min: parseInt(val('f-idle-timeout').value) || 0,
-    max_concurrent: 1,
+    max_concurrent: parallel,
     max_queue_depth: parseInt(val('f-max-queue-depth').value) || 200,
     share_queue: val('f-share-queue').checked,
     share_queue_group: val('f-share-queue-group')?.value.trim() || '',
@@ -336,6 +349,7 @@ function readStrataLaunchForm() {
     strata_layer_split: val('f-strata-layer-split')?.value.trim() || '',
     strata_watchdog_s: val('f-strata-watchdog-s')?.value.trim() || '',
     strata_watchdog_io_s: val('f-strata-watchdog-io-s')?.value.trim() || '',
+    strata_parallel: parallel,
     pdf_input_enabled: val('f-pdf-input-enabled')?.checked || false,
     pdf_extract_text_first: val('f-pdf-extract-text-first')?.checked || false,
     pdf_dpi: parseInt(val('f-pdf-dpi')?.value, 10) || 200,

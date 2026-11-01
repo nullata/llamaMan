@@ -113,10 +113,14 @@ class Engine:
             return None
         return f"{self.label} does not support: {', '.join(bad)}"
 
-    def enforce_capabilities(self, config: dict) -> dict:
+    def max_concurrency_for(self, config: dict, model_path: str | None = None) -> int:
+        """Requests this engine runs at once for this model and config. 0 = no cap."""
+        return int(self.capabilities.get("max_concurrency") or 0)
+
+    def enforce_capabilities(self, config: dict, model_path: str | None = None) -> dict:
         """Clamp a config (instance or preset) to what the engine can do, in
         place. Returns it for chaining."""
-        cap = int(self.capabilities.get("max_concurrency") or 0)
+        cap = self.max_concurrency_for(config, model_path)
         if cap > 0:
             try:
                 mc = int(config.get("max_concurrent") or 0)
