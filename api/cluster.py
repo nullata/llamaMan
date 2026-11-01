@@ -893,11 +893,9 @@ def local_load_by_model() -> dict:
     return out
 
 
-def _peer_live_load(node: dict, model_name: str):
-    """Live load for `model_name` on a peer (briefly cached). Returns the
-    per-model dict or None on miss/unreachable. The whole node map is cached so
-    one query serves any model; matching is fuzzy/case-insensitive so a quant-
-    suffixed request (gpt-oss-20b-Q4_K_M) still finds the lowercase-keyed entry."""
+def _peer_load_map(node: dict) -> dict:
+    """A peer's whole local-load map (briefly cached, so one query serves any
+    model), or {} when unreachable."""
     nid = node.get("node_id")
     now = _time.monotonic()
     with _load_cache_lock:
@@ -911,7 +909,48 @@ def _peer_live_load(node: dict, model_name: str):
             data = {}
         with _load_cache_lock:
             _load_cache[nid] = (now, data)
-    return _match_model_load(data, model_name)
+    return data
+
+
+def _peer_live_load(node: dict, model_name: str):
+    """Live load for `model_name` on a peer (briefly cached). Returns the
+    per-model dict or None on miss/unreachable. Matching is fuzzy/case-insensitive
+    so a quant-suffixed request (gpt-oss-20b-Q4_K_M) still finds the
+    lowercase-keyed entry."""
+    return _match_model_load(_peer_load_map(node), model_name)
+
+
+def group_wants_wake(group_key: str, local: dict) -> bool:
+    """Whether this node should wake a sleeper for the group: every healthy
+    member anywhere is full with work queued, nothing is already loading, and of
+    the nodes holding a sleeper this one has the lowest id, so the others don't
+    wake one too. `local` is this node's own local_load_by_model() entry.
+
+    Reads the whole group because the node holding the sleeper usually has an
+    idle gate; the saturated node is the one with nothing left to wake. An older
+    peer reports no counts: taken as one healthy member, which only ever makes
+    this less eager. An unreachable peer is no evidence either way and is left out."""
+    if local.get("free") or local.get("starting"):
+        return False   # settled without asking any peer
+    entries = [(cl.get_node_id(), local)]
+    if cl.is_cluster_enabled():
+        for node in get_storage().list_nodes():
+            nid = node.get("node_id")
+            if nid == entries[0][0] or not _is_online(node):
+                continue
+            if not (node.get("advertise_url") or "").strip():
+                continue
+            entry = _peer_load_map(node).get(group_key)
+            if entry:
+                entries.append((nid, entry))
+    loads = [entry for _, entry in entries]
+    if any(e.get("free") or e.get("starting") for e in loads):
+        return False
+    if not sum(e.get("queued") or 0 for e in loads):
+        return False
+    if not sum(e.get("healthy", 1) or 0 for e in loads):
+        return False   # nothing is up to be saturated; a request wakes one itself
+    return min(nid for nid, e in entries if e.get("sleeping")) == entries[0][0]
 
 
 def _find_free_peer(model_name: str):

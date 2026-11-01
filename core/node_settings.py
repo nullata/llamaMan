@@ -26,6 +26,10 @@ NODE_SCOPED_KEYS = (
     "db_mirror_enabled",
     # Download bandwidth is a property of the host's link, not the cluster.
     "global_speed_limit_mbps",
+    # Whether this host wakes its sleeping queue group members under load, and
+    # after how many consecutive polls. Waking spends this host's GPU.
+    "eager_wake_enabled",
+    "eager_wake_polls",
 )
 
 
