@@ -53,6 +53,7 @@ def snapshot_subprocess_settings() -> None:
 bp = Blueprint("settings", __name__)
 
 DEFAULT_GLOBAL_SPEED_LIMIT_MBPS = 0.0
+DEFAULT_EAGER_WAKE_POLLS = 3
 DEFAULT_RETRY_COUNT_PER_FAILED_DOWNLOAD = 3
 DEFAULT_AUTO_UPDATE_SCAN_INTERVAL_HOURS = 24
 DEFAULT_RECORDING_MODE = "off"
@@ -122,6 +123,11 @@ def _normalize_settings_patch(settings: dict) -> dict:
             normalized.get("global_speed_limit_mbps"),
             default=DEFAULT_GLOBAL_SPEED_LIMIT_MBPS,
         )
+    if "eager_wake_enabled" in normalized:
+        normalized["eager_wake_enabled"] = _coerce_bool(normalized.get("eager_wake_enabled"), default=True)
+    if "eager_wake_polls" in normalized:
+        normalized["eager_wake_polls"] = _coerce_min_int(
+            normalized.get("eager_wake_polls"), default=DEFAULT_EAGER_WAKE_POLLS, minimum=1)
     if "auto_retry_failed_downloads" in normalized:
         normalized["auto_retry_failed_downloads"] = _coerce_bool(
             normalized.get("auto_retry_failed_downloads"),
@@ -253,6 +259,10 @@ def _sanitize_settings(settings: dict) -> dict:
                                 safe.get("global_speed_limit_mbps", DEFAULT_GLOBAL_SPEED_LIMIT_MBPS)),
         default=DEFAULT_GLOBAL_SPEED_LIMIT_MBPS,
     )
+    safe["eager_wake_enabled"] = bool(effective_from_settings(settings, "eager_wake_enabled", True))
+    safe["eager_wake_polls"] = _coerce_min_int(
+        effective_from_settings(settings, "eager_wake_polls", DEFAULT_EAGER_WAKE_POLLS),
+        default=DEFAULT_EAGER_WAKE_POLLS, minimum=1)
     safe.pop("nodes", None)
     return safe
 

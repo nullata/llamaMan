@@ -445,20 +445,30 @@ def _run_container(
     except docker.errors.ImageNotFound:
         return None, engine.image_missing_message(image_name)
     except docker.errors.APIError as e:
-        _remove_unstarted_container(container_name)
+        _remove_unstarted_container(container_name, name_conflict=e.status_code == 409)
         return None, f"Docker API error: {e}"
     except Exception as e:
         _remove_unstarted_container(container_name)
         return None, str(e)
 
 
-def _remove_unstarted_container(container_name: str) -> None:
+def _remove_unstarted_container(container_name: str, name_conflict: bool = False) -> None:
     """containers.run creates the container, then starts it: when the start
     fails (a mount error, a full disk) the created container stays behind,
-    holds its image (it can't be deleted) and nothing else removes it."""
+    holds its image (it can't be deleted) and nothing else removes it.
+
+    On a name conflict the create itself failed, so the container under that
+    name isn't one this call made. A running one is left alone: it may be
+    serving, or be a sleeping instance's container still inside its stop
+    grace. A dead leftover is still removed, or it would hold the name for good."""
     import docker
     try:
-        get_docker_client().containers.get(container_name).remove(force=True)
+        container = get_docker_client().containers.get(container_name)
+        if name_conflict and container.status in ("running", "restarting", "paused"):
+            logger.warning("Not removing container %s: name conflict with a %s container",
+                           container_name, container.status)
+            return
+        container.remove(force=True)
     except docker.errors.NotFound:
         pass
     except Exception as e:
@@ -469,7 +479,44 @@ def _remove_unstarted_container(container_name: str) -> None:
 # Launch / Stop / Sleep
 # ---------------------------------------------------------------------------
 
+class _Wake:
+    """One in-flight relaunch; `result` is valid once `done` is set."""
+
+    def __init__(self):
+        self.done = threading.Event()
+        self.result = False
+
+
+_wakes_lock = threading.Lock()
+_wakes: dict[str, _Wake] = {}
+
+
 def relaunch_inactive_instance(inst_id: str) -> bool:
+    """Wake a sleeping/stopped instance, blocking until it is healthy.
+
+    Single-flight per instance: a caller arriving during a wake joins it and
+    gets its result rather than starting a second container. Status stays
+    "sleeping" until the container is up, so the status check alone can't stop
+    concurrent callers (proxy wake-on-request, kb, auto-restart, the model API).
+    A joined caller shares a failure too; the next call after it tries afresh."""
+    with _wakes_lock:
+        wake = _wakes.get(inst_id)
+        joined = wake is not None
+        if not joined:
+            wake = _wakes[inst_id] = _Wake()
+    if joined:
+        wake.done.wait()
+        return wake.result
+    try:
+        wake.result = _relaunch_inactive_instance(inst_id)
+        return wake.result
+    finally:
+        with _wakes_lock:
+            del _wakes[inst_id]
+        wake.done.set()
+
+
+def _relaunch_inactive_instance(inst_id: str) -> bool:
     with instances_lock:
         inst = instances.get(inst_id)
         if inst is None or inst["status"] not in ("sleeping", "stopped"):

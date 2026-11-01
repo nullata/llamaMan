@@ -149,7 +149,8 @@ class StrataGroupKeyTests(_ClusterCase):
         self.add_local("s1", STRATA_PATH, busy=1)
         load = cluster_api.local_load_by_model()
         self.assertEqual(load[GROUP_KEY], {"active": 1, "queued": 0, "free": 0,
-                                           "max_concurrent": 1, "fallback": False})
+                                           "max_concurrent": 1, "fallback": False,
+                                           "healthy": 1, "starting": 0, "sleeping": 0})
 
     def test_every_client_name_reaches_the_group(self):
         inst = {"model_path": STRATA_PATH, "config": {"engine": "strata", "share_queue": True}}

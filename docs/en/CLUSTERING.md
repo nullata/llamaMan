@@ -31,3 +31,57 @@ A few settings are scoped per node because they're host-specific: tracked **Dock
 > **Security:** the cluster secret lets any peer drive actions on this node. Run node-to-node traffic over a trusted network or behind TLS.
 
 Cluster-related environment variables: [Clustering variables](CONFIGURATION.md#clustering).
+
+## Queue groups
+
+A queue group pools instances under one **Queue group name** so a client can send that name to any node. The table shows what happens to each member from another node's point of view:
+
+| Member state | Listed in `/api/tags` and `/v1/models` | Gets routed traffic |
+|---|---|---|
+| Healthy | Yes | First choice |
+| Starting (loading) | Yes | After healthy members |
+| Sleeping | Yes | Last, and only after every awake member, including fallbacks. The request wakes it. |
+| Stopping or stopped | No | Never |
+| On a node with no `CLUSTER_ADVERTISE_URL` (view-only) | No | Never |
+| On an offline node (no heartbeat for 45s) | No | Never |
+
+**`CLUSTER_ADVERTISE_URL` is required to receive routed work.** Without it a node can still send requests to its peers, but none can reach it.
+
+**Sleep and stop mean different things here.** An idle timeout puts an instance to sleep, and a sleeping member wakes when traffic needs it. A stopped member stays stopped: an operator stop, an eviction and a crash all end there, and no request from another node restarts it. Asking the node that holds it gets a `503`, unless the name is also that member's own file, which still wakes it.
+
+### Waking under load
+
+Awake members queue requests rather than refuse them, so traffic alone would only reach a sleeper after a whole queue overflowed. llamaMan therefore wakes one early. When every healthy member in the group is full, requests are queued and nothing is already loading, for 3 polls in a row (about 15 seconds), one sleeping member wakes. Across the cluster, only the lowest-named node holding a sleeper does this, and at most one member per group per poll.
+
+The wake is skipped, with one log line, if the model's weights don't fit in the node's free VRAM. The check adds up free memory across all GPUs and counts weights only, so a model that passes can still fail to load. If VRAM can't be read, the wake goes ahead.
+
+Both settings are per node, through `POST /api/settings`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `eager_wake_enabled` | `true` | Whether this node wakes its sleepers under load |
+| `eager_wake_polls` | `3` | Consecutive saturated polls (5 seconds each) before waking |
+
+### When a group can't be served
+
+If other nodes host the group but none can take a request, the client gets an error naming each node and why, not "model not found":
+
+| Status | Code (OpenAI routes) | Meaning |
+|---|---|---|
+| `429` | `group_full` | At least one peer's queue is full. Retrying can work. |
+| `503` | `group_unavailable` | The peers are offline, view-only, unreachable or not ready. |
+
+The owning node returns these `503` codes for its own members, and an entry node tries its next member when it gets one:
+
+| Code | Meaning |
+|---|---|
+| `model_stopping` | The member is shutting down |
+| `group_stopped` | Every member on this node is stopped |
+| `wake_failed` | The wake failed |
+| `wake_timeout` | The member didn't become healthy in time |
+
+### Troubleshooting a group that isn't visible
+
+- **The JSON backend needs one shared `DATA_DIR`.** Nodes find each other through the registry, so separate directories mean each node sees no peers. Use MariaDB unless the directory really is shared.
+- **A degraded database hides peers on purpose.** With the DB mirror serving reads, a node sees only itself and serves locally.
+- **A failed load probe doesn't hide a group.** A peer that doesn't answer stays routable from its snapshot (up to 45 seconds old), but ranks behind every peer that did answer. The log records when probes to a peer start failing and when they recover.

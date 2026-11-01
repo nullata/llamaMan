@@ -676,12 +676,155 @@ def _cluster_heartbeat_loop():
         time.sleep(CLUSTER_HEARTBEAT_INTERVAL_S)
 
 
+# --- Eager wake of sleeping queue group members --------------------------------
+# Dispatch ranks sleepers last, and awake gates queue rather than 429, so without
+# this a sleeper would only see traffic after a whole queue overflowed. This wakes
+# one as soon as a group stays saturated, so the capacity is warm when it's needed.
+# On its own thread: it may ask peers (2s timeouts), which doesn't belong in the
+# health tick, and the wake itself blocks until healthy so it gets a thread too.
+EAGER_WAKE_INTERVAL_S = 5
+_EAGER_WAKE_DEFAULT_POLLS = 3
+
+_eager_wake_streaks: dict[str, int] = {}   # group key -> consecutive pressured polls
+_eager_wake_refused: set[str] = set()      # groups whose VRAM refusal is already logged
+_eager_wakes_in_flight: set[str] = set()
+_eager_wake_lock = threading.Lock()
+
+
+def _eager_wake_sleepers() -> dict[str, list[dict]]:
+    """Sleeping members that would add capacity if woken, by group key. A member
+    with no gate is unlimited, and its group can never saturate. One sharing a gate
+    with an awake sibling adds none: the gate is what's full, not the instance."""
+    from api.cluster import effective_group_key
+    from proxy import get_gate
+
+    with instances_lock:
+        snap = [dict(i) for i in instances.values()]
+    with _eager_wake_lock:
+        waking = set(_eager_wakes_in_flight)
+    awake_gates = {id(get_gate(i["id"])) for i in snap
+                   if i.get("status") in ("healthy", "starting") and get_gate(i["id"])}
+    out: dict[str, list[dict]] = {}
+    for inst in snap:
+        cfg = inst.get("config") or {}
+        if inst.get("status") != "sleeping" or not cfg.get("share_queue") or inst["id"] in waking:
+            continue
+        gate = get_gate(inst["id"])
+        if gate is None or id(gate) in awake_gates:
+            continue
+        out.setdefault(effective_group_key(inst.get("model_path", ""), cfg), []).append(inst)
+    return out
+
+
+def _eager_wake_fits_vram(inst: dict) -> bool:
+    """Whether the member's weights fit this host's free VRAM. Waking oversubscribed
+    would crash-loop the container. Unknown (no GPU stats, a virtual model with no
+    file) counts as fitting: refusing would leave a saturated group with no way up."""
+    from api.models import estimate_model_vram, get_cached_gguf_metadata
+    from core.gpu import query_gpus
+
+    try:
+        gpus = query_gpus()
+        if not gpus:
+            logger.debug("Eager wake: no GPU stats, not checking VRAM for %s", inst["id"])
+            return True
+        path = inst.get("model_path", "")
+        cfg = inst.get("config") or {}
+        meta = get_cached_gguf_metadata(path) or {}
+        arch = meta.get("general.architecture")
+        needed = estimate_model_vram(os.path.getsize(path), int(cfg.get("n_gpu_layers", -1)),
+                                     int(meta.get(f"{arch}.block_count") or 0) or None)
+        return needed <= sum(g.get("memory_free_mb") or 0 for g in gpus) * 1024 * 1024
+    except Exception as e:
+        logger.info("Eager wake: could not check VRAM for %s, waking anyway: %s", inst["id"], e)
+        return True
+
+
+def _start_eager_wake(inst_id: str, group_key: str) -> None:
+    with _eager_wake_lock:
+        _eager_wakes_in_flight.add(inst_id)
+
+    def _run():
+        from api.instances import relaunch_inactive_instance
+        try:
+            if relaunch_inactive_instance(inst_id):
+                logger.info("Eager wake: %s is up for saturated group %s", inst_id, group_key)
+            else:
+                logger.warning("Eager wake: %s failed for group %s", inst_id, group_key)
+        except Exception as e:
+            logger.warning("Eager wake: %s error: %s", inst_id, e)
+        finally:
+            with _eager_wake_lock:
+                _eager_wakes_in_flight.discard(inst_id)
+
+    threading.Thread(target=_run, daemon=True, name=f"eager-wake-{inst_id[:8]}").start()
+
+
+def _eager_wake_tick() -> None:
+    """One pass: at most one wake per group. A group must stay saturated for
+    `eager_wake_polls` polls in a row, so a blip doesn't pay a cold load. Re-reads
+    settings each pass. The cheap check runs first: most nodes have no sleepers, and
+    those never touch storage or peers."""
+    global _eager_wake_streaks
+    sleepers = _eager_wake_sleepers()
+    if not sleepers:
+        _eager_wake_streaks = {}
+        return
+
+    from api.cluster import group_wants_wake, local_load_by_model
+    from core.node_settings import effective_from_settings
+    from storage import get_storage
+
+    settings = get_storage().get_settings()
+    if not effective_from_settings(settings, "eager_wake_enabled", True):
+        _eager_wake_streaks = {}
+        return
+    try:
+        polls = max(1, int(effective_from_settings(settings, "eager_wake_polls", _EAGER_WAKE_DEFAULT_POLLS)))
+    except (TypeError, ValueError):
+        polls = _EAGER_WAKE_DEFAULT_POLLS
+
+    load = local_load_by_model()
+    streaks: dict[str, int] = {}
+    for key, members in sleepers.items():
+        if not group_wants_wake(key, load.get(key) or {}):
+            _eager_wake_refused.discard(key)
+            continue
+        streak = _eager_wake_streaks.get(key, 0) + 1
+        if streak < polls:
+            streaks[key] = streak
+            continue
+        # A primary before a fallback, as dispatch would rank them once awake.
+        member = min(members, key=lambda i: bool((i.get("config") or {}).get("share_queue_fallback")))
+        if not _eager_wake_fits_vram(member):
+            if key not in _eager_wake_refused:
+                _eager_wake_refused.add(key)
+                logger.warning("Eager wake: group %s is saturated but %s does not fit free VRAM",
+                               key, member["id"])
+            streaks[key] = streak
+            continue
+        _eager_wake_refused.discard(key)
+        _start_eager_wake(member["id"], key)
+    _eager_wake_streaks = streaks
+
+
+def _eager_wake_loop():
+    while True:
+        time.sleep(EAGER_WAKE_INTERVAL_S)
+        try:
+            _eager_wake_tick()
+        except Exception as e:
+            # A degraded backend or a peer read failing skips this pass, nothing more.
+            logger.warning("eager wake error: %s", e)
+
+
 def start_background_poller():
     logger.info(
         "Background poller started (cleanup=%ds, orphan-scan=%ds, poll=5s, heartbeat=%ds)",
         _CLEANUP_INTERVAL, _ORPHAN_SCAN_INTERVAL, CLUSTER_HEARTBEAT_INTERVAL_S,
     )
     threading.Thread(target=_cluster_heartbeat_loop, daemon=True).start()
+    threading.Thread(target=_eager_wake_loop, daemon=True, name="eager-wake").start()
     thread = threading.Thread(target=_background_poller, daemon=True)
     thread.start()
     return thread

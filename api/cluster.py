@@ -14,7 +14,7 @@ configured, so the dashboard behaves exactly as before on single-node installs.
 import os
 import threading
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, g, has_request_context, jsonify, request
 
 from config import REQUEST_TIMEOUT, logger
 from core import cluster as cl
@@ -41,6 +41,11 @@ import time as _time
 
 _LOCAL_MODELS_TTL = 30.0
 _local_models_cache = {"at": 0.0, "data": []}
+
+
+# "alias_wake": a group alias sent here is served even when the member isn't
+# healthy yet (api.llamaman._serve_alias_member).
+NODE_FEATURES = ("alias_wake",)
 
 
 def _local_models_snapshot() -> list[dict]:
@@ -119,6 +124,10 @@ def build_local_snapshot() -> dict:
         system = {**system, "engines": engines_snapshot()}
     except Exception:
         pass
+
+    # What this node's code can do, for peers deciding what to send it. Same
+    # opaque-to-older-peers rule as "engines".
+    system = {**system, "features": list(NODE_FEATURES)}
 
     return {
         "system": system,
@@ -326,6 +335,9 @@ def api_cluster_proxy(node_id, subpath):
 # gate / sampling / recording. A loop guard header stops re-dispatch on the hop.
 
 _DISPATCH_HEADER = "X-Cluster-Dispatch"   # value = hop count (1, 2, ...)
+# On a forwarded request's 503: this node served nothing and a sibling might, so
+# the forwarder tries its next member. A peer without it just passes the 503 on.
+RETRY_ELSEWHERE_HEADER = "X-Llamaman-Retry-Elsewhere"
 MAX_HOPS = 3                              # entry pick + up to 2 migrations
 _OVERFLOW_POLL_S = 0.5                    # how often a queued request re-checks peers
 
@@ -356,6 +368,18 @@ def effective_group_key(model_path: str, config: dict | None) -> str:
     return alias or model_name_from_path(model_path)
 
 
+def peer_is_routable(node: dict) -> bool:
+    """A peer inference can be forwarded to: heartbeating, with a URL to reach it
+    on. Listings and routing share this, so a view-only or offline peer's groups
+    aren't advertised under a name that can't be served. Member status stays each
+    caller's business: a listing has only the snapshot, routing has live load."""
+    return _is_online(node) and bool((node.get("advertise_url") or "").strip())
+
+
+def _is_group_member(config: dict | None) -> bool:
+    return bool((config or {}).get("share_queue"))
+
+
 def cluster_group_models() -> list[dict]:
     """Distinct `share_queue_group` aliases currently served somewhere in the
     cluster, for advertising in the model-listing APIs.
@@ -369,8 +393,8 @@ def cluster_group_models() -> list[dict]:
     per-file `/api/tags` listing never mentions it, so a client has no way to
     discover the name it should send. This surfaces it, but only when it means
     something: clustering enabled, the alias actually set, and at least one
-    non-stopped instance (on any node) serving it - which is exactly when a
-    request for the alias can be routed rather than 404'd.
+    non-stopped instance on this node or a routable peer - which is exactly when
+    a request for the alias can be routed rather than 404'd.
     """
     if not cl.is_cluster_enabled():
         return []
@@ -382,7 +406,7 @@ def cluster_group_models() -> list[dict]:
     with instances_lock:
         for inst in instances.values():
             alias = ((inst.get("config") or {}).get("share_queue_group") or "").strip()
-            if alias:
+            if alias and _is_group_member(inst.get("config")):
                 seen.append((alias, inst.get("status") or "", inst.get("model_path")))
 
     try:
@@ -393,10 +417,12 @@ def cluster_group_models() -> list[dict]:
     for node in nodes:
         if node.get("node_id") == self_id:
             continue  # this node's live instances are already counted above
+        if not peer_is_routable(node):
+            continue
         snapshot = node.get("snapshot") or {}
         for inst in snapshot.get("instances") or []:
             alias = ((inst.get("config") or {}).get("share_queue_group") or "").strip()
-            if alias:
+            if alias and _is_group_member(inst.get("config")):
                 seen.append((alias, inst.get("status") or "", None))
 
     groups: dict[str, dict] = {}
@@ -497,36 +523,98 @@ def _inflight_dec(node_id: str) -> None:
                 _inflight.pop(node_id, None)
 
 
-def _local_group_load(model_name: str):
-    """This node's backlog (in-flight + queued) for the requested group, plus
-    whether it's serving only as a fallback. Returns (load, is_fallback) or
-    None if this node hosts no matching instance.
+# How awake a group member is. Lower serves sooner.
+_TIER_HEALTHY, _TIER_STARTING, _TIER_SLEEPING = 0, 1, 2
+_STATUS_TIER = {"healthy": _TIER_HEALTHY, "starting": _TIER_STARTING, "sleeping": _TIER_SLEEPING}
 
-    A node is "fallback" for the group only when ALL its matching instances
-    are fallback-only. A single primary instance flips the whole node to
-    primary - which is correct: if you also run a primary here, the primary's
-    own local share_queue path will serve traffic and the fallback sibling is
-    just extra capacity below it."""
+# The order dispatch and evacuation try (is_fallback, tier) in: awake capacity
+# beats a cold load, so even a fallback that's up comes before a sleeping primary.
+_CANDIDATE_ORDER = (
+    (False, _TIER_HEALTHY), (False, _TIER_STARTING),
+    (True, _TIER_HEALTHY), (True, _TIER_STARTING),
+    (False, _TIER_SLEEPING), (True, _TIER_SLEEPING),
+)
+
+
+def _member_tier(status: str | None) -> int:
+    return _STATUS_TIER.get(status, _TIER_HEALTHY)
+
+
+def _local_group_load(model_name: str):
+    """This node's backlog (in-flight + queued) for the requested group, whether
+    it's serving only as a fallback, and how awake it is. Returns (load,
+    is_fallback, tier) or None if this node hosts no matching instance.
+
+    All three describe the members this node would actually serve from: those in
+    its best tier (_ensure_model_running ranks them the same way). A saturated
+    healthy member is not idle because a sleeper sits beside it. Within that
+    tier a node is "fallback" only when ALL its members are fallback-only: one
+    primary flips it, as the primary's own local share_queue path will serve
+    traffic and the fallback sibling is just extra capacity below it."""
     from core.state import instances, instances_lock
     from proxy import get_gate
-    best = None
-    saw_primary = False
     with instances_lock:
         items = list(instances.values())
-    for inst in items:
-        cfg = inst.get("config") or {}
-        if not cfg.get("share_queue") or inst.get("status") in ("stopped", "stopping"):
-            continue
-        if not _inst_matches_request(inst, model_name):
-            continue
-        if not cfg.get("share_queue_fallback"):
-            saw_primary = True
-        gate = get_gate(inst["id"])
-        load = (gate.active + gate.queued) if gate else 0
-        best = load if best is None else min(best, load)
-    if best is None:
+    members = [inst for inst in items
+               if (inst.get("config") or {}).get("share_queue")
+               and inst.get("status") not in ("stopped", "stopping")
+               and _inst_matches_request(inst, model_name)]
+    if not members:
         return None
-    return (best, not saw_primary)
+    tier = min(_member_tier(inst.get("status")) for inst in members)
+    serving = [inst for inst in members if _member_tier(inst.get("status")) == tier]
+    loads = []
+    for inst in serving:
+        gate = get_gate(inst["id"])
+        loads.append((gate.active + gate.queued) if gate else 0)
+    fallback = all((inst.get("config") or {}).get("share_queue_fallback") for inst in serving)
+    return (min(loads), fallback, tier)
+
+
+def _peer_tier(live: dict) -> int:
+    """How awake a peer's load entry says it is. An older peer reports no counts:
+    assume awake, and _peer_can_serve answers for it from its snapshot."""
+    if live.get("healthy"):
+        return _TIER_HEALTHY
+    if live.get("starting"):
+        return _TIER_STARTING
+    if live.get("sleeping"):
+        return _TIER_SLEEPING
+    return _TIER_HEALTHY
+
+
+def _peer_can_serve(node: dict, model_name: str) -> bool:
+    """False for an older peer whose members for this group aren't healthy: it
+    would answer an alias with a 500. Its live load can't reveal that, so this
+    reads the stored snapshot (~5s old), whose feature list also identifies it.
+    With no snapshot there's nothing to go on, so the live load stands."""
+    snapshot = node.get("snapshot")
+    if not snapshot:
+        return True
+    if "alias_wake" in ((snapshot.get("system") or {}).get("features") or []):
+        return True
+    return any(inst.get("status") == "healthy" and _inst_matches_request(inst, model_name)
+               for inst in snapshot.get("instances") or [])
+
+
+def _snapshot_candidate(node: dict, model_name: str) -> dict | None:
+    """A candidate for a peer whose live load couldn't be read, from its snapshot.
+    A failed probe says nothing about which groups it hosts, so a blip mustn't
+    make a served group vanish. `unknown` ranks it behind every peer that answered:
+    at an assumed load of 0 a dead peer would otherwise attract the traffic."""
+    if not _peer_can_serve(node, model_name):
+        return None
+    members = [inst for inst in (node.get("snapshot") or {}).get("instances") or []
+               if _is_group_member(inst.get("config"))
+               and inst.get("status") not in ("stopped", "stopping")
+               and _inst_matches_request(inst, model_name)]
+    if not members:
+        return None
+    tier = min(_member_tier(inst.get("status")) for inst in members)
+    fallback = all((inst.get("config") or {}).get("share_queue_fallback") for inst in members
+                   if _member_tier(inst.get("status")) == tier)
+    return {"node": node, "load": _inflight_get(node.get("node_id")), "is_self": False,
+            "fallback": fallback, "tier": tier, "unknown": True}
 
 
 def _group_candidates(model_name: str) -> list[dict]:
@@ -540,22 +628,87 @@ def _group_candidates(model_name: str) -> list[dict]:
     candidates = []
     local = _local_group_load(model_name)
     if local is not None:
-        load, fallback = local
+        load, fallback, tier = local
         candidates.append({"node": {"node_id": self_id, "node_name": ""},
-                           "load": load, "is_self": True, "fallback": fallback})
+                           "load": load, "is_self": True, "fallback": fallback, "tier": tier})
     for node in get_storage().list_nodes():
         nid = node.get("node_id")
-        if nid == self_id or not _is_online(node):
+        if nid == self_id or not peer_is_routable(node):
             continue
-        if not (node.get("advertise_url") or "").strip():
-            continue  # can't forward to a node with no advertise URL
         live = _peer_live_load(node, model_name)
-        if not live:
+        if live is PEER_UNREACHABLE:
+            candidate = _snapshot_candidate(node, model_name)
+            if candidate:
+                candidates.append(candidate)
+            continue
+        if not live or not _peer_can_serve(node, model_name):
             continue
         load = (live.get("active") or 0) + (live.get("queued") or 0) + _inflight_get(nid)
         candidates.append({"node": node, "load": load, "is_self": False,
-                           "fallback": bool(live.get("fallback", False))})
+                           "fallback": bool(live.get("fallback", False)),
+                           "tier": _peer_tier(live)})
     return candidates
+
+
+# Why each peer turned down this request, kept on the request so that if nobody
+# takes it the client hears that rather than "model not found".
+_REFUSED_FULL = "queue full"
+_REFUSED_UNREACHABLE = "unreachable"
+
+
+def _note_refusal(node_id: str, reason: str) -> None:
+    if not hasattr(g, "forward_refusals"):
+        g.forward_refusals = {}
+    g.forward_refusals[node_id] = reason
+
+
+def group_unroutable_error(model_name: str) -> dict | None:
+    """When `model_name` is a group other nodes serve but none of them can take
+    this request: {code, message, http_status}, naming each node and why. None
+    when it isn't one, and for a forwarded request (its entry node answers).
+    429 if a peer is merely full, which a client can usefully retry."""
+    if not cl.is_cluster_enabled() or not has_request_context() or _request_hops() >= 1:
+        return None
+    from core.engines import virtual_model_key
+    from core.model_alias import canonical_name
+    canonical = canonical_name(model_name)
+    canonical = virtual_model_key(canonical) or canonical
+    req = canonical.split(":")[0].lower()
+    refusals = getattr(g, "forward_refusals", {})
+    try:
+        nodes = get_storage().list_nodes() or []
+    except Exception:
+        nodes = []
+    self_id = cl.get_node_id()
+    reasons = []
+    full = False
+    for node in nodes:
+        nid = node.get("node_id")
+        if nid == self_id:
+            continue
+        hosts = any(_is_group_member(inst.get("config"))
+                    and inst.get("status") not in ("stopped", "stopping")
+                    and effective_group_key(inst.get("model_path", ""), inst.get("config")) == req
+                    for inst in (node.get("snapshot") or {}).get("instances") or [])
+        if not hosts and nid not in refusals:
+            continue
+        reason = refusals.get(nid)
+        if reason is None:
+            if not _is_online(node):
+                reason = "offline"
+            elif not (node.get("advertise_url") or "").strip():
+                reason = "view-only, no CLUSTER_ADVERTISE_URL"
+            else:
+                reason = "not ready"
+        full = full or reason == _REFUSED_FULL
+        reasons.append(f"{node.get('node_name') or nid} ({reason})")
+    if not reasons:
+        return None
+    message = (f"model '{model_name}' is served by other nodes, but none could take "
+               f"this request: {', '.join(sorted(reasons))}")
+    if full:
+        return {"code": "group_full", "message": message, "http_status": 429}
+    return {"code": "group_unavailable", "message": message, "http_status": 503}
 
 
 def _forward_inference(node: dict, path: str, body: bytes, content_type: str | None,
@@ -613,15 +766,25 @@ def _forward_inference(node: dict, path: str, body: bytes, content_type: str | N
                        name, REQUEST_TIMEOUT, e)
         msg = (f"peer {name} accepted the request but did not respond within "
                f"REQUEST_TIMEOUT ({REQUEST_TIMEOUT}s); it may still be processing")
-        return Response(_json.dumps({"error": {"message": msg}}),
+        # Ollama's surface carries the error as a plain string, OpenAI's nested.
+        error = msg if request.path.startswith("/api/") else {"message": msg}
+        return Response(_json.dumps({"error": error}),
                         status=504, mimetype="application/json")
     except Exception as e:
         _inflight_dec(nid)
         logger.warning("cluster dispatch to %s failed: %s", name, e)
+        _note_refusal(nid, _REFUSED_UNREACHABLE)
         return None
     if resp.status_code == 429:  # peer's gate is full - try elsewhere
         resp.close()
         _inflight_dec(nid)
+        _note_refusal(nid, _REFUSED_FULL)
+        return None
+    if resp.status_code == 503 and resp.headers.get(RETRY_ELSEWHERE_HEADER):
+        logger.info("cluster forward to %s: peer could not serve it, trying elsewhere", name)
+        resp.close()
+        _inflight_dec(nid)
+        _note_refusal(nid, "could not serve it")
         return None
 
     out_headers = [(k, v) for k, v in resp.headers.items()
@@ -652,6 +815,7 @@ def _forward_inference(node: dict, path: str, body: bytes, content_type: str | N
                 resp.close()
             except Exception:
                 pass
+            _note_refusal(nid, _REFUSED_UNREACHABLE)
             return None
         logger.info("forward %s: body read %d bytes, returning response",
                     name, len(body_bytes))
@@ -685,20 +849,22 @@ _rr_counter = 0
 
 def _order_candidates(candidates: list[dict]) -> list[dict]:
     """Least-loaded first, but round-robin among the equally-least-loaded nodes.
-    Fallback-only candidates are always sorted AFTER all primaries, regardless
-    of load: a fallback exists to serve when primaries are saturated, so even
-    an idle fallback must wait its turn behind a busy primary. The dispatch
-    loop walks this list and 429s fall through to the next entry, so the
-    fallback naturally absorbs overflow only when every primary refused.
+    Fallback-only candidates are always sorted AFTER all awake primaries,
+    regardless of load: a fallback exists to serve when primaries are saturated,
+    so even an idle fallback must wait its turn behind a busy primary. The
+    dispatch loop walks this list and 429s fall through to the next entry, so
+    the fallback naturally absorbs overflow only when every primary refused.
+
+    Sleeping candidates come after everything awake (_CANDIDATE_ORDER): their
+    gates read empty, so on load alone they'd win every tie and any backlog,
+    and each of those requests would pay a cold load. A peer whose load couldn't
+    be read comes after all of them: it may well be dead.
 
     In-flight counts only rise after a request acquires its gate, which happens
     after this decision, so a simultaneous burst sees every node tied at the
     same count. Always preferring self there would pin the whole burst to the
     entry node; rotating the tie spreads it across the group."""
     global _rr_counter
-    primaries = [c for c in candidates if not c.get("fallback")]
-    fallbacks = [c for c in candidates if c.get("fallback")]
-
     def _sort_tier(tier: list[dict]) -> list[dict]:
         if not tier:
             return []
@@ -714,7 +880,14 @@ def _order_candidates(candidates: list[dict]) -> list[dict]:
             _rr_counter += 1
         return tied[start:] + tied[:start] + rest
 
-    return _sort_tier(primaries) + _sort_tier(fallbacks)
+    ordered = []
+    for unknown in (False, True):
+        for fallback, tier in _CANDIDATE_ORDER:
+            ordered += _sort_tier([c for c in candidates
+                                   if bool(c.get("unknown")) == unknown
+                                   and bool(c.get("fallback")) == fallback
+                                   and c.get("tier", 0) == tier])
+    return ordered
 
 
 def dispatch_inference(model_name: str):
@@ -774,60 +947,141 @@ _LOAD_CACHE_TTL = 0.3
 
 def local_load_by_model() -> dict:
     """This node's live gate load per shared-queue group: in-flight, queued,
-    free slots, and a per-group `fallback` flag. Keyed by the effective group
-    key (alias if set, else filename stem) so peers asking by alias find this
-    node without a filename match. Read straight from gate state - cheap, no DB.
+    free slots, how many members are healthy / starting / sleeping, and a
+    per-group `fallback` flag. Keyed by the effective group key (alias if set,
+    else filename stem) so peers asking by alias find this node without a
+    filename match. Read straight from gate state - cheap, no DB.
 
-    `fallback` is true for the group only when EVERY contributing instance is
-    fallback-only; one primary flips the whole group's flag back to false on
-    this node, matching the local routing rule (a primary sibling here will
-    serve traffic, so this node should be treated as primary by peers too)."""
+    `free` counts healthy members only: a sleeper's gate reads empty, and work
+    moved onto it as "free" would pay a cold load. Members sharing a gate
+    (siblings of one file) count it once.
+
+    `fallback` is true for the group only when EVERY instance in its best tier
+    is fallback-only; one primary there flips the flag back to false, matching
+    the local routing rule (a primary sibling here will serve traffic, so this
+    node should be treated as primary by peers too)."""
     from core.state import instances, instances_lock
     from proxy import get_gate
     with instances_lock:
         snap = [(i["id"], i.get("model_path", ""), dict(i.get("config") or {}), i.get("status"))
                 for i in instances.values()]
-    out: dict = {}
+    groups: dict[str, list] = {}
     for inst_id, model_path, cfg, status in snap:
         if not cfg.get("share_queue") or status in ("stopped", "stopping"):
             continue
-        gate = get_gate(inst_id)
-        if gate:
-            active, queued, mc = gate.active, gate.queued, gate.max_concurrent
-        else:
-            active, queued, mc = 0, 0, int(cfg.get("max_concurrent") or 0)
-        free = max(0, mc - active) if mc else 1   # no gate => unlimited => free
-        key = effective_group_key(model_path, cfg)
-        cur = out.setdefault(key, {"active": 0, "queued": 0, "free": 0,
-                                   "max_concurrent": 0, "fallback": True})
-        cur["active"] += active
-        cur["queued"] += queued
-        cur["free"] += free
-        cur["max_concurrent"] += mc
-        if not cfg.get("share_queue_fallback"):
-            cur["fallback"] = False
+        groups.setdefault(effective_group_key(model_path, cfg), []).append((inst_id, cfg, status))
+
+    out: dict = {}
+    for key, members in groups.items():
+        cur = {"active": 0, "queued": 0, "free": 0, "max_concurrent": 0,
+               "healthy": 0, "starting": 0, "sleeping": 0}
+        counted, free_counted = set(), set()
+        for inst_id, cfg, status in members:
+            cur[{_TIER_HEALTHY: "healthy", _TIER_STARTING: "starting",
+                 _TIER_SLEEPING: "sleeping"}[_member_tier(status)]] += 1
+            gate = get_gate(inst_id)
+            if gate:
+                active, queued, mc = gate.active, gate.queued, gate.max_concurrent
+            else:
+                active, queued, mc = 0, 0, int(cfg.get("max_concurrent") or 0)
+            # A gateless member is its own capacity; a gate may be several members'.
+            slot_key = id(gate) if gate else inst_id
+            if slot_key not in counted:
+                counted.add(slot_key)
+                cur["active"] += active
+                cur["queued"] += queued
+                cur["max_concurrent"] += mc
+            if _member_tier(status) == _TIER_HEALTHY and slot_key not in free_counted:
+                free_counted.add(slot_key)
+                cur["free"] += max(0, mc - active) if mc else 1   # no gate => unlimited => free
+        best = min(_member_tier(status) for _, _, status in members)
+        cur["fallback"] = all(cfg.get("share_queue_fallback") for _, cfg, status in members
+                              if _member_tier(status) == best)
+        out[key] = cur
     return out
 
 
-def _peer_live_load(node: dict, model_name: str):
-    """Live load for `model_name` on a peer (briefly cached). Returns the
-    per-model dict or None on miss/unreachable. The whole node map is cached so
-    one query serves any model; matching is fuzzy/case-insensitive so a quant-
-    suffixed request (gpt-oss-20b-Q4_K_M) still finds the lowercase-keyed entry."""
+class _Unreachable(dict):
+    """Falsy and empty like a peer with nothing to report, so code that only wants
+    real capacity needn't care, while `is PEER_UNREACHABLE` tells the two apart: a
+    peer hosting nothing and one that didn't answer mean different things."""
+
+
+PEER_UNREACHABLE = _Unreachable()
+_unreachable_peers: set[str] = set()
+
+
+def _peer_load_map(node: dict) -> dict:
+    """A peer's whole local-load map (briefly cached, so one query serves any
+    model), or PEER_UNREACHABLE on a timeout, a non-200 or a bad body."""
     nid = node.get("node_id")
     now = _time.monotonic()
     with _load_cache_lock:
         cached = _load_cache.get(nid)
         data = cached[1] if cached and now - cached[0] < _LOAD_CACHE_TTL else None
     if data is None:
+        why = None
         try:
             resp = cl.cluster_request(node, "GET", "/api/cluster/local-load", timeout=2)
-            data = resp.json() if resp.status_code == 200 else {}
-        except Exception:
-            data = {}
+            if resp.status_code == 200:
+                data = resp.json()
+            else:
+                why = f"HTTP {resp.status_code}"
+        except Exception as e:
+            why = str(e)
+        if not isinstance(data, dict):
+            why = why or "unexpected response"
+            data = PEER_UNREACHABLE
         with _load_cache_lock:
             _load_cache[nid] = (now, data)
-    return _match_model_load(data, model_name)
+            changed = (why is not None) != (nid in _unreachable_peers)
+            (_unreachable_peers.add if why is not None else _unreachable_peers.discard)(nid)
+        # Once per change: this runs on every routing decision.
+        if changed and why is not None:
+            logger.warning("cluster: cannot read live load from %s: %s", node.get("node_name") or nid, why)
+        elif changed:
+            logger.info("cluster: live load from %s is readable again", node.get("node_name") or nid)
+    return data
+
+
+def _peer_live_load(node: dict, model_name: str):
+    """Live load for `model_name` on a peer (briefly cached). Returns the
+    per-model dict, None when the peer reports nothing for it, or PEER_UNREACHABLE.
+    Matching is fuzzy/case-insensitive so a quant-suffixed request
+    (gpt-oss-20b-Q4_K_M) still finds the lowercase-keyed entry."""
+    data = _peer_load_map(node)
+    return data if data is PEER_UNREACHABLE else _match_model_load(data, model_name)
+
+
+def group_wants_wake(group_key: str, local: dict) -> bool:
+    """Whether this node should wake a sleeper for the group: every healthy
+    member anywhere is full with work queued, nothing is already loading, and of
+    the nodes holding a sleeper this one has the lowest id, so the others don't
+    wake one too. `local` is this node's own local_load_by_model() entry.
+
+    Reads the whole group because the node holding the sleeper usually has an
+    idle gate; the saturated node is the one with nothing left to wake. An older
+    peer reports no counts: taken as one healthy member, which only ever makes
+    this less eager. An unreachable peer is no evidence either way and is left out."""
+    if local.get("free") or local.get("starting"):
+        return False   # settled without asking any peer
+    entries = [(cl.get_node_id(), local)]
+    if cl.is_cluster_enabled():
+        for node in get_storage().list_nodes():
+            nid = node.get("node_id")
+            if nid == entries[0][0] or not peer_is_routable(node):
+                continue
+            entry = _peer_load_map(node).get(group_key)
+            if entry:
+                entries.append((nid, entry))
+    loads = [entry for _, entry in entries]
+    if any(e.get("free") or e.get("starting") for e in loads):
+        return False
+    if not sum(e.get("queued") or 0 for e in loads):
+        return False
+    if not sum(e.get("healthy", 1) or 0 for e in loads):
+        return False   # nothing is up to be saturated; a request wakes one itself
+    return min(nid for nid, e in entries if e.get("sleeping")) == entries[0][0]
 
 
 def _find_free_peer(model_name: str):
@@ -850,12 +1104,10 @@ def _find_free_peer(model_name: str):
     best_fallback = None
     for node in get_storage().list_nodes():
         nid = node.get("node_id")
-        if nid == self_id or not _is_online(node):
-            continue
-        if not (node.get("advertise_url") or "").strip():
+        if nid == self_id or not peer_is_routable(node):
             continue
         load = _peer_live_load(node, model_name)
-        if not load:
+        if not load or not _peer_can_serve(node, model_name):
             continue
         eff_free = (load.get("free", 0) or 0) - _inflight_get(nid)
         if eff_free <= 0:
@@ -885,29 +1137,24 @@ def _find_evacuation_peer(model_name: str):
     evacuating local node only retries to peers that actually accepted (a 429
     falls through to the next candidate)."""
     self_id = cl.get_node_id()
-    best_primary = None    # (backlog, node)
-    best_fallback = None
+    best = None    # (rank in _CANDIDATE_ORDER, backlog, node)
     for node in get_storage().list_nodes():
         nid = node.get("node_id")
-        if nid == self_id or not _is_online(node):
-            continue
-        if not (node.get("advertise_url") or "").strip():
+        if nid == self_id or not peer_is_routable(node):
             continue
         load = _peer_live_load(node, model_name)
-        if not load:
-            continue  # peer doesn't host this model (or unreachable)
+        if not load or not _peer_can_serve(node, model_name):
+            continue  # peer doesn't host this model (or unreachable, or can't serve it)
         backlog = (load.get("active", 0) or 0) + (load.get("queued", 0) or 0) + _inflight_get(nid)
         # Even when evacuating, prefer alive primaries over fallbacks: the
         # operator marked the fallback as second-class for a reason (different
-        # model, slower hardware), so use it only if no primary is alive.
-        if load.get("fallback"):
-            if best_fallback is None or backlog < best_fallback[0]:
-                best_fallback = (backlog, node)
-        else:
-            if best_primary is None or backlog < best_primary[0]:
-                best_primary = (backlog, node)
-    chosen = best_primary or best_fallback
-    return chosen[1] if chosen else None
+        # model, slower hardware), so use it only if no primary is alive. A
+        # sleeper ranks last but still counts: this node's worker is dead, so a
+        # cold load beats having nowhere to go.
+        rank = _CANDIDATE_ORDER.index((bool(load.get("fallback")), _peer_tier(load)))
+        if best is None or (rank, backlog) < best[:2]:
+            best = (rank, backlog, node)
+    return best[2] if best else None
 
 
 def acquire_or_overflow(gate, model_name: str):

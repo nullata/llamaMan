@@ -178,6 +178,7 @@ def _iter_group_members_across_cluster(name: str):
     Falls back silently on any storage/read error so a peer outage never breaks
     /api/show or the badge; the caller sees fewer members, not an exception.
     """
+    from api.cluster import peer_is_routable
     from core import cluster as cl
     req = name.split(":")[0].lower()
 
@@ -194,7 +195,7 @@ def _iter_group_members_across_cluster(name: str):
     self_id = cl.get_node_id()
     for inst in local_snapshot:
         alias = ((inst.get("config") or {}).get("share_queue_group") or "").strip()
-        if not alias or alias.lower() != req:
+        if not alias or alias.lower() != req or not (inst.get("config") or {}).get("share_queue"):
             continue
         if inst.get("status") in ("stopped", "stopping"):
             continue
@@ -214,12 +215,12 @@ def _iter_group_members_across_cluster(name: str):
         nodes = []
     for node in nodes:
         node_id = node.get("node_id")
-        if not node_id or node_id == self_id:
-            continue
+        if not node_id or node_id == self_id or not peer_is_routable(node):
+            continue  # an unroutable peer's members can't serve the name, so don't shape it
         snapshot = node.get("snapshot") or {}
         for inst in snapshot.get("instances") or []:
             alias = ((inst.get("config") or {}).get("share_queue_group") or "").strip()
-            if not alias or alias.lower() != req:
+            if not alias or alias.lower() != req or not (inst.get("config") or {}).get("share_queue"):
                 continue
             if inst.get("status") in ("stopped", "stopping"):
                 continue
@@ -283,22 +284,138 @@ def _details_from_peer_group_member(name: str) -> dict:
     return _group_min_details(name)
 
 
+class ModelUnavailable(str):
+    """_ensure_model_running's error, when the outcome isn't "no such model".
+    A str, so the (inst, err) contract and the message stay as they were; the
+    surfaces read `http_status` and `code`. `retry_elsewhere` says this node
+    served nothing and a sibling might: see RETRY_ELSEWHERE_HEADER."""
+
+    def __new__(cls, code: str, message: str, http_status: int = 503,
+                retry_elsewhere: bool = True):
+        self = super().__new__(cls, message)
+        self.code = code
+        self.http_status = http_status
+        self.retry_elsewhere = retry_elsewhere
+        return self
+
+
+def _model_error_response(err: str, payload: dict, default_status: int):
+    resp = jsonify(payload)
+    resp.status_code = getattr(err, "http_status", default_status)
+    if getattr(err, "retry_elsewhere", False):
+        from api.cluster import RETRY_ELSEWHERE_HEADER, _request_hops
+        # Only for a forwarding peer; a client has no "elsewhere" to try.
+        if _request_hops() >= 1:
+            resp.headers[RETRY_ELSEWHERE_HEADER] = "1"
+    return resp
+
+
+def _ollama_model_error(err: str):
+    return _model_error_response(err, {"error": str(err)}, 500)
+
+
+def _openai_model_error(err: str):
+    error = {"message": str(err)}
+    if getattr(err, "code", None):
+        error["code"] = err.code
+    return _model_error_response(err, {"error": error}, 503)
+
+
+# Which member of a group serves its alias: never a sleeper while a sibling is
+# up, and a member on its way down only when nothing else is left.
+_ALIAS_STATUS_RANK = {"healthy": 0, "starting": 1, "sleeping": 2}
+
+
+def _alias_of(inst: dict) -> str:
+    return ((inst.get("config") or {}).get("share_queue_group") or "").strip().lower()
+
+
+def _alias_request(name: str) -> str:
+    return name.split(":")[0].lower()
+
+
 def _find_running_instance_by_alias(name: str) -> dict | None:
-    """Find a running instance that opted into the cluster alias `name`.
+    """The best non-stopped instance that opted into the cluster alias `name`.
 
     Without this, a client calling by an alias (e.g. "qwen2.5-14b" mapped to a
     Q4 file by share_queue_group) would only find the instance through cluster
     dispatch - direct calls to this node's compat endpoint would 404 on the
-    name even when a running instance is honestly serving it via --alias."""
-    req = name.split(":")[0].lower()
+    name even when a running instance is honestly serving it via --alias.
+
+    An exact alias wins. A partial name (peers route by substring, so one can
+    arrive forwarded) resolves only when it points at a single alias; when it
+    fits several, only an already healthy member answers, since waking one
+    would be a guess."""
+    req = _alias_request(name)
+    exact, partial = [], []
     with instances_lock:
         for inst in instances.values():
-            if inst.get("status") in ("stopped",):
+            if inst.get("status") == "stopped":
                 continue
-            alias = ((inst.get("config") or {}).get("share_queue_group") or "").strip().lower()
-            if alias and (alias == req or req in alias):
-                return inst
-    return None
+            alias = _alias_of(inst)
+            if alias == req and alias:
+                exact.append(inst)
+            elif alias and req in alias:
+                partial.append(inst)
+
+    def best(members):
+        return min(members, key=lambda i: _ALIAS_STATUS_RANK.get(i.get("status"), 3))
+
+    if exact:
+        return best(exact)
+    if len({_alias_of(i) for i in partial}) == 1:
+        return best(partial)
+    return next((i for i in partial if i.get("status") == "healthy"), None)
+
+
+def _names_file_exactly(model: dict | None, name: str) -> bool:
+    """`model` (from _find_model_by_name) was found by its exact file name or an
+    engine's served name for it, not by the substring rule."""
+    return bool(model) and (
+        bool(model.get("_engine")) or model_name_from_path(model["path"]) == _alias_request(name))
+
+
+def _stopped_alias_error(name: str, model: dict | None) -> "ModelUnavailable | None":
+    """The error for an exact alias whose members on this node are all stopped;
+    None when `name` isn't one. A stop is usually deliberate, so it doesn't wake
+    them and must not launch some file the name happens to substring-match. The
+    exception is a member's own file answering to that name: asking for a file
+    by name wakes its stopped instance, alias or not."""
+    req = _alias_request(name)
+    with instances_lock:
+        stopped = [i for i in instances.values()
+                   if i.get("status") == "stopped" and _alias_of(i) == req]
+    if not stopped or (model and any(_inst_runs_file(i, model["path"]) for i in stopped)):
+        return None
+    return ModelUnavailable("group_stopped", f"model '{name}' is stopped on this node")
+
+
+def _serve_alias_member(name: str) -> tuple[dict | None, str | None]:
+    """Bring up the best local member of alias `name`, which isn't healthy yet.
+
+    Same as the file path: a `starting` member is returned for the caller to
+    wait on. The re-check is under _llamaman_lock so it can't race an eviction,
+    but the wake is outside it: the lock is global and a wake blocks until
+    healthy. Concurrent wakes join (relaunch_inactive_instance is single-flight)."""
+    from api.instances import relaunch_inactive_instance
+
+    with _llamaman_lock:
+        inst = _find_running_instance_by_alias(name)
+        if inst is None:
+            return None, ModelUnavailable("group_stopped", f"model '{name}' is stopped on this node")
+        with instances_lock:
+            status = inst.get("status")
+            inst["_last_request_at"] = time.time()
+
+    if status in ("healthy", "starting"):
+        return inst, None
+    if status != "sleeping":
+        return None, ModelUnavailable("model_stopping", f"model '{name}' is stopping on this node")
+    if relaunch_inactive_instance(inst["id"]):
+        return inst, None
+    if inst.get("status") == "starting":
+        return None, ModelUnavailable("wake_timeout", f"model '{name}' did not become healthy in time")
+    return None, ModelUnavailable("wake_failed", "failed to wake model")
 
 
 def _inst_runs_file(inst: dict, model_path: str) -> bool:
@@ -483,6 +600,11 @@ def _ensure_model_running(
     # _find_running_instance_by_alias matches share_queue_group by substring, so
     # without this a pretty name like "qwen" would be captured by an unrelated
     # group "qwen2.5-14b" and served by the wrong model.
+    #
+    # A member that isn't healthy is brought up the same way, or a sleeping group
+    # 500s here: an alias usually names no file, and one that does by substring
+    # would wake that unrelated file instead. Only a partial alias gives way, and
+    # only to a file with exactly that name.
     from core.model_alias import resolve_to_path
     if not resolve_to_path(model_name):
         aliased = _find_running_instance_by_alias(model_name)
@@ -491,8 +613,24 @@ def _ensure_model_running(
                 if aliased["id"] in instances:
                     instances[aliased["id"]]["_last_request_at"] = time.time()
             return aliased, None
+        if aliased:
+            if _alias_of(aliased) == _alias_request(model_name) \
+                    or not _names_file_exactly(_find_model_by_name(model_name), model_name):
+                return _serve_alias_member(model_name)
+        else:
+            stopped_err = _stopped_alias_error(model_name, _find_model_by_name(model_name))
+            if stopped_err:
+                return None, stopped_err
 
     model = _find_model_by_name(model_name)
+    # A group other nodes serve, none of which took this: say so, rather than
+    # "not found", or launching a local file the name merely substring-matches.
+    if not _names_file_exactly(model, model_name):
+        from api.cluster import group_unroutable_error
+        unroutable = group_unroutable_error(model_name)
+        if unroutable:
+            return None, ModelUnavailable(unroutable["code"], unroutable["message"],
+                                          http_status=unroutable["http_status"], retry_elsewhere=False)
     if model is None:
         return None, f"model '{model_name}' not found"
 
@@ -545,17 +683,21 @@ def _ensure_model_running(
                     can_evict_admin=can_evict_admin,
                 )
                 if not room:
-                    return None, (
+                    return None, ModelUnavailable(
+                        "model_limit",
                         f"model limit reached (LLAMAMAN_MAX_MODELS={LLAMAMAN_MAX_MODELS}); "
-                        "admin-launched models cannot be evicted via the API"
+                        "admin-launched models cannot be evicted via the API",
+                        retry_elsewhere=False,
                     )
             else:
                 # OpenAI API: never evict - only proceed if there is already room.
                 if not incoming_excluded and LLAMAMAN_MAX_MODELS > 0:
                     if _count_running_instances() >= LLAMAMAN_MAX_MODELS:
-                        return None, (
+                        return None, ModelUnavailable(
+                            "model_limit",
                             f"model limit reached (LLAMAMAN_MAX_MODELS={LLAMAMAN_MAX_MODELS}); "
-                            "the OpenAI API does not evict running models"
+                            "the OpenAI API does not evict running models",
+                            retry_elsewhere=False,
                         )
 
         if would_wake_existing:
@@ -563,7 +705,7 @@ def _ensure_model_running(
             # succeeds the instance is ready for requests immediately.
             if relaunch_inactive_instance(existing["id"]):
                 return existing, None
-            return None, "failed to wake model"
+            return None, ModelUnavailable("wake_failed", "failed to wake model")
 
         port = find_available_port()
         if port is None:
@@ -1259,8 +1401,7 @@ def _handle_request(mode: str = "chat"):
 
     inst, err = _ensure_model_running(model_name)
     if err:
-        code = 503 if "model limit reached" in err else 500
-        return jsonify({"error": err}), code
+        return _ollama_model_error(err)
 
     if inst.get("config", {}).get("embedding_model"):
         return jsonify({"error": f"model '{model_name}' is embedding-only and cannot handle chat completions"}), 422
@@ -1585,7 +1726,7 @@ def llamaman_v1_chat():
         model_name, allow_eviction=_openai_evict, can_evict_admin=_openai_evict
     )
     if err:
-        return jsonify({"error": {"message": err}}), 503
+        return _openai_model_error(err)
 
     if inst.get("config", {}).get("embedding_model"):
         return jsonify({"error": {"message": f"model '{model_name}' is embedding-only and cannot handle chat completions"}}), 422
@@ -1803,7 +1944,7 @@ def _proxy_passthrough(upstream_path: str, endpoint_label: str, decision: bool =
         model_name, allow_eviction=_openai_evict, can_evict_admin=_openai_evict
     )
     if err:
-        return jsonify({"error": {"message": err}}), 503
+        return _openai_model_error(err)
     if not decision:
         if inst.get("config", {}).get("embedding_model"):
             return jsonify({"error": {"message": f"model '{model_name}' is embedding-only and cannot generate completions"}}), 422
@@ -1948,12 +2089,18 @@ def llamaman_v1_embeddings():
     if not model_name:
         return jsonify({"error": {"message": "model is required"}}), 400
 
+    # Cluster: an embedding group routes like any other.
+    from api.cluster import dispatch_inference
+    forwarded = dispatch_inference(model_name)
+    if forwarded is not None:
+        return forwarded
+
     _openai_evict = _openai_can_evict_admin_instances()
     inst, err = _ensure_model_running(
         model_name, allow_eviction=_openai_evict, can_evict_admin=_openai_evict
     )
     if err:
-        return jsonify({"error": {"message": err}}), 503
+        return _openai_model_error(err)
 
     if not inst.get("config", {}).get("embedding_model"):
         return jsonify({"error": {"message": f"model '{model_name}' is not configured as an embedding model"}}), 422
