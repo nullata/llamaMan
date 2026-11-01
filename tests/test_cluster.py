@@ -213,7 +213,7 @@ class ClusterGroupAdvertiseTests(unittest.TestCase):
 
     def _add_local(self, iid, group, status="healthy", path="/models/a.gguf",
                    ctx=None):
-        cfg = {"share_queue_group": group}
+        cfg = {"share_queue": True, "share_queue_group": group}
         if ctx is not None:
             cfg["ctx_size"] = ctx
         with self._instances_lock:
@@ -224,11 +224,11 @@ class ClusterGroupAdvertiseTests(unittest.TestCase):
 
     def _add_peer(self, node_id, group, status="healthy",
                   path="/peer/x.gguf", ctx=None):
-        cfg = {"share_queue_group": group}
+        cfg = {"share_queue": True, "share_queue_group": group}
         if ctx is not None:
             cfg["ctx_size"] = ctx
         self.storage.register_node(
-            {"node_id": node_id, "node_name": node_id, "advertise_url": "",
+            {"node_id": node_id, "node_name": node_id, "advertise_url": f"http://{node_id}:5000",
              "vendor": "", "llama_image": ""},
             snapshot={"instances": [{
                 "id": f"i-{node_id}", "model_name": "x", "model_path": path,
@@ -332,7 +332,7 @@ class ClusterGroupAdvertiseTests(unittest.TestCase):
         self._add_local("i1", "chat-14b", path="/models/qwen2.5-14b.gguf")
         with self._instances_lock:
             self._instances["i1"]["config"] = {
-                "share_queue_group": "chat-14b", "ctx_size": 32768,
+                "share_queue": True, "share_queue_group": "chat-14b", "ctx_size": 32768,
             }
 
         fake_meta = {"general.architecture": "qwen2",

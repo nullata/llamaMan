@@ -178,6 +178,7 @@ def _iter_group_members_across_cluster(name: str):
     Falls back silently on any storage/read error so a peer outage never breaks
     /api/show or the badge; the caller sees fewer members, not an exception.
     """
+    from api.cluster import peer_is_routable
     from core import cluster as cl
     req = name.split(":")[0].lower()
 
@@ -194,7 +195,7 @@ def _iter_group_members_across_cluster(name: str):
     self_id = cl.get_node_id()
     for inst in local_snapshot:
         alias = ((inst.get("config") or {}).get("share_queue_group") or "").strip()
-        if not alias or alias.lower() != req:
+        if not alias or alias.lower() != req or not (inst.get("config") or {}).get("share_queue"):
             continue
         if inst.get("status") in ("stopped", "stopping"):
             continue
@@ -214,12 +215,12 @@ def _iter_group_members_across_cluster(name: str):
         nodes = []
     for node in nodes:
         node_id = node.get("node_id")
-        if not node_id or node_id == self_id:
-            continue
+        if not node_id or node_id == self_id or not peer_is_routable(node):
+            continue  # an unroutable peer's members can't serve the name, so don't shape it
         snapshot = node.get("snapshot") or {}
         for inst in snapshot.get("instances") or []:
             alias = ((inst.get("config") or {}).get("share_queue_group") or "").strip()
-            if not alias or alias.lower() != req:
+            if not alias or alias.lower() != req or not (inst.get("config") or {}).get("share_queue"):
                 continue
             if inst.get("status") in ("stopped", "stopping"):
                 continue
@@ -622,6 +623,14 @@ def _ensure_model_running(
                 return None, stopped_err
 
     model = _find_model_by_name(model_name)
+    # A group other nodes serve, none of which took this: say so, rather than
+    # "not found", or launching a local file the name merely substring-matches.
+    if not _names_file_exactly(model, model_name):
+        from api.cluster import group_unroutable_error
+        unroutable = group_unroutable_error(model_name)
+        if unroutable:
+            return None, ModelUnavailable(unroutable["code"], unroutable["message"],
+                                          http_status=unroutable["http_status"], retry_elsewhere=False)
     if model is None:
         return None, f"model '{model_name}' not found"
 
@@ -2079,6 +2088,12 @@ def llamaman_v1_embeddings():
     model_name = body.get("model", "").strip()
     if not model_name:
         return jsonify({"error": {"message": "model is required"}}), 400
+
+    # Cluster: an embedding group routes like any other.
+    from api.cluster import dispatch_inference
+    forwarded = dispatch_inference(model_name)
+    if forwarded is not None:
+        return forwarded
 
     _openai_evict = _openai_can_evict_admin_instances()
     inst, err = _ensure_model_running(

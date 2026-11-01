@@ -14,7 +14,7 @@ configured, so the dashboard behaves exactly as before on single-node installs.
 import os
 import threading
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, g, has_request_context, jsonify, request
 
 from config import REQUEST_TIMEOUT, logger
 from core import cluster as cl
@@ -368,6 +368,18 @@ def effective_group_key(model_path: str, config: dict | None) -> str:
     return alias or model_name_from_path(model_path)
 
 
+def peer_is_routable(node: dict) -> bool:
+    """A peer inference can be forwarded to: heartbeating, with a URL to reach it
+    on. Listings and routing share this, so a view-only or offline peer's groups
+    aren't advertised under a name that can't be served. Member status stays each
+    caller's business: a listing has only the snapshot, routing has live load."""
+    return _is_online(node) and bool((node.get("advertise_url") or "").strip())
+
+
+def _is_group_member(config: dict | None) -> bool:
+    return bool((config or {}).get("share_queue"))
+
+
 def cluster_group_models() -> list[dict]:
     """Distinct `share_queue_group` aliases currently served somewhere in the
     cluster, for advertising in the model-listing APIs.
@@ -381,8 +393,8 @@ def cluster_group_models() -> list[dict]:
     per-file `/api/tags` listing never mentions it, so a client has no way to
     discover the name it should send. This surfaces it, but only when it means
     something: clustering enabled, the alias actually set, and at least one
-    non-stopped instance (on any node) serving it - which is exactly when a
-    request for the alias can be routed rather than 404'd.
+    non-stopped instance on this node or a routable peer - which is exactly when
+    a request for the alias can be routed rather than 404'd.
     """
     if not cl.is_cluster_enabled():
         return []
@@ -394,7 +406,7 @@ def cluster_group_models() -> list[dict]:
     with instances_lock:
         for inst in instances.values():
             alias = ((inst.get("config") or {}).get("share_queue_group") or "").strip()
-            if alias:
+            if alias and _is_group_member(inst.get("config")):
                 seen.append((alias, inst.get("status") or "", inst.get("model_path")))
 
     try:
@@ -405,10 +417,12 @@ def cluster_group_models() -> list[dict]:
     for node in nodes:
         if node.get("node_id") == self_id:
             continue  # this node's live instances are already counted above
+        if not peer_is_routable(node):
+            continue
         snapshot = node.get("snapshot") or {}
         for inst in snapshot.get("instances") or []:
             alias = ((inst.get("config") or {}).get("share_queue_group") or "").strip()
-            if alias:
+            if alias and _is_group_member(inst.get("config")):
                 seen.append((alias, inst.get("status") or "", None))
 
     groups: dict[str, dict] = {}
@@ -583,6 +597,26 @@ def _peer_can_serve(node: dict, model_name: str) -> bool:
                for inst in snapshot.get("instances") or [])
 
 
+def _snapshot_candidate(node: dict, model_name: str) -> dict | None:
+    """A candidate for a peer whose live load couldn't be read, from its snapshot.
+    A failed probe says nothing about which groups it hosts, so a blip mustn't
+    make a served group vanish. `unknown` ranks it behind every peer that answered:
+    at an assumed load of 0 a dead peer would otherwise attract the traffic."""
+    if not _peer_can_serve(node, model_name):
+        return None
+    members = [inst for inst in (node.get("snapshot") or {}).get("instances") or []
+               if _is_group_member(inst.get("config"))
+               and inst.get("status") not in ("stopped", "stopping")
+               and _inst_matches_request(inst, model_name)]
+    if not members:
+        return None
+    tier = min(_member_tier(inst.get("status")) for inst in members)
+    fallback = all((inst.get("config") or {}).get("share_queue_fallback") for inst in members
+                   if _member_tier(inst.get("status")) == tier)
+    return {"node": node, "load": _inflight_get(node.get("node_id")), "is_self": False,
+            "fallback": fallback, "tier": tier, "unknown": True}
+
+
 def _group_candidates(model_name: str) -> list[dict]:
     """Group members with their CURRENT backlog (active + queued) and whether
     they're serving as fallback-only. Self is read live from local gates; peers
@@ -599,11 +633,14 @@ def _group_candidates(model_name: str) -> list[dict]:
                            "load": load, "is_self": True, "fallback": fallback, "tier": tier})
     for node in get_storage().list_nodes():
         nid = node.get("node_id")
-        if nid == self_id or not _is_online(node):
+        if nid == self_id or not peer_is_routable(node):
             continue
-        if not (node.get("advertise_url") or "").strip():
-            continue  # can't forward to a node with no advertise URL
         live = _peer_live_load(node, model_name)
+        if live is PEER_UNREACHABLE:
+            candidate = _snapshot_candidate(node, model_name)
+            if candidate:
+                candidates.append(candidate)
+            continue
         if not live or not _peer_can_serve(node, model_name):
             continue
         load = (live.get("active") or 0) + (live.get("queued") or 0) + _inflight_get(nid)
@@ -611,6 +648,67 @@ def _group_candidates(model_name: str) -> list[dict]:
                            "fallback": bool(live.get("fallback", False)),
                            "tier": _peer_tier(live)})
     return candidates
+
+
+# Why each peer turned down this request, kept on the request so that if nobody
+# takes it the client hears that rather than "model not found".
+_REFUSED_FULL = "queue full"
+_REFUSED_UNREACHABLE = "unreachable"
+
+
+def _note_refusal(node_id: str, reason: str) -> None:
+    if not hasattr(g, "forward_refusals"):
+        g.forward_refusals = {}
+    g.forward_refusals[node_id] = reason
+
+
+def group_unroutable_error(model_name: str) -> dict | None:
+    """When `model_name` is a group other nodes serve but none of them can take
+    this request: {code, message, http_status}, naming each node and why. None
+    when it isn't one, and for a forwarded request (its entry node answers).
+    429 if a peer is merely full, which a client can usefully retry."""
+    if not cl.is_cluster_enabled() or not has_request_context() or _request_hops() >= 1:
+        return None
+    from core.engines import virtual_model_key
+    from core.model_alias import canonical_name
+    canonical = canonical_name(model_name)
+    canonical = virtual_model_key(canonical) or canonical
+    req = canonical.split(":")[0].lower()
+    refusals = getattr(g, "forward_refusals", {})
+    try:
+        nodes = get_storage().list_nodes() or []
+    except Exception:
+        nodes = []
+    self_id = cl.get_node_id()
+    reasons = []
+    full = False
+    for node in nodes:
+        nid = node.get("node_id")
+        if nid == self_id:
+            continue
+        hosts = any(_is_group_member(inst.get("config"))
+                    and inst.get("status") not in ("stopped", "stopping")
+                    and effective_group_key(inst.get("model_path", ""), inst.get("config")) == req
+                    for inst in (node.get("snapshot") or {}).get("instances") or [])
+        if not hosts and nid not in refusals:
+            continue
+        reason = refusals.get(nid)
+        if reason is None:
+            if not _is_online(node):
+                reason = "offline"
+            elif not (node.get("advertise_url") or "").strip():
+                reason = "view-only, no CLUSTER_ADVERTISE_URL"
+            else:
+                reason = "not ready"
+        full = full or reason == _REFUSED_FULL
+        reasons.append(f"{node.get('node_name') or nid} ({reason})")
+    if not reasons:
+        return None
+    message = (f"model '{model_name}' is served by other nodes, but none could take "
+               f"this request: {', '.join(sorted(reasons))}")
+    if full:
+        return {"code": "group_full", "message": message, "http_status": 429}
+    return {"code": "group_unavailable", "message": message, "http_status": 503}
 
 
 def _forward_inference(node: dict, path: str, body: bytes, content_type: str | None,
@@ -668,20 +766,25 @@ def _forward_inference(node: dict, path: str, body: bytes, content_type: str | N
                        name, REQUEST_TIMEOUT, e)
         msg = (f"peer {name} accepted the request but did not respond within "
                f"REQUEST_TIMEOUT ({REQUEST_TIMEOUT}s); it may still be processing")
-        return Response(_json.dumps({"error": {"message": msg}}),
+        # Ollama's surface carries the error as a plain string, OpenAI's nested.
+        error = msg if request.path.startswith("/api/") else {"message": msg}
+        return Response(_json.dumps({"error": error}),
                         status=504, mimetype="application/json")
     except Exception as e:
         _inflight_dec(nid)
         logger.warning("cluster dispatch to %s failed: %s", name, e)
+        _note_refusal(nid, _REFUSED_UNREACHABLE)
         return None
     if resp.status_code == 429:  # peer's gate is full - try elsewhere
         resp.close()
         _inflight_dec(nid)
+        _note_refusal(nid, _REFUSED_FULL)
         return None
     if resp.status_code == 503 and resp.headers.get(RETRY_ELSEWHERE_HEADER):
         logger.info("cluster forward to %s: peer could not serve it, trying elsewhere", name)
         resp.close()
         _inflight_dec(nid)
+        _note_refusal(nid, "could not serve it")
         return None
 
     out_headers = [(k, v) for k, v in resp.headers.items()
@@ -712,6 +815,7 @@ def _forward_inference(node: dict, path: str, body: bytes, content_type: str | N
                 resp.close()
             except Exception:
                 pass
+            _note_refusal(nid, _REFUSED_UNREACHABLE)
             return None
         logger.info("forward %s: body read %d bytes, returning response",
                     name, len(body_bytes))
@@ -753,7 +857,8 @@ def _order_candidates(candidates: list[dict]) -> list[dict]:
 
     Sleeping candidates come after everything awake (_CANDIDATE_ORDER): their
     gates read empty, so on load alone they'd win every tie and any backlog,
-    and each of those requests would pay a cold load.
+    and each of those requests would pay a cold load. A peer whose load couldn't
+    be read comes after all of them: it may well be dead.
 
     In-flight counts only rise after a request acquires its gate, which happens
     after this decision, so a simultaneous burst sees every node tied at the
@@ -776,9 +881,12 @@ def _order_candidates(candidates: list[dict]) -> list[dict]:
         return tied[start:] + tied[:start] + rest
 
     ordered = []
-    for fallback, tier in _CANDIDATE_ORDER:
-        ordered += _sort_tier([c for c in candidates
-                               if bool(c.get("fallback")) == fallback and c.get("tier", 0) == tier])
+    for unknown in (False, True):
+        for fallback, tier in _CANDIDATE_ORDER:
+            ordered += _sort_tier([c for c in candidates
+                                   if bool(c.get("unknown")) == unknown
+                                   and bool(c.get("fallback")) == fallback
+                                   and c.get("tier", 0) == tier])
     return ordered
 
 
@@ -893,31 +1001,56 @@ def local_load_by_model() -> dict:
     return out
 
 
+class _Unreachable(dict):
+    """Falsy and empty like a peer with nothing to report, so code that only wants
+    real capacity needn't care, while `is PEER_UNREACHABLE` tells the two apart: a
+    peer hosting nothing and one that didn't answer mean different things."""
+
+
+PEER_UNREACHABLE = _Unreachable()
+_unreachable_peers: set[str] = set()
+
+
 def _peer_load_map(node: dict) -> dict:
     """A peer's whole local-load map (briefly cached, so one query serves any
-    model), or {} when unreachable."""
+    model), or PEER_UNREACHABLE on a timeout, a non-200 or a bad body."""
     nid = node.get("node_id")
     now = _time.monotonic()
     with _load_cache_lock:
         cached = _load_cache.get(nid)
         data = cached[1] if cached and now - cached[0] < _LOAD_CACHE_TTL else None
     if data is None:
+        why = None
         try:
             resp = cl.cluster_request(node, "GET", "/api/cluster/local-load", timeout=2)
-            data = resp.json() if resp.status_code == 200 else {}
-        except Exception:
-            data = {}
+            if resp.status_code == 200:
+                data = resp.json()
+            else:
+                why = f"HTTP {resp.status_code}"
+        except Exception as e:
+            why = str(e)
+        if not isinstance(data, dict):
+            why = why or "unexpected response"
+            data = PEER_UNREACHABLE
         with _load_cache_lock:
             _load_cache[nid] = (now, data)
+            changed = (why is not None) != (nid in _unreachable_peers)
+            (_unreachable_peers.add if why is not None else _unreachable_peers.discard)(nid)
+        # Once per change: this runs on every routing decision.
+        if changed and why is not None:
+            logger.warning("cluster: cannot read live load from %s: %s", node.get("node_name") or nid, why)
+        elif changed:
+            logger.info("cluster: live load from %s is readable again", node.get("node_name") or nid)
     return data
 
 
 def _peer_live_load(node: dict, model_name: str):
     """Live load for `model_name` on a peer (briefly cached). Returns the
-    per-model dict or None on miss/unreachable. Matching is fuzzy/case-insensitive
-    so a quant-suffixed request (gpt-oss-20b-Q4_K_M) still finds the
-    lowercase-keyed entry."""
-    return _match_model_load(_peer_load_map(node), model_name)
+    per-model dict, None when the peer reports nothing for it, or PEER_UNREACHABLE.
+    Matching is fuzzy/case-insensitive so a quant-suffixed request
+    (gpt-oss-20b-Q4_K_M) still finds the lowercase-keyed entry."""
+    data = _peer_load_map(node)
+    return data if data is PEER_UNREACHABLE else _match_model_load(data, model_name)
 
 
 def group_wants_wake(group_key: str, local: dict) -> bool:
@@ -936,9 +1069,7 @@ def group_wants_wake(group_key: str, local: dict) -> bool:
     if cl.is_cluster_enabled():
         for node in get_storage().list_nodes():
             nid = node.get("node_id")
-            if nid == entries[0][0] or not _is_online(node):
-                continue
-            if not (node.get("advertise_url") or "").strip():
+            if nid == entries[0][0] or not peer_is_routable(node):
                 continue
             entry = _peer_load_map(node).get(group_key)
             if entry:
@@ -973,9 +1104,7 @@ def _find_free_peer(model_name: str):
     best_fallback = None
     for node in get_storage().list_nodes():
         nid = node.get("node_id")
-        if nid == self_id or not _is_online(node):
-            continue
-        if not (node.get("advertise_url") or "").strip():
+        if nid == self_id or not peer_is_routable(node):
             continue
         load = _peer_live_load(node, model_name)
         if not load or not _peer_can_serve(node, model_name):
@@ -1011,9 +1140,7 @@ def _find_evacuation_peer(model_name: str):
     best = None    # (rank in _CANDIDATE_ORDER, backlog, node)
     for node in get_storage().list_nodes():
         nid = node.get("node_id")
-        if nid == self_id or not _is_online(node):
-            continue
-        if not (node.get("advertise_url") or "").strip():
+        if nid == self_id or not peer_is_routable(node):
             continue
         load = _peer_live_load(node, model_name)
         if not load or not _peer_can_serve(node, model_name):
