@@ -1576,7 +1576,7 @@ class FallbackRoutingTests(unittest.TestCase):
             with instances_lock:
                 instances.clear(); instances.update(saved)
         self.assertIsNotNone(result)
-        load, is_fb = result
+        load, is_fb, _tier = result
         self.assertEqual(load, 0)
         self.assertTrue(is_fb)
 
@@ -1607,7 +1607,7 @@ class FallbackRoutingTests(unittest.TestCase):
             with instances_lock:
                 instances.clear(); instances.update(saved)
         self.assertIsNotNone(result)
-        _load, is_fb = result
+        _load, is_fb, _tier = result
         self.assertFalse(is_fb)
 
 
