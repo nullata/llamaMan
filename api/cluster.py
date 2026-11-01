@@ -43,6 +43,11 @@ _LOCAL_MODELS_TTL = 30.0
 _local_models_cache = {"at": 0.0, "data": []}
 
 
+# "alias_wake": a group alias sent here is served even when the member isn't
+# healthy yet (api.llamaman._serve_alias_member).
+NODE_FEATURES = ("alias_wake",)
+
+
 def _local_models_snapshot() -> list[dict]:
     """Compact local model list for cross-node library rendering, cached briefly
     so the 5s heartbeat doesn't rescan disk every tick."""
@@ -119,6 +124,10 @@ def build_local_snapshot() -> dict:
         system = {**system, "engines": engines_snapshot()}
     except Exception:
         pass
+
+    # What this node's code can do, for peers deciding what to send it. Same
+    # opaque-to-older-peers rule as "engines".
+    system = {**system, "features": list(NODE_FEATURES)}
 
     return {
         "system": system,
@@ -326,6 +335,9 @@ def api_cluster_proxy(node_id, subpath):
 # gate / sampling / recording. A loop guard header stops re-dispatch on the hop.
 
 _DISPATCH_HEADER = "X-Cluster-Dispatch"   # value = hop count (1, 2, ...)
+# On a forwarded request's 503: this node served nothing and a sibling might, so
+# the forwarder tries its next member. A peer without it just passes the 503 on.
+RETRY_ELSEWHERE_HEADER = "X-Llamaman-Retry-Elsewhere"
 MAX_HOPS = 3                              # entry pick + up to 2 migrations
 _OVERFLOW_POLL_S = 0.5                    # how often a queued request re-checks peers
 
@@ -620,6 +632,11 @@ def _forward_inference(node: dict, path: str, body: bytes, content_type: str | N
         logger.warning("cluster dispatch to %s failed: %s", name, e)
         return None
     if resp.status_code == 429:  # peer's gate is full - try elsewhere
+        resp.close()
+        _inflight_dec(nid)
+        return None
+    if resp.status_code == 503 and resp.headers.get(RETRY_ELSEWHERE_HEADER):
+        logger.info("cluster forward to %s: peer could not serve it, trying elsewhere", name)
         resp.close()
         _inflight_dec(nid)
         return None
