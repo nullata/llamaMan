@@ -1,5 +1,7 @@
 # Fehlerbehebung
 
+> **Hinweis:** Dies ist eine Übersetzung und kann hinter der [englischen Fassung](../en/TROUBLESHOOTING.md) zurückliegen; maßgeblich ist die englische Fassung.
+
 Die vollständige Tabelle „Symptom → Behebung“. Die [README](../../README.md#troubleshooting) enthält die neun häufigsten Zeilen für den Erstbetrieb; alles Weitere finden Sie hier.
 
 | Symptom | Behebung |
@@ -17,6 +19,7 @@ Die vollständige Tabelle „Symptom → Behebung“. Die [README](../../README.
 | Strata: _"Docker image 'strata:latest' not found"_ | Strata-Image unter Settings → Docker Images pullen oder bauen (oder `docker build -t strata .` in einem Klon des Strata-Repos ausführen). Siehe [Strata](STRATA.md) |
 | Strata-Modelle werden nicht aufgeführt | `STRATA_ENABLED=true` setzen; der Node muss NVIDIA sein (`GPU_TYPE=cuda`, falls die Erkennung fehlschlägt). `GET /api/engines` zeigt die Ursache an |
 | Strata-Instanz verbleibt auf **starting** | Beim ersten Start für einige Minuten normal (Download + Pack). Die Karte zeigt die Phase; das Log zeigt das Setup von Strata. „setup failed“ bedeutet, dass das Setup abbrach – Zeile `[X]` im Log prüfen |
+| Strata-Karte meldet _"this Strata image can't run ... yet: update it"_ | Die Engine des Images unterstützt diese Modellfamilie nicht. Ein neueres Strata-Image unter Settings → Docker Images pullen oder bauen |
 | Stats-Modal ist leer | **Settings → App Settings → Request recording** aktivieren (siehe [Request-Aufzeichnung & Statistiken](CONFIGURATION.md#request-recording--stats)) |
 | Start schlägt mit GPU/CDI-Fehler auf einem Host ohne GPU-Passthrough fehl | Für reine CPU-Nutzung ohne GPU-Gerät **GPU Layers** auf `0` setzen oder die GPU-Laufzeitumgebung korrigieren |
 | Port-Konflikt | Das Formular schlägt automatisch einen freien Port vor; bei Bedarf anpassen |
@@ -26,3 +29,6 @@ Die vollständige Tabelle „Symptom → Behebung“. Die [README](../../README.
 | Container werden nach dem Stoppen nicht aufgeräumt | llamaMan entfernt Container beim Stoppen. Bei verwaisten Containern nach einem Absturz: `docker ps --filter name=llamaman-` oder llamaMan neustarten (Orphan-Adoption läuft beim Start) |
 | Client (Hermes / OpenWebUI / etc.) meldet das trainierte Kontextfenster statt des Preset-Limits | Auf 1.1.2+ aktualisieren. `/api/ps` enthält nun `context_length` mit dem Runtime-ctx, mit dem die Instanz gestartet wurde, und `model_info["<arch>.context_length"]` von `/api/show` wird mit dem effektiven Limit überschrieben |
 | Client, der nach einem Queue-Gruppennamen fragt, erhält seinen eigenen Standard-ctx (z. B. 128k) statt des realen Deployment-ctx | `/api/show` und `/v1/models` antworten nun für eine Queue-Gruppe auf jedem geclusterten Node – selbst ohne lokalen Member – unter Nutzung des Runtime-ctx des Peers aus dem geteilten Status. Multi-Member-Gruppen melden das Minimum aller aktiven Member, sodass der angekündigte Wert für jedes Dispatch-Ziel sicher ist. Siehe [Clustering](CLUSTERING.md) |
+| Queue-Gruppen-Request liefert `group_full` oder `group_unavailable` zurück | Kein Node konnte die Anfrage annehmen, und die Meldung benennt jeden Node und den Grund. `group_full` kann bei einem erneuten Versuch funktionieren. Für den Rest die benannten Nodes prüfen: [Wenn eine Gruppe nicht bedient werden kann](CLUSTERING.md#when-a-group-cant-be-served) |
+| Queue-Gruppenname fehlt in `/api/tags` und `/v1/models` | Gestoppte Mitglieder und Mitglieder auf Offline- oder View-Only-Nodes werden nicht aufgelistet. Prüfen, ob das Mitglied läuft, und `CLUSTER_ADVERTISE_URL` auf seinem Node prüfen: [Queue-Gruppen](CLUSTERING.md#queue-groups) |
+| Schlafendes Warteschlangengruppen-Mitglied startet, ohne dass ein Request es erreicht | Erwartetes Verhalten, wenn seine Gruppe ausgelastet bleibt: [Aufwecken unter Last](CLUSTERING.md#waking-under-load). `eager_wake_enabled` auf diesem Node auf `false` setzen, um es zu deaktivieren |

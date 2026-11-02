@@ -1,5 +1,7 @@
 # 故障排除
 
+> **注意：** 本文为译文，可能落后于[英文版](../en/TROUBLESHOOTING.md)；以英文版为准。
+
 完整的“故障现象 → 解决方法”速查表。[README](../../README.md#troubleshooting) 中保留了最常见的 9 个首次运行问题；其余所有内容均在此处。
 
 | 故障现象 | 解决方法 |
@@ -17,6 +19,7 @@
 | Strata：_"Docker image 'strata:latest' not found"_ | 在 Settings → Docker Images 中拉取或构建 Strata 镜像（或在克隆的 Strata 仓库中执行 `docker build -t strata .`）。参见 [Strata](STRATA.md) |
 | 未列出 Strata 模型 | 设置 `STRATA_ENABLED=true`；节点必须为 NVIDIA（若检测失败请设置 `GPU_TYPE=cuda`）。`GET /api/engines` 会显示原因 |
 | Strata 实例卡在 **starting** 状态 | 首次启动时需要数分钟属于正常现象（下载 + 打包）。卡片会显示阶段；日志会显示 Strata 的安装设置过程。“setup failed”表示其安装设置中断 —— 查看日志中的 `[X]` 行 |
+| Strata 卡片显示 _"this Strata image can't run ... yet: update it"_ | 镜像的引擎没有该模型系列。请在 Settings → Docker Images 中拉取或构建更新的 Strata 镜像 |
 | Stats 弹窗为空 | 启用 **Settings → App Settings → Request recording**（参见 [Request Recording & Stats](CONFIGURATION.md#request-recording--stats)） |
 | 在没有 GPU 直通的主机上启动因 GPU/CDI 错误而失败 | 若没有连接 GPU 设备且仅使用 CPU，请将 **GPU Layers** 设置为 `0`，或修复 GPU 运行时配置 |
 | 端口冲突 | 表单会自动建议未使用的端口；如有需要可手动调整 |
@@ -26,3 +29,6 @@
 | 停止后容器未被清理 | llamaMan 在停止时会删除容器。若崩溃后残留孤儿容器：执行 `docker ps --filter name=llamaman-`，或重启 llamaMan（启动时会自动执行孤儿容器认领机制） |
 | 客户端（Hermes / OpenWebUI 等）报告模型训练的 context 窗口而非预设上限 | 升级到 1.1.2+。`/api/ps` 现已包含设置为实例启动时运行时 ctx 的 `context_length`，并且 `/api/show` 的 `model_info["<arch>.context_length"]` 会被实际有效上限覆盖 |
 | 客户端查询队列分组名称时获取到自身默认 ctx（例如 128k）而非实际部署的 ctx | `/api/show` 和 `/v1/models` 现在可以在任何集群节点上对队列分组进行响应 —— 即使本地没有该成员 —— 使用来自共享状态的对等节点运行时 ctx。多成员分组报告所有活跃成员中的最小值，确保宣告的值对任何调度目标都是安全的。参见 [Clustering](CLUSTERING.md) |
+| 队列分组请求返回 `group_full` 或 `group_unavailable` | 没有节点能接受该请求，消息中列出了每个节点及原因。`group_full` 重试可能成功。其他情况请检查列出的节点：[分组无法提供服务时](CLUSTERING.md#when-a-group-cant-be-served) |
+| 队列分组名称未出现在 `/api/tags` 和 `/v1/models` 中 | 已停止的成员以及离线或仅查看节点上的成员不会列出。请确认成员正在运行，并检查其节点上的 `CLUSTER_ADVERTISE_URL`：[队列分组](CLUSTERING.md#queue-groups) |
+| 队列分组的休眠成员在没有请求到达时启动 | 分组持续饱和时属于预期行为：[负载下唤醒](CLUSTERING.md#waking-under-load)。要关闭它，请在该节点上将 `eager_wake_enabled` 设为 `false` |

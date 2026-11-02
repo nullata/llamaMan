@@ -1,5 +1,7 @@
 # Architektur, Request-Flow & Design-Entscheidungen
 
+> **Hinweis:** Dies ist eine Übersetzung und kann hinter der [englischen Fassung](../en/ARCHITECTURE.md) zurückliegen; maßgeblich ist die englische Fassung.
+
 Wie llamaMan unter der Haube funktioniert. Die Single-Node-Übersicht befindet sich in der [README](../../README.md#architecture); diese Seite ergänzt die Cluster-Perspektive sowie detaillierte Einblicke.
 
 ## Inhalt
@@ -44,7 +46,7 @@ flowchart TB
 
 **Heterogene Cluster.** Jeder Node besitzt seine eigene Hardware (GPU-Anzahl/-Hersteller/-VRAM), seine eigenen Modelldateien auf der Festplatte, sein eigenes llama.cpp-Image und seine eigenen hardwarebezogenen Preset-Overrides. Die gemeinsame Datenbank enthält Presets, Benutzer, API-Keys, knotenbezogene Instanzzustände und Cluster-Heartbeats – nicht die Modelldateien selbst. Siehe [Clustering](CLUSTERING.md).
 
-**Queue-bewusstes Dispatching + knotenübergreifendes Work-Stealing.** Wenn zwei Nodes dasselbe Modell (oder denselben `share_queue_group`-Alias) bereitstellen, wird ein eingehender Request für diesen Namen an denjenigen Peer geroutet, der aktuell die wenigsten laufenden Requests verarbeitet. Ist der ausgewählte Node ausgelastet, versucht sein `RequestGate` weiterhin, den Request an einen Peer mit freien Kapazitäten zu übergeben, anstatt ihn in die Warteschlange zu stellen.
+**Queue-bewusstes Dispatching + knotenübergreifendes Work-Stealing.** Wenn zwei Nodes dasselbe Modell (oder denselben `share_queue_group`-Alias) bereitstellen, wird ein eingehender Request für diesen Namen an das wache Mitglied geroutet, das aktuell die wenigsten laufenden Requests verarbeitet. Gesunde Mitglieder kommen zuerst, dann solche, die noch laden, und schlafende Mitglieder erst nach allem, was wach ist, einschließlich Fallbacks. Ist der ausgewählte Node ausgelastet, versucht sein `RequestGate` weiterhin, den Request an einen Peer mit einem freien Slot auf einem gesunden Mitglied zu übergeben, anstatt ihn in die Warteschlange zu stellen. Bleibt eine Gruppe ausgelastet, wacht ein schlafendes Mitglied vorzeitig auf; siehe [Aufwecken unter Last](CLUSTERING.md#waking-under-load). Gestoppte Mitglieder werden niemals gestartet, um die Last auszugleichen.
 
 **Modell-Laden + LRU-Eviction.** Der `:42069`-Kompatibilitätsproxy startet Modelle bei Bedarf automatisch. Sobald `LLAMAMAN_MAX_MODELS` erreicht ist, wird die am längsten nicht genutzte Nicht-Admin-Instanz gestoppt, um Platz zu schaffen. Schlafende Instanzen belegen weiterhin einen Slot; der Idle-Timeout ist eine separate Achse. Vollständige Regeln: [Modell-Eviction](MODELS.md#model-eviction).
 
@@ -62,12 +64,12 @@ Ein konkreter OpenAI-kompatibler Chat-Request in einem Zwei-Knoten-Cluster:
 
 1. Client sendet `POST /v1/chat/completions` an `nodeA:42069` mit dem Modell `qwen2.5-14b`.
 2. `nodeA` schlägt das Ziel nach: Es ist ein aktives Modell auf diesem Node **und** auf `nodeB`. Beide gehören zur selben effektiven Queue-Gruppe.
-3. Der Dispatcher fragt die aktuelle Auslastung jedes Kandidaten ab (aus dem Heartbeat-Cache + dem Kurzzeit-Inflight-Zähler). `nodeB` ist weniger ausgelastet → der Request wird an die Advertise-URL von `nodeB` (dessen `:5000`-UI/API-Port) auf demselben Pfad weitergeleitet.
+3. Der Dispatcher fragt die aktuelle Auslastung jedes Kandidaten ab (ein kurzlebiger gecachter Probe-Call + Kurzzeit-Inflight-Zähler) und stuft wache Mitglieder vor schlafenden ein. Ein Peer, der die Abfrage nicht beantwortet, bleibt anhand seines Snapshots ein Kandidat, wird aber zuletzt eingereiht. `nodeB` ist weniger ausgelastet → der Request wird an die Advertise-URL von `nodeB` (dessen `:5000`-UI/API-Port) auf demselben Pfad weitergeleitet.
 4. `nodeB` belegt einen Gate-Slot (429, falls die Queue voll ist und kein Peer Kapazitäten frei hat). Wenn Sampling-Overrides aktiv sind, werden sie injiziert. Falls ein instanzspezifischer Sidecar existiert (Idle / Max-Concurrent / Proxy-Sampling), landet der Request zuerst beim Sidecar, der den Container aufweckt, falls dieser schläft.
 5. Der Sidecar leitet an `llama-server` auf dessen internem Port weiter. Der Stream fließt über den Sidecar → `nodeB` → `nodeA` → Client zurück.
 6. Beim Ende des Streams: Der Request-Log-Worker erfasst TTFT / Durchsatz / finale Token-Anzahl; der Gate-Slot wird freigegeben; der LRU-Zeitstempel wird aktualisiert, damit diese Instanz nicht als nächste verdrängt wird.
 
-Wäre `nodeB` zwischen dem Heartbeat und diesem Aufruf offline gegangen, hätte der Dispatcher den Verbindungsfehler erkannt und den nächsten Kandidaten neu ausgewählt (in diesem Fall lokal).
+Wäre `nodeB` zwischen dem Heartbeat und diesem Aufruf offline gegangen, hätte der Dispatcher den Verbindungsfehler erkannt und den nächsten Kandidaten neu ausgewählt (in diesem Fall lokal). Dasselbe geschieht, wenn die Queue von `nodeB` voll ist oder wenn er den Request nicht bedienen kann, weil sein Mitglied gerade stoppt oder gestoppt ist oder das Aufwecken fehlgeschlagen ist. Kann kein Node den Request annehmen, erhält der Client ein `429` oder `503`, das jeden Node und den Grund benennt.
 
 ## Design-Entscheidungen und Trade-offs
 

@@ -1,5 +1,7 @@
 # 模型、下载与逐出
 
+> **注意：** 本文为译文，可能落后于[英文版](../en/MODELS.md)；以英文版为准。
+
 关于模型库的一切：添加模型、保持更新、proxy 如何选取与逐出模型，以及日常维护设置。
 
 ## 目录
@@ -67,7 +69,7 @@ curl http://localhost:42069/v1/systemone -H "Content-Type: application/json" -d 
 其他细节：
 
 - 所有运行中的 chat 实例均计入配额（包括管理 UI 和 proxy 管理的实例）。
-- **休眠实例仍计入配额**（槽位占用在空闲暂停期间依然保留）—— 但为休眠实例自身的模型唤醒它绝不会受到上限阻止。
+- **休眠实例仍计入配额**（槽位占用在空闲暂停期间依然保留）—— 但为休眠实例自身的模型唤醒它绝不会受到上限阻止。这也包括[负载下唤醒](CLUSTERING.md#waking-under-load)的队列分组成员。
 - 开启了 **Exclude from Max Models** 的实例（在启动表单中）不计入配额且永不被逐出：embedding 模型、决策模型，以及任何应当保持常驻的小型模型。开启 **Embedding Model** 会自动将其开启，而在该开关引入之前保存的预设会根据其 Embedding Model 设置自动继承。
 - `LLAMAMAN_MAX_MODELS=0` 会完全禁用逐出机制。
 

@@ -6,6 +6,8 @@
 
 [English](../../README.md) · [简体中文](../zh-CN/README.md) · [日本語](../ja/README.md) · [Deutsch](../de/README.md) · **Français** · [Español](../es/README.md) · [Português](../pt-BR/README.md) · [Русский](../ru/README.md) · [Български](../bg/README.md)
 
+> **Remarque :** ceci est une traduction et peut être en retard sur la [version anglaise](../../README.md), qui fait foi.
+
 **Ce que c'est.** Une UI navigateur + une API front-end pour faire tourner plusieurs instances serveur [llama.cpp](https://github.com/ggml-org/llama.cpp), sur une machine ou un petit cluster de machines. Livré avec un proxy compatible Ollama pour s'intégrer directement à [Open WebUI](https://github.com/open-webui/open-webui).
 
 **Ce qui est différent.** llamaMan lui-même n'a **aucun code llama.cpp et aucune dépendance GPU** - il lance des conteneurs `ghcr.io/ggml-org/llama.cpp:server-*` en frères via le socket Docker. Mettez à jour llama.cpp sans toucher llamaMan : `docker pull` d'une image `server-*` plus récente. La même machinerie de spawn-et-proxy est agnostique du moteur : des instances [Strata](STRATA.md) tournent à côté de celles de llama.cpp, lancées, surveillées, proxyisées et endormies exactement de la même façon.
@@ -152,7 +154,7 @@ Le fonctionnement en profondeur - flux de requêtes, dispatch conscient des file
 | [Launch settings](LAUNCH-SETTINGS.md) | Chaque champ du formulaire de lancement et son flag llama-server : ctx, cache KV, GPU layers, MoE offload, spec decoding, sampling overrides, concurrence & file d'attente, mises à jour live de préréglage, [Image & PDF input](LAUNCH-SETTINGS.md#image--pdf-input), [Anti-Loop](LAUNCH-SETTINGS.md#anti-loop), proxy par instance, idle timeout |
 | [Models](MODELS.md) | Display names, mises à jour de modèles, [Modèles de décision](MODELS.md#decision-models) (`/v1/systemone`), [Éviction de modèles](MODELS.md#model-eviction), réglages de téléchargement, gestion des images Docker, archive de modèles, backup & restore, nettoyage |
 | [Configuration & storage](CONFIGURATION.md) | Installations bare-metal, détails d'auth, stats GPU, enregistrement des requêtes, backends JSON vs MariaDB, [survivre à une panne DB](CONFIGURATION.md#surviving-a-database-outage-local-mirror), et la référence complète des [Variables d'environnement](CONFIGURATION.md#environment-variables) |
-| [Clustering](CLUSTERING.md) | Setup multi-nodes : DB partagée, heartbeats, équilibrage de charge par file partagée |
+| [Clustering](CLUSTERING.md) | Setup multi-nodes : DB partagée, heartbeats, équilibrage de charge par file partagée, réveil sous charge, erreurs de routage |
 | [Knowledge Base & MCP](KNOWLEDGE-BASE.md) | Topics, embeddings, endpoint MCP, modes d'accès |
 | [Strata](STRATA.md) | Le second moteur d'inférence : setup, catalogue, limites, notes de conception |
 | [REST API](API.md) | Endpoints cœur : instances, téléchargements, préréglages, réglages, request log, particularités du corps de lancement |

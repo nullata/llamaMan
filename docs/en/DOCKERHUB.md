@@ -164,7 +164,7 @@ open-webui:
     - OPENAI_API_KEYS=llm-your-api-key-here
 ```
 
-Models are listed by GGUF filename stem; set a per-model **Display Name** to have OpenWebUI show/accept a friendly name instead. In a cluster, live shared-queue group aliases are advertised as selectable models too, so a client can send the alias and have it routed to the least-loaded node. Group context length is reported as the **min across live members cluster-wide**, and any node answers `/api/show` / `/v1/models` for a group even when it has no local member of it - so OpenWebUI sees the truthful runtime ctx instead of falling back to its built-in default.
+Models are listed by GGUF filename stem; set a per-model **Display Name** to have OpenWebUI show/accept a friendly name instead. In a cluster, live shared-queue group aliases on nodes that can receive traffic are advertised as selectable models too, so a client can send the alias and have it routed to the least-loaded awake member. Group context length is reported as the **min across those live members**, and any node answers `/api/show` / `/v1/models` for a group even when it has no local member of it - so OpenWebUI sees the truthful runtime ctx instead of falling back to its built-in default.
 
 ## Persistent State
 

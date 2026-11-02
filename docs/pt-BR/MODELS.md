@@ -1,5 +1,7 @@
 # Modelos, downloads e desalojo
 
+> **Observação:** esta é uma tradução e pode estar desatualizada em relação à [versão em inglês](../en/MODELS.md), que é a referência.
+
 Tudo sobre a biblioteca de modelos: adicionar modelos, mantê-los atuais, como o proxy os escolhe e desaloja, e os ajustes de manutenção.
 
 ## Índice
@@ -70,7 +72,7 @@ Três interruptores sob **Settings → App Settings** relaxam esses padrões:
 Outros detalhes:
 
 - Todas as instâncias de chat rodando contam (tanto admin UI quanto gerenciadas pelo proxy).
-- **Instâncias dormindo ainda contam** (a reserva da vaga persiste durante a pausa ociosa) - mas acordar uma instância dormindo para o próprio modelo nunca é bloqueado pelo teto.
+- **Instâncias dormindo ainda contam** (a reserva da vaga persiste durante a pausa ociosa) - mas acordar uma instância dormindo para o próprio modelo nunca é bloqueado pelo teto. Isso inclui um membro de grupo de fila [acordando sob carga](CLUSTERING.md#waking-under-load).
 - Instâncias com **Exclude from Max Models** ligado (formulário de lançamento) não contam e nunca são desalojadas: modelos de embedding, modelos de decisão, qualquer coisa pequena que deva ficar ativa. Ligar **Embedding Model** liga-o também, e presets salvos antes de o interruptor existir o herdam da sua configuração de Embedding Model.
 - `LLAMAMAN_MAX_MODELS=0` desabilita o desalojo inteiramente.
 

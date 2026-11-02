@@ -1,5 +1,7 @@
 # Configuración y almacenamiento
 
+> **Nota:** esta es una traducción y puede ir por detrás de la [versión en inglés](../en/CONFIGURATION.md), que es la de referencia.
+
 Instalaciones bare-metal, el modelo de autenticación en detalle, estadísticas de GPU, registro de peticiones, backends de almacenamiento, y la referencia completa de variables de entorno.
 
 ## Contenido

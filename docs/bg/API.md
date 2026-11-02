@@ -1,10 +1,12 @@
 # REST API
 
+> **Забележка:** това е превод и може да изостава от [английската версия](../en/API.md), която е водеща.
+
 Всички ендпойнти връщат / приемат JSON. Ендпойнтите за управление изискват сесийна бисквитка (вход през браузъра) или `Authorization: Bearer <key>`. Ендпойнтите, обслужващи модели, също изискват bearer токен, когато `require_auth` е включено (по подразбиране). Подробности за удостоверяването: [Удостоверяване](CONFIGURATION.md#authentication-detail).
 
 ## Съдържание
 
-- [Удостоверяване и ключове](#auth--keys) · [Инстанции](#instances) · [Изтегляния, модели, пресети](#downloads-models-presets) · [Настройки, система, журнал на заявките](#settings-system-request-log) · [Съвместимост с Ollama и OpenAI](#ollama--openai-compat)
+- [Удостоверяване и ключове](#auth--keys) · [Инстанции](#instances) · [Изтегляния, модели, пресети](#downloads-models-presets) · [Грешки при модели в маршрутите за инференс](#model-errors-on-inference-routes) · [Настройки, система, журнал на заявките](#settings-system-request-log) · [Съвместимост с Ollama и OpenAI](#ollama--openai-compat)
 
 <a id="auth--keys"></a>
 ## Удостоверяване и ключове
@@ -66,14 +68,31 @@
 
 Тяло на изтеглянето: `{"repo_id": "...", "filename": "...", "hf_token": "...", "speed_limit_mbps": 0}`. Празно `filename` изтегля цялото хранилище.
 
-Инстанциите и пресетите приемат незадължително `engine` (`llamacpp` по подразбиране или `strata`; извежда се от път на модел `/strata/...`), а за Strata и `strata_vision` (`no`/`yes`/`cpu`), `strata_kv` (`""`/`int8`/`q4_0`/`k8v4`) и `strata_low_ram` (`auto`/`on`/`off`). Пътищата на Strata моделите са виртуални: `/strata/<family>-<SIZE>`, напр. `PUT /api/presets/strata/qwen-IQ2_XS`. Вижте [Strata](STRATA.md).
+Инстанциите и пресетите приемат незадължително `engine` (`llamacpp` по подразбиране или `strata`; извежда се от път на модел `/strata/...`), а за Strata и `strata_vision` (`no`/`yes`/`cpu`), `strata_kv` (`""`/`int8`/`q4_0`/`k8v4`) и `strata_low_ram` (`auto`/`on`/`off`). Qwen3.6-35B-A3B приема и `strata_parallel` (`1` до `8`, по подразбиране `1`), което всяко друго семейство на Strata отказва при стойност над `1`. Пътищата на Strata моделите са виртуални: `/strata/<family>-<SIZE>`, напр. `PUT /api/presets/strata/qwen-IQ2_XS`. Вижте [Strata](STRATA.md).
+
+<a id="model-errors-on-inference-routes"></a>
+## Грешки при модели в маршрутите за инференс
+
+Когато даден модел не може да бъде обслужен, маршрутите на Ollama връщат `{"error": "<message>"}`, а маршрутите на OpenAI връщат `{"error": {"message": "<message>", "code": "<code>"}}`.
+
+| Статус | Код | Значение |
+|---|---|---|
+| `429` | `group_full` | Други възли хостват групата и опашката на поне един пиър е пълна. Повторният опит може да сработи. |
+| `503` | `group_unavailable` | Други възли хостват групата, но никой не може да поеме заявката. Съобщението посочва всеки възел и причината. |
+| `503` | `group_stopped` | Всеки член на групата на този възел е спрян |
+| `503` | `model_stopping` | Членът се изключва |
+| `503` | `wake_failed` | Моделът не успя да се събуди |
+| `503` | `wake_timeout` | Моделът не успя да достигне състояние healthy навреме |
+| `503` | `model_limit` | Достигнат е `LLAMAMAN_MAX_MODELS` и нищо не може да бъде изместено |
+
+Модел, който просто не е познат, връща `model '<name>' not found`, като `500` при маршрутите на Ollama и `503` при маршрутите на OpenAI, без код. Препратена заявка, чието време изтече на пиър, връща `504`. Модел, който е бил стартиран или вече се зарежда, но никога не става готов, връща `500` без код и заявката не опитва друг член.
 
 <a id="settings-system-request-log"></a>
 ## Настройки, система, журнал на заявките
 
 | Метод | Ендпойнт | Описание |
 |---|---|---|
-| `GET` / `POST` | `/api/settings` | Получаване / запис на глобалните настройки |
+| `GET` / `POST` | `/api/settings` | Получаване / запис на глобалните настройки. Ключовете за възел включват `eager_wake_enabled` и `eager_wake_polls`; вижте [Събуждане при натоварване](CLUSTERING.md#waking-under-load) |
 | `GET` | `/api/system-info` | Натоварване на CPU, брой ядра, използвана RAM |
 | `GET` | `/api/gpu-info` | VRAM и натоварване по GPU (нативно; при нужда през exec в контейнер) |
 | `GET` | `/health` | `{"status": "ok"}` - винаги отворен, без удостоверяване |
@@ -85,6 +104,6 @@
 ## Съвместимост с Ollama и OpenAI
 
 Ollama: `/api/tags`, `/api/version`, `/api/show`, `/api/ps`, `/api/chat`, `/api/generate` (chat/generate стартират автоматично).
-OpenAI: `/v1/models`, `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` (chat стартира автоматично).
+OpenAI: `/v1/models`, `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` (chat стартира автоматично). В клъстер `/v1/embeddings` се маршрутизира между възлите както останалите маршрути за инференс.
 Decision модели: `/v1/systemone` (стартира автоматично) - вижте [Decision модели](MODELS.md#decision-models).
 База знания: `/api/kb/*` (само за администратори) и MCP ендпойнтът `/mcp/knowledge` - вижте [База знания и MCP](KNOWLEDGE-BASE.md). Ендпойнтите между възлите в клъстера използват `X-Cluster-Secret` - вижте [Клъстериране](CLUSTERING.md).

@@ -1,5 +1,7 @@
 # Dépannage
 
+> **Remarque :** ceci est une traduction et peut être en retard sur la [version anglaise](../en/TROUBLESHOOTING.md), qui fait foi.
+
 Le tableau complet symptôme → correctif. Le [README](../../README.md#troubleshooting) garde les neuf lignes les plus courantes au premier lancement ; tout le reste est ici.
 
 | Symptôme | Correctif |
@@ -17,6 +19,7 @@ Le tableau complet symptôme → correctif. Le [README](../../README.md#troubles
 | Strata : _« Docker image 'strata:latest' not found »_ | Téléchargez ou construisez une image Strata dans Settings → Docker Images (ou `docker build -t strata .` dans un clone du dépôt Strata). Voir [Strata](STRATA.md) |
 | Modèles Strata non listés | Définissez `STRATA_ENABLED=true` ; le node doit être NVIDIA (`GPU_TYPE=cuda` si la détection échoue). `GET /api/engines` affiche la raison |
 | Instance Strata bloquée en **starting** | Normal pendant plusieurs minutes au premier lancement (téléchargement + pack). La carte affiche l'étape ; le log montre le setup de Strata. « setup failed » signifie que son setup s'est arrêté - lisez la ligne `[X]` du log |
+| La carte Strata indique _"this Strata image can't run ... yet: update it"_ | Le moteur de l'image n'a pas cette famille de modèles. Récupérez ou construisez une image Strata plus récente dans Settings → Docker Images |
 | Le modal de statistiques est vide | Activez **Settings → App Settings → Request recording** (voir [Enregistrement des requêtes et statistiques](CONFIGURATION.md#request-recording--stats)) |
 | Le lancement échoue avec une erreur GPU/CDI sur un hôte sans passthrough GPU | Mettez **GPU Layers** à `0` pour du CPU-only sans périphérique GPU attaché, ou corrigez le runtime GPU |
 | Conflit de port | Le formulaire suggère automatiquement un port libre ; ajustez si besoin |
@@ -26,3 +29,6 @@ Le tableau complet symptôme → correctif. Le [README](../../README.md#troubles
 | Conteneurs non nettoyés après un stop | llamaMan supprime les conteneurs au stop. Orphelins après un crash : `docker ps --filter name=llamaman-`, ou redémarrez llamaMan (l'adoption des orphelins s'exécute au démarrage) |
 | Le client (Hermes / OpenWebUI / etc.) rapporte la fenêtre de contexte entraînée au lieu du plafond du préréglage | Passez à la 1.1.2+. `/api/ps` inclut désormais `context_length` défini au ctx runtime avec lequel l'instance a été lancée, et `model_info["<arch>.context_length"]` de `/api/show` est surchargé avec le plafond effectif |
 | Un client qui interroge un nom de queue-group obtient son propre ctx par défaut (p. ex. 128k) au lieu du ctx réel du déploiement | `/api/show` et `/v1/models` répondent désormais pour un queue-group sur n'importe quel node en cluster — même sans membre local — en utilisant le ctx runtime du peer depuis l'état partagé. Les groupes multi-membres rapportent le minimum sur les membres actifs afin que la valeur annoncée soit sûre pour toute cible de dispatch. Voir [Clustering](CLUSTERING.md) |
+| Une requête de groupe de files renvoie `group_full` ou `group_unavailable` | Aucun node n'a pu la prendre, et le message nomme chaque node et la raison. `group_full` peut réussir en réessayant. Sinon, vérifiez les nodes nommés : [Quand un groupe ne peut pas être servi](CLUSTERING.md#when-a-group-cant-be-served) |
+| Nom de groupe de files absent de `/api/tags` et `/v1/models` | Les membres arrêtés et ceux sur des nodes hors ligne ou en lecture seule ne sont pas listés. Vérifiez que le membre tourne, ainsi que `CLUSTER_ADVERTISE_URL` sur son node : [Groupes de files d'attente](CLUSTERING.md#queue-groups) |
+| Un membre endormi d'un groupe de files démarre sans qu'aucune requête ne l'atteigne | Comportement attendu quand son groupe reste saturé : [Réveil sous charge](CLUSTERING.md#waking-under-load). Mettez `eager_wake_enabled` à `false` sur ce node pour le désactiver |

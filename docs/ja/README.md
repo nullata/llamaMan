@@ -6,6 +6,8 @@
 
 [English](../../README.md) · [简体中文](../zh-CN/README.md) · **日本語** · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Español](../es/README.md) · [Português](../pt-BR/README.md) · [Русский](../ru/README.md) · [Български](../bg/README.md)
 
+> **注:** これは翻訳であり、[英語版](../../README.md)より内容が古い場合があります。英語版が正式な内容です。
+
 **概要:** 単一のマシンまたは小規模なクラスタ全体で、複数の [llama.cpp](https://github.com/ggml-org/llama.cpp) サーバーインスタンスを実行するためのブラウザ UI + API フロントエンド。[Open WebUI](https://github.com/open-webui/open-webui) にそのまま組み込める Ollama 互換プロキシを同梱しています。
 
 **特徴・相違点:** llamaMan 自体には **llama.cpp のコードも GPU への依存関係も一切ありません** - Docker ソケット経由で `ghcr.io/ggml-org/llama.cpp:server-*` コンテナを兄弟コンテナとして起動します。llamaMan に手を加えることなく llama.cpp を更新可能: より新しい `server-*` イメージを `docker pull` するだけです。このコンテナ生成とプロキシの仕組みはエンジンに依存しません。[Strata](STRATA.md) インスタンスは llama.cpp インスタンスと並んで実行され、まったく同じ方法で起動、監視、プロキシ転送、スリープが行われます。
@@ -152,7 +154,7 @@ flowchart LR
 | [起動設定](LAUNCH-SETTINGS.md) | 起動フォームのすべてのフィールドと対応する llama-server フラグ: ctx、KV キャッシュ、GPU レイヤー、MoE オフロード、投機的デコード、サンプリングの上書き、同時実行とキューイング、プリセットのライブ更新、[画像および PDF 入力](LAUNCH-SETTINGS.md#image--pdf-input)、[Anti-Loop](LAUNCH-SETTINGS.md#anti-loop)、インスタンス別プロキシ、アイドルタイムアウト |
 | [モデル](MODELS.md) | 表示名、モデルの更新、[意思決定モデル](MODELS.md#decision-models) (`/v1/systemone`)、[モデルのエビクション](MODELS.md#model-eviction)、ダウンロード設定、Docker イメージ管理、モデルアーカイブ、バックアップと復元、クリーンアップ |
 | [設定とストレージ](CONFIGURATION.md) | ベアメタルインストール、認証の詳細、GPU 統計情報、リクエストの記録、JSON と MariaDB バックエンド、[データベース障害の克服](CONFIGURATION.md#surviving-a-database-outage-local-mirror)、および完全な [環境変数](CONFIGURATION.md#environment-variables) リファレンス |
-| [クラスタリング](CLUSTERING.md) | マルチノードセットアップ: 共有 DB、ハートビート、共有キューによる負荷分散 |
+| [クラスタリング](CLUSTERING.md) | マルチノードセットアップ: 共有 DB、ハートビート、共有キューによる負荷分散、負荷時のウェイク、ルーティングエラー |
 | [ナレッジベース & MCP](KNOWLEDGE-BASE.md) | トピック、埋め込み、MCP エンドポイント、アクセスモード |
 | [Strata](STRATA.md) | 第 2 の推論エンジン: セットアップ、カタログ、制限事項、設計ノート |
 | [REST API](API.md) | コアエンドポイント: インスタンス、ダウンロード、プリセット、設定、リクエストログ、起動リクエスト本文の特殊動作 |

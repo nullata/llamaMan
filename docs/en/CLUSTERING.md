@@ -24,9 +24,9 @@ environment:
 
 Each node heartbeats every ~5s; a node silent past `CLUSTER_NODE_ONLINE_WINDOW_S` (default 45s) shows offline. Inspect and manage under **Settings → Cluster**.
 
-A few settings are scoped per node because they're host-specific: tracked **Docker images** and the model-cap eviction toggles. Everything else is shared cluster-wide. Live shared-queue group aliases are advertised as selectable models in `/api/tags` and `/v1/models` (deduped cluster-wide), so a client can send the alias and have it routed to the least-loaded node serving it.
+A few settings are scoped per node because they're host-specific: tracked **Docker images**, the model-cap eviction toggles, and the [eager wake settings](#waking-under-load). Everything else is shared cluster-wide. Live shared-queue group aliases are advertised as selectable models in `/api/tags` and `/v1/models` (deduped cluster-wide), so a client can send the alias and have it routed to the least-loaded node serving it.
 
-**Group context length is cluster-wide.** `/api/show` and `/v1/models` report a queue group's context as the **min across all live members**, whichever node the client asks. A group with members at different ctx values advertises the smaller value so a prompt sized to it is safe for any dispatch target — the extra headroom on the bigger member simply goes unused. A node with no local member of the group still answers (`context_length` filled from the peer's runtime ctx in shared instance state, or from the preset row in the shared DB); a group with no live members anywhere still returns 404 / no entry. The instance card on the operator UI adds `ctx <min>, capped by <node/model>` when this member's ctx exceeds the advertised min, so you can see which peer is dragging the group down.
+**Group context length is cluster-wide.** `/api/show` and `/v1/models` report a queue group's context as the **min across all live members on nodes that can receive traffic**, whichever node the client asks. Members on offline or view-only nodes don't count. A group with members at different ctx values advertises the smaller value so a prompt sized to it is safe for any dispatch target — the extra headroom on the bigger member simply goes unused. A node with no local member of the group still answers (`context_length` filled from the peer's runtime ctx in shared instance state, or from the preset row in the shared DB); a group with no live members anywhere still returns 404 / no entry. The instance card on the operator UI adds `ctx <min>, capped by <node/model>` when this member's ctx exceeds the advertised min, so you can see which peer is dragging the group down.
 
 > **Security:** the cluster secret lets any peer drive actions on this node. Run node-to-node traffic over a trusted network or behind TLS.
 
@@ -51,9 +51,11 @@ A queue group pools instances under one **Queue group name** so a client can sen
 
 ### Waking under load
 
-Awake members queue requests rather than refuse them, so traffic alone would only reach a sleeper after a whole queue overflowed. llamaMan therefore wakes one early. When every healthy member in the group is full, requests are queued and nothing is already loading, for 3 polls in a row (about 15 seconds), one sleeping member wakes. Across the cluster, only the lowest-named node holding a sleeper does this, and at most one member per group per poll.
+Awake members queue requests rather than refuse them, so traffic alone would only reach a sleeper after a whole queue overflowed. llamaMan therefore wakes one early. When every healthy member in the group is full, requests are queued and nothing is already loading, for 3 polls in a row (about 15 seconds), one sleeping member wakes. Across the cluster, only the lowest-named node holding a sleeper does this, and at most one member per group per poll. A primary wakes before a fallback.
 
-The wake is skipped, with one log line, if the model's weights don't fit in the node's free VRAM. The check adds up free memory across all GPUs and counts weights only, so a model that passes can still fail to load. If VRAM can't be read, the wake goes ahead.
+Only a sleeper that would add capacity counts: it needs **Max Concurrent** above `0`, and it can't share a queue with an awake member on the same node.
+
+The wake is skipped, with one log line, if the model's weights don't fit in the node's free VRAM. The check adds up free memory across all GPUs and counts weights only, so a model that passes can still fail to load. If VRAM can't be read, or the model has no file to measure (Strata's virtual models), the wake goes ahead.
 
 Both settings are per node, through `POST /api/settings`:
 
@@ -79,6 +81,8 @@ The owning node returns these `503` codes for its own members, and an entry node
 | `group_stopped` | Every member on this node is stopped |
 | `wake_failed` | The wake failed |
 | `wake_timeout` | The member didn't become healthy in time |
+
+A group name doesn't launch a local file whose name merely contains it. A file with exactly that name still runs.
 
 ### Troubleshooting a group that isn't visible
 

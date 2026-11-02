@@ -1,6 +1,8 @@
 <a id="knowledge-base--mcp"></a>
 # Base de conocimiento y MCP
 
+> **Nota:** esta es una traducción y puede ir por detrás de la [versión en inglés](../en/KNOWLEDGE-BASE.md), que es la de referencia.
+
 Almacena documentos agrupados por **topic**, y llamaman los trocea (~1200 caracteres, alineados al párrafo, 200 de solape), genera sus embeddings y guarda los vectores en tu base de datos MariaDB (columnas `VECTOR` + un índice ANN coseno). Cualquier cliente MCP (Claude Desktop, Claude Code, agentes) puede entonces buscarlos por significado. Todo se ejecuta en el hardware que ya tienes: los embeddings vienen de una instancia llama.cpp que lanzaste con **Embedding model** activado, los vectores viven en tu base de datos, y llamaman sirve el endpoint MCP él mismo.
 
 **Requisitos:** el backend MariaDB (`DATABASE_URL`, ver [Backends de almacenamiento](CONFIGURATION.md#storage-backends)) en servidor **11.8+**, que es donde aterriza `VECTOR`. En el backend JSON o un MariaDB más antiguo, la pestaña MCP dice por qué la base de conocimiento no es compatible y se rechaza habilitarla; nada más cambia. No hay migración: las tablas `kb_*` se crean en el primer uso.

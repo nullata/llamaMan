@@ -1,5 +1,7 @@
 # Paramètres de lancement
 
+> **Remarque :** ceci est une traduction et peut être en retard sur la [version anglaise](../en/LAUNCH-SETTINGS.md), qui fait foi.
+
 Chaque champ du formulaire de lancement, ce à quoi il correspond et les notes de comportement. Pour le parcours « comment lancer » en quatre étapes, voir le [README](../../README.md#your-first-model).
 
 ## Sommaire
@@ -105,6 +107,8 @@ Quand **Max Concurrent** > 0, llamaMan place une gate FIFO devant l'instance. Le
 
 **Parallel vs Max Concurrent :** `Parallel` contrôle les slots KV internes de llama-server ; `Max Concurrent` limite combien de requêtes llamaMan transfère à la fois. Utilisez les deux ensemble (p. ex. `Parallel=4`, `Max Concurrent=4`) pour bien nourrir le serveur sans saturer ses slots.
 
+**Entre nodes :** **Le partage de files (Queue sharing)** regroupe les instances sous un même nom. L'ordre de routage, le réveil et les erreurs sont détaillés dans [Groupes de files d'attente](CLUSTERING.md#queue-groups).
+
 <a id="image--pdf-input"></a>
 ## Entrée image et PDF
 
@@ -180,6 +184,6 @@ Quand **Idle Timeout**, **Max Concurrent**, ou **Proxy Sampling Overrides** sont
 <a id="idle-timeout"></a>
 ## Délai d'inactivité (Idle Timeout)
 
-Définissez **Idle Timeout min** dans le formulaire de lancement (0 = désactivé). Quand activé, après N minutes sans requêtes le conteneur llama-server est stoppé pour libérer la VRAM ; la requête suivante réveille un nouveau conteneur avec la même config. Les clients voient le même port avec un délai de cold-start.
+Définissez **Idle Timeout min** dans le formulaire de lancement (0 = désactivé). Quand activé, après N minutes sans requêtes le conteneur llama-server est stoppé pour libérer la VRAM ; la requête suivante réveille un nouveau conteneur avec la même config. Les clients voient le même port avec un délai de cold-start. Un membre endormi d'un groupe de files peut également se réveiller sans qu'aucune requête ne l'atteigne, lorsque son groupe reste saturé : voir [Réveil sous charge](CLUSTERING.md#waking-under-load).
 
 Pour les instances gérées par proxy (OpenWebUI), utilisez `LLAMAMAN_IDLE_TIMEOUT` à la place.

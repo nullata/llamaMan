@@ -1,10 +1,12 @@
 # API REST
 
+> **Nota:** esta es una traducción y puede ir por detrás de la [versión en inglés](../en/API.md), que es la de referencia.
+
 Todos los endpoints devuelven / aceptan JSON. Los endpoints de gestión necesitan una cookie de sesión (login en navegador) o `Authorization: Bearer <key>`. Los endpoints de servicio de modelos también exigen un bearer cuando `require_auth` está activado (por defecto). Detalles de autenticación: [Authentication](CONFIGURATION.md#authentication-detail).
 
 ## Contenido
 
-- [Autenticación y claves](#auth--keys) · [Instancias](#instances) · [Descargas, modelos, presets](#downloads-models-presets) · [Ajustes, sistema, registro de peticiones](#settings-system-request-log) · [Compatibilidad con Ollama y OpenAI](#ollama--openai-compat)
+- [Autenticación y claves](#auth--keys) · [Instancias](#instances) · [Descargas, modelos, presets](#downloads-models-presets) · [Errores de modelos en rutas de inferencia](#model-errors-on-inference-routes) · [Ajustes, sistema, registro de peticiones](#settings-system-request-log) · [Compatibilidad con Ollama y OpenAI](#ollama--openai-compat)
 
 <a id="auth--keys"></a>
 ## Autenticación y claves
@@ -66,14 +68,31 @@ Rarezas de frontera que conviene fijar:
 
 Cuerpo de descarga: `{"repo_id": "...", "filename": "...", "hf_token": "...", "speed_limit_mbps": 0}`. `filename` vacío descarga el repositorio completo.
 
-Las instancias y presets aceptan un `engine` opcional (`llamacpp` por defecto, o `strata`; inferido de una ruta de modelo `/strata/...`) más, para Strata, `strata_vision` (`no`/`yes`/`cpu`), `strata_kv` (`""`/`int8`/`q4_0`/`k8v4`) y `strata_low_ram` (`auto`/`on`/`off`). Las rutas de modelos Strata son virtuales: `/strata/<family>-<SIZE>`, p. ej. `PUT /api/presets/strata/qwen-IQ2_XS`. Ver [Strata](STRATA.md).
+Las instancias y presets aceptan un `engine` opcional (`llamacpp` por defecto, o `strata`; inferido de una ruta de modelo `/strata/...`) más, para Strata, `strata_vision` (`no`/`yes`/`cpu`), `strata_kv` (`""`/`int8`/`q4_0`/`k8v4`) y `strata_low_ram` (`auto`/`on`/`off`). Qwen3.6-35B-A3B también acepta `strata_parallel` (`1` a `8`, por defecto `1`), que cualquier otra familia de Strata rechaza por encima de `1`. Las rutas de modelos Strata son virtuales: `/strata/<family>-<SIZE>`, p. ej. `PUT /api/presets/strata/qwen-IQ2_XS`. Ver [Strata](STRATA.md).
+
+<a id="model-errors-on-inference-routes"></a>
+## Errores de modelos en rutas de inferencia
+
+Cuando un modelo no se puede servir, las rutas de Ollama devuelven `{"error": "<message>"}` y las rutas de OpenAI devuelven `{"error": {"message": "<message>", "code": "<code>"}}`.
+
+| Estado | Código | Significado |
+|---|---|---|
+| `429` | `group_full` | Otros nodes alojan el grupo y la cola de al menos un peer está llena. Reintentar puede funcionar. |
+| `503` | `group_unavailable` | Otros nodes alojan el grupo, pero ninguno puede aceptar la petición. El mensaje nombra a cada node y el motivo. |
+| `503` | `group_stopped` | Todos los miembros del grupo en este node están detenidos |
+| `503` | `model_stopping` | El miembro se está apagando |
+| `503` | `wake_failed` | El modelo no pudo despertar |
+| `503` | `wake_timeout` | El modelo no llegó al estado healthy a tiempo |
+| `503` | `model_limit` | Se ha alcanzado `LLAMAMAN_MAX_MODELS` y nada se puede desalojar |
+
+Un modelo que simplemente no se conoce devuelve `model '<name>' not found`, como `500` en rutas de Ollama y `503` en rutas de OpenAI, sin código. Una petición reenviada que agota el tiempo de espera en un peer devuelve `504`. Un modelo que se lanzó o que ya se estaba cargando pero nunca llega a estar listo devuelve `500`, sin código, y la petición no prueba con otro miembro.
 
 <a id="settings-system-request-log"></a>
 ## Ajustes, sistema, registro de peticiones
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| `GET` / `POST` | `/api/settings` | Obtener / guardar ajustes globales |
+| `GET` / `POST` | `/api/settings` | Obtener / guardar ajustes globales. Las claves por node incluyen `eager_wake_enabled` y `eager_wake_polls`; ver [Despertar bajo carga](CLUSTERING.md#waking-under-load) |
 | `GET` | `/api/system-info` | Uso de CPU, número de núcleos, uso de RAM |
 | `GET` | `/api/gpu-info` | VRAM y utilización por GPU (nativo; se repliega a exec en container) |
 | `GET` | `/health` | `{"status": "ok"}` - siempre abierto, sin autenticación |
@@ -85,6 +104,6 @@ Las instancias y presets aceptan un `engine` opcional (`llamacpp` por defecto, o
 ## Compatibilidad con Ollama y OpenAI
 
 Ollama: `/api/tags`, `/api/version`, `/api/show`, `/api/ps`, `/api/chat`, `/api/generate` (chat/generate auto-arrancan).
-OpenAI: `/v1/models`, `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` (chat auto-arranca).
+OpenAI: `/v1/models`, `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` (chat auto-arranca). En un cluster, `/v1/embeddings` se enruta entre nodes como las demás rutas de inferencia.
 Modelos de decisión: `/v1/systemone` (auto-arranca) - ver [Modelos de decisión](MODELS.md#decision-models).
 Base de conocimiento: `/api/kb/*` (solo admin) y el endpoint MCP `/mcp/knowledge` - ver [Knowledge Base & MCP](KNOWLEDGE-BASE.md). Los endpoints node-a-node del cluster usan `X-Cluster-Secret` - ver [Clustering](CLUSTERING.md).

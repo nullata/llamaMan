@@ -1,5 +1,7 @@
 # Solução de problemas
 
+> **Observação:** esta é uma tradução e pode estar desatualizada em relação à [versão em inglês](../en/TROUBLESHOOTING.md), que é a referência.
+
 A tabela completa sintoma → correção. O [README](../../README.md#troubleshooting) mantém as nove linhas mais comuns do primeiro uso; todo o resto está aqui.
 
 | Sintoma | Correção |
@@ -17,6 +19,7 @@ A tabela completa sintoma → correção. O [README](../../README.md#troubleshoo
 | Strata: _"Docker image 'strata:latest' not found"_ | Baixe ou construa uma imagem Strata em Settings → Docker Images (ou `docker build -t strata .` num clone do repositório Strata). Veja [Strata](STRATA.md) |
 | Modelos Strata não listados | Defina `STRATA_ENABLED=true`; o node precisa ser NVIDIA (`GPU_TYPE=cuda` se a detecção falhar). `GET /api/engines` mostra o motivo |
 | Instância Strata presa em **starting** | Normal por minutos na primeira inicialização (download + pack). O card mostra a etapa; o log mostra o setup do Strata. "setup failed" significa que o setup dele parou - leia a linha `[X]` do log |
+| O card do Strata diz _"this Strata image can't run ... yet: update it"_ | O motor da imagem não tem essa família de modelos. Baixe ou construa uma imagem Strata mais nova em Settings → Docker Images |
 | O modal de estatísticas está vazio | Ative **Settings → App Settings → Request recording** (veja [Gravação de requisições e estatísticas](CONFIGURATION.md#request-recording--stats)) |
 | O lançamento falha com erro de GPU/CDI num host sem passthrough de GPU | Defina **GPU Layers** como `0` para CPU-only sem dispositivo GPU anexado, ou corrija o runtime de GPU |
 | Conflito de porta | O formulário sugere automaticamente uma porta livre; ajuste se necessário |
@@ -26,3 +29,6 @@ A tabela completa sintoma → correção. O [README](../../README.md#troubleshoo
 | Containers não limpos após um stop | O llamaMan remove containers no stop. Órfãos após um crash: `docker ps --filter name=llamaman-`, ou reinicie o llamaMan (a adoção de órfãos roda na inicialização) |
 | O cliente (Hermes / OpenWebUI / etc.) reporta a janela de contexto treinada em vez do teto do preset | Atualize para a 1.1.2+. O `/api/ps` agora inclui `context_length` definido ao ctx runtime com o qual a instância foi lançada, e o `model_info["<arch>.context_length"]` do `/api/show` é sobrescrito com o teto efetivo |
 | Um cliente que consulta um nome de queue-group recebe o próprio ctx padrão (p. ex. 128k) em vez do ctx real do deployment | O `/api/show` e o `/v1/models` agora respondem por um queue-group em qualquer node em cluster — mesmo um sem membro local — usando o ctx runtime do peer do estado compartilhado. Grupos com vários membros reportam o mínimo entre os membros ativos para que o valor anunciado seja seguro para qualquer alvo de dispatch. Veja [Clustering](CLUSTERING.md) |
+| Requisição de grupo de fila retorna `group_full` ou `group_unavailable` | Nenhum node pôde aceitá-la, e a mensagem nomeia cada node e o motivo. `group_full` pode funcionar ao tentar de novo. Nos demais casos, verifique os nodes nomeados: [Quando um grupo não pode ser atendido](CLUSTERING.md#when-a-group-cant-be-served) |
+| Nome do grupo de fila ausente de `/api/tags` e `/v1/models` | Membros parados e membros em nodes offline ou somente visualização não são listados. Verifique se o membro está rodando e confira o `CLUSTER_ADVERTISE_URL` do seu node: [Grupos de fila](CLUSTERING.md#queue-groups) |
+| Membro dormindo de um grupo de fila inicia sem nenhuma requisição chegar até ele | Esperado quando seu grupo continua saturado: [Acordar sob carga](CLUSTERING.md#waking-under-load). Defina `eager_wake_enabled` como `false` nesse node para desligar |

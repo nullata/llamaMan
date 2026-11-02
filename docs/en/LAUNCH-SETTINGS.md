@@ -101,6 +101,8 @@ When **Max Concurrent** > 0, llamaMan places a FIFO gate in front of the instanc
 
 **Parallel vs Max Concurrent:** `Parallel` controls llama-server's internal KV slots; `Max Concurrent` gates how many requests llamaMan forwards at once. Use both together (e.g. `Parallel=4`, `Max Concurrent=4`) to keep the server well-fed without overflowing its slots.
 
+**Across nodes:** **Queue sharing** pools instances under one name. Routing order, waking and errors are in [Queue groups](CLUSTERING.md#queue-groups).
+
 ## Image & PDF Input
 
 Enable the **Image & PDF Input** toggle to load a vision model's multimodal projector (`--mmproj`) alongside its main GGUF. The **MMPROJ Model** field takes the projector GGUF (typical filename: `mmproj-<model>-<precision>.gguf`).
@@ -173,6 +175,6 @@ When **Idle Timeout**, **Max Concurrent**, or **Proxy Sampling Overrides** are o
 
 ## Idle Timeout
 
-Set **Idle Timeout min** in the launch form (0 = disabled). When enabled, after N minutes with no requests the llama-server container is stopped to free VRAM; the next request wakes a new container with the same config. Clients see the same port with a cold-start delay.
+Set **Idle Timeout min** in the launch form (0 = disabled). When enabled, after N minutes with no requests the llama-server container is stopped to free VRAM; the next request wakes a new container with the same config. Clients see the same port with a cold-start delay. A sleeping queue group member can also wake with no request reaching it, when its group stays saturated: see [Waking under load](CLUSTERING.md#waking-under-load).
 
 For proxy-managed (OpenWebUI) instances, use `LLAMAMAN_IDLE_TIMEOUT` instead.

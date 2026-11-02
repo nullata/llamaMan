@@ -1,5 +1,7 @@
 # Knowledge Base & MCP
 
+> **Hinweis:** Dies ist eine Übersetzung und kann hinter der [englischen Fassung](../en/KNOWLEDGE-BASE.md) zurückliegen; maßgeblich ist die englische Fassung.
+
 Speichern Sie Dokumente gruppiert nach **Topics** (Themen). llamaman segmentiert (chunkt) diese (~1200 Zeichen, absatzorientiert, 200 Zeichen Überlappung), generiert Embeddings und speichert die Vektoren in Ihrer MariaDB-Datenbank (`VECTOR`-Spalten + ein Cosine-ANN-Index). Jeder MCP-Client (Claude Desktop, Claude Code, Agenten) kann diese anschließend semantisch durchsuchen. Alles läuft auf Hardware, die Sie bereits betreiben: Embeddings stammen von einer llama.cpp-Instanz, die Sie mit aktiviertem **Embedding model** gestartet haben, Vektoren liegen in Ihrer Datenbank und llamaman stellt den MCP-Endpoint selbst bereit.
 
 **Anforderungen:** Das MariaDB-Backend (`DATABASE_URL`, siehe [Speicher-Backends](CONFIGURATION.md#storage-backends)) auf Server **11.8+**, ab dem `VECTOR` unterstützt wird. Beim JSON-Backend oder einer älteren MariaDB-Version erläutert der MCP-Tab, warum die Knowledge Base nicht unterstützt wird, und die Aktivierung wird verweigert; alles andere bleibt unverändert. Es ist keine Migration erforderlich: Die `kb_*`-Tabellen werden bei der ersten Nutzung automatisch erstellt.

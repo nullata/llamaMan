@@ -1,5 +1,7 @@
 # 启动设置
 
+> **注意：** 本文为译文，可能落后于[英文版](../en/LAUNCH-SETTINGS.md)；以英文版为准。
+
 启动表单中的每个字段、其映射参数以及行为说明。有关四步“如何启动”的分步指引，请参见 [README](../../README.md#your-first-model)。
 
 ## 目录
@@ -102,6 +104,8 @@
 
 **Parallel vs Max Concurrent：** `Parallel` 控制 llama-server 内部的 KV 槽位数；`Max Concurrent` 控制 llamaMan 一次转发的请求数。两者结合使用（例如 `Parallel=4`, `Max Concurrent=4`）可以在不溢出槽位的前提下让服务端保持高效运行。
 
+**跨节点：** **Queue sharing** 将多个实例归入一个名称之下。路由顺序、唤醒和错误见[队列分组](CLUSTERING.md#queue-groups)。
+
 <a id="image--pdf-input"></a>
 ## 图像与 PDF 输入
 
@@ -176,6 +180,6 @@
 
 ## 空闲超时
 
-在启动表单中设置 **Idle Timeout min**（0 = 禁用）。启用后，若在 N 分钟内没有请求，llama-server 容器将被停止以释放显存；下一个请求会使用相同配置唤醒新容器。客户端看到的是相同的端口，仅伴随一次冷启动延迟。
+在启动表单中设置 **Idle Timeout min**（0 = 禁用）。启用后，若在 N 分钟内没有请求，llama-server 容器将被停止以释放显存；下一个请求会使用相同配置唤醒新容器。客户端看到的是相同的端口，仅伴随一次冷启动延迟。当分组持续饱和时，队列分组的休眠成员也可能在没有请求到达的情况下唤醒：参见[负载下唤醒](CLUSTERING.md#waking-under-load)。
 
 对于由 proxy 管理（OpenWebUI）的实例，请改用 `LLAMAMAN_IDLE_TIMEOUT`。

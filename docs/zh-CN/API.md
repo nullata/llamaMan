@@ -1,10 +1,12 @@
 # REST API
 
+> **注意：** 本文为译文，可能落后于[英文版](../en/API.md)；以英文版为准。
+
 所有 endpoint 均接收 / 返回 JSON。管理类 endpoint 需要 session cookie（浏览器登录）或 `Authorization: Bearer <key>`。当开启 `require_auth` 时（默认开启），模型服务类 endpoint 同样需要 bearer token。认证详情参见：[认证](CONFIGURATION.md#authentication-detail)。
 
 ## 目录
 
-- [认证与密钥](#认证与密钥) · [实例](#实例) · [下载、模型、预设](#下载模型预设) · [设置、系统、请求日志](#设置系统请求日志) · [Ollama 与 OpenAI 兼容](#ollama-与-openai-兼容)
+- [认证与密钥](#认证与密钥) · [实例](#实例) · [下载、模型、预设](#下载模型预设) · [推理路由上的模型错误](#model-errors-on-inference-routes) · [设置、系统、请求日志](#设置系统请求日志) · [Ollama 与 OpenAI 兼容](#ollama-与-openai-兼容)
 
 ## 认证与密钥
 
@@ -63,13 +65,30 @@
 
 下载请求体：`{"repo_id": "...", "filename": "...", "hf_token": "...", "speed_limit_mbps": 0}`。留空 `filename` 会拉取整个仓库。
 
-实例和预设支持可选的 `engine`（默认 `llamacpp`，或 `strata`；可从 `/strata/...` 模型路径推断），对于 Strata 还支持 `strata_vision`（`no`/`yes`/`cpu`）、`strata_kv`（`""`/`int8`/`q4_0`/`k8v4`）和 `strata_low_ram`（`auto`/`on`/`off`）。Strata 模型路径为虚拟路径：`/strata/<family>-<SIZE>`，例如 `PUT /api/presets/strata/qwen-IQ2_XS`。参见 [Strata](STRATA.md)。
+实例和预设支持可选的 `engine`（默认 `llamacpp`，或 `strata`；可从 `/strata/...` 模型路径推断），对于 Strata 还支持 `strata_vision`（`no`/`yes`/`cpu`）、`strata_kv`（`""`/`int8`/`q4_0`/`k8v4`）和 `strata_low_ram`（`auto`/`on`/`off`）。Qwen3.6-35B-A3B 还支持 `strata_parallel`（`1` 到 `8`，默认 `1`），其他 Strata 系列会拒绝大于 `1` 的值。Strata 模型路径为虚拟路径：`/strata/<family>-<SIZE>`，例如 `PUT /api/presets/strata/qwen-IQ2_XS`。参见 [Strata](STRATA.md)。
+
+<a id="model-errors-on-inference-routes"></a>
+## 推理路由上的模型错误
+
+当模型无法提供服务时，Ollama 路由返回 `{"error": "<message>"}`，OpenAI 路由返回 `{"error": {"message": "<message>", "code": "<code>"}}`。
+
+| 状态码 | 错误码 | 含义 |
+|---|---|---|
+| `429` | `group_full` | 其他节点托管该分组，且至少一个对等节点的队列已满。重试可能成功。 |
+| `503` | `group_unavailable` | 其他节点托管该分组，但没有节点能接受请求。消息中会列出每个节点及原因。 |
+| `503` | `group_stopped` | 该分组在本节点上的所有成员都已停止 |
+| `503` | `model_stopping` | 该成员正在关闭 |
+| `503` | `wake_failed` | 模型唤醒失败 |
+| `503` | `wake_timeout` | 模型未能及时变为 healthy |
+| `503` | `model_limit` | 已达到 `LLAMAMAN_MAX_MODELS`，且没有可逐出的模型 |
+
+仅仅是未知的模型会返回 `model '<name>' not found`，在 Ollama 路由上为 `500`，在 OpenAI 路由上为 `503`，不带错误码。转发的请求在对等节点上超时会返回 `504`。已启动或已在加载、但始终未就绪的模型会返回不带错误码的 `500`，且该请求不会尝试其他成员。
 
 ## 设置、系统、请求日志
 
 | Method | Endpoint | 描述 |
 |---|---|---|
-| `GET` / `POST` | `/api/settings` | 获取 / 保存全局设置 |
+| `GET` / `POST` | `/api/settings` | 获取 / 保存全局设置。节点级键包括 `eager_wake_enabled` 和 `eager_wake_polls`；参见[负载下唤醒](CLUSTERING.md#waking-under-load) |
 | `GET` | `/api/system-info` | CPU 使用率、核心数、RAM 使用量 |
 | `GET` | `/api/gpu-info` | 每张 GPU 的 VRAM 和利用率（原生读取；回退至容器内 exec 读取） |
 | `GET` | `/health` | `{"status": "ok"}` - 始终公开，无需认证 |
@@ -80,6 +99,6 @@
 ## Ollama 与 OpenAI 兼容
 
 Ollama：`/api/tags`、`/api/version`、`/api/show`、`/api/ps`、`/api/chat`、`/api/generate`（chat/generate 会自动按需启动）。
-OpenAI：`/v1/models`、`/v1/chat/completions`、`/v1/completions`、`/v1/embeddings`（chat 会自动按需启动）。
+OpenAI：`/v1/models`、`/v1/chat/completions`、`/v1/completions`、`/v1/embeddings`（chat 会自动按需启动）。在集群中，`/v1/embeddings` 与其他推理路由一样在节点间路由。
 决策模型：`/v1/systemone`（自动启动）- 参见[决策模型](MODELS.md#decision-models)。
 知识库：`/api/kb/*`（仅限管理员）及 MCP endpoint `/mcp/knowledge` - 参见[知识库与 MCP](KNOWLEDGE-BASE.md)。集群节点间 endpoint 使用 `X-Cluster-Secret` - 参见[集群](CLUSTERING.md)。

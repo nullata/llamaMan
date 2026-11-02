@@ -1,5 +1,7 @@
 # Arquitectura, flujo de peticiones y decisiones de diseño
 
+> **Nota:** esta es una traducción y puede ir por detrás de la [versión en inglés](../en/ARCHITECTURE.md), que es la de referencia.
+
 Cómo funciona llamaMan bajo el capó. La vista de un solo node está en el [README](../../README.md#architecture); esta página añade la vista de cluster y el detalle profundo.
 
 ## Contenido
@@ -46,7 +48,7 @@ flowchart TB
 
 **Clusters heterogéneos.** Cada node tiene su propio hardware (número/fabricante/VRAM de GPU), sus propios archivos de modelos en disco, su propia imagen llama.cpp, y sus propios overrides de preset delimitados al hardware. La DB compartida lleva presets, usuarios, claves API, estado de instancia por node y heartbeats del cluster - no los archivos de modelos. Ver [Clustering](CLUSTERING.md).
 
-**Dispatch consciente de colas + robo de trabajo entre nodes.** Cuando dos nodes sirven el mismo modelo (o el mismo alias `share_queue_group`), una petición entrante para ese nombre se enruta al peer con menos peticiones en vuelo. Si el node elegido está saturado, su `RequestGate` igualmente intenta pasar la petición a un peer con capacidad libre en lugar de encolar.
+**Dispatch consciente de colas + robo de trabajo entre nodes.** Cuando dos nodes sirven el mismo modelo (o el mismo alias `share_queue_group`), una petición entrante para ese nombre se enruta al miembro activo con menos peticiones en vuelo. Los miembros saludables van primero, luego los que aún están cargando, y los miembros dormidos solo después de todo lo que esté activo, incluidos los fallbacks. Si el node elegido está saturado, su `RequestGate` igualmente intenta pasar la petición a un peer con un slot libre en un miembro saludable en lugar de encolar. Cuando un grupo permanece saturado, un miembro dormido se despierta anticipadamente; ver [Despertar bajo carga](CLUSTERING.md#waking-under-load). Los miembros detenidos nunca se inician para balancear la carga.
 
 **Carga de modelos + desalojo LRU.** El proxy de compatibilidad `:42069` auto-lanza modelos a demanda. Una vez alcanzado `LLAMAMAN_MAX_MODELS`, se detiene la instancia no-admin menos recientemente usada para hacer sitio. Las instancias dormidas siguen contando contra el slot; el idle timeout es un eje separado. Reglas completas: [Desalojo de modelos](MODELS.md#model-eviction).
 
@@ -65,12 +67,12 @@ Una petición de chat OpenAI-compatible concreta contra un cluster de dos nodes:
 
 1. El cliente hace `POST /v1/chat/completions` a `nodeA:42069` con el modelo `qwen2.5-14b`.
 2. `nodeA` busca el destino: es un modelo vivo en este node **y** en `nodeB`. Ambos pertenecen al mismo grupo de cola efectivo.
-3. El despachador sondea la carga viva de cada candidato (desde la caché de heartbeats + un contador inflight de ventana corta). `nodeB` está menos cargado → la petición se reenvía a la URL de anuncio de `nodeB` (su puerto `:5000` de UI/API) en la misma ruta.
+3. El despachador sondea la carga viva de cada candidato (un sondeo en caché de corta duración + un contador inflight de ventana corta) y clasifica a los miembros activos por delante de los dormidos. Un peer que no responde al sondeo sigue siendo candidato a partir de su snapshot, pero queda en último lugar. `nodeB` está menos cargado → la petición se reenvía a la URL de anuncio de `nodeB` (su puerto `:5000` de UI/API) en la misma ruta.
 4. `nodeB` reclama un slot de gate (429 si la cola está llena y ningún peer tiene sitio). Si los overrides de muestreo están activados, se inyectan. Si existe un sidecar por instancia (idle / max-concurrent / proxy-sampling), la petición cae primero en el sidecar, que despierta el container si está dormido.
 5. El sidecar reenvía a `llama-server` en su puerto interno. El stream fluye de vuelta por el sidecar → `nodeB` → `nodeA` → cliente.
 6. Al terminar el stream: el worker del request-log registra TTFT / throughput / conteo final de tokens; se libera el slot de gate; se actualiza el timestamp LRU para que esta instancia no sea desalojada la próxima.
 
-Si `nodeB` se hubiera desconectado entre el heartbeat y esta llamada, el despachador habría detectado el error de conexión y reelegido el siguiente candidato (localmente en este caso).
+Si `nodeB` se hubiera desconectado entre el heartbeat y esta llamada, el despachador habría detectado el error de conexión y reelegido el siguiente candidato (localmente en este caso). Lo mismo ocurre si la cola de `nodeB` está llena, o si no puede servir la petición porque su miembro se está deteniendo o está detenido, o su despertar falló. Si ningún node puede aceptar la petición, el cliente recibe un `429` o `503` nombrando a cada node y el motivo.
 
 <a id="design-decisions--trade-offs"></a>
 ## Decisiones de diseño y compromisos

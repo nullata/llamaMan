@@ -1,5 +1,7 @@
 # Modèles, téléchargements et éviction
 
+> **Remarque :** ceci est une traduction et peut être en retard sur la [version anglaise](../en/MODELS.md), qui fait foi.
+
 Tout sur la bibliothèque de modèles : ajouter des modèles, les garder à jour, comment le proxy les choisit et les évince, et les réglages d'entretien.
 
 ## Sommaire
@@ -70,7 +72,7 @@ Trois interrupteurs sous **Settings → App Settings** assouplissent ces défaut
 Autres détails :
 
 - Toutes les instances de chat en cours comptent (admin UI et gérées par proxy).
-- **Les instances endormies comptent quand même** (la réservation du slot persiste pendant la pause idle) - mais réveiller une instance endormie pour son propre modèle n'est jamais bloqué par le plafond.
+- **Les instances endormies comptent quand même** (la réservation du slot persiste pendant la pause idle) - mais réveiller une instance endormie pour son propre modèle n'est jamais bloqué par le plafond. Cela inclut un membre de groupe de files qui se [réveille sous charge](CLUSTERING.md#waking-under-load).
 - Les instances avec **Exclude from Max Models** activé (formulaire de lancement) ne comptent pas et ne sont jamais évincées : modèles d'embedding, decision models, tout ce qui est petit et devrait rester actif. Activer **Embedding Model** l'active aussi, et les préréglages sauvegardés avant l'existence de l'interrupteur le déduisent de leur réglage Embedding Model.
 - `LLAMAMAN_MAX_MODELS=0` désactive entièrement l'éviction.
 

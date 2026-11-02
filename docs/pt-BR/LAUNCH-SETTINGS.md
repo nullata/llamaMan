@@ -1,5 +1,7 @@
 # Configurações de lançamento
 
+> **Observação:** esta é uma tradução e pode estar desatualizada em relação à [versão em inglês](../en/LAUNCH-SETTINGS.md), que é a referência.
+
 Cada campo do formulário de lançamento, no que ele mapeia, e as notas de comportamento. Para o passo a passo de "como lançar" em quatro etapas, veja o [README](../../README.md#your-first-model).
 
 ## Índice
@@ -105,6 +107,8 @@ Quando **Max Concurrent** > 0, o llamaMan coloca um gate FIFO na frente da inst�
 
 **Parallel vs Max Concurrent:** o `Parallel` controla as vagas KV internas do llama-server; o `Max Concurrent` limita quantas requisições o llamaMan encaminha de uma vez. Use ambos juntos (p. ex. `Parallel=4`, `Max Concurrent=4`) para manter o servidor bem alimentado sem transbordar suas vagas.
 
+**Entre nodes:** o **Queue sharing** reúne instâncias sob um nome. Ordem de roteamento, despertar e erros estão em [Grupos de fila](CLUSTERING.md#queue-groups).
+
 <a id="image--pdf-input"></a>
 ## Entrada de imagem e PDF
 
@@ -180,6 +184,6 @@ Quando **Idle Timeout**, **Max Concurrent**, ou **Proxy Sampling Overrides** est
 <a id="idle-timeout"></a>
 ## Tempo ocioso (Idle Timeout)
 
-Defina **Idle Timeout min** no formulário de lançamento (0 = desabilitado). Quando habilitado, após N minutos sem requisições o container llama-server é parado para liberar VRAM; a próxima requisição acorda um container novo com a mesma configuração. Os clientes veem a mesma porta com um atraso de cold-start.
+Defina **Idle Timeout min** no formulário de lançamento (0 = desabilitado). Quando habilitado, após N minutos sem requisições o container llama-server é parado para liberar VRAM; a próxima requisição acorda um container novo com a mesma configuração. Os clientes veem a mesma porta com um atraso de cold-start. Um membro dormindo de um grupo de fila também pode acordar sem que nenhuma requisição chegue até ele, quando seu grupo continua saturado: veja [Acordar sob carga](CLUSTERING.md#waking-under-load).
 
 Para instâncias gerenciadas pelo proxy (OpenWebUI), use `LLAMAMAN_IDLE_TIMEOUT` em vez disso.

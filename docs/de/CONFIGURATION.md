@@ -1,5 +1,7 @@
 # Konfiguration & Speicherung
 
+> **Hinweis:** Dies ist eine Übersetzung und kann hinter der [englischen Fassung](../en/CONFIGURATION.md) zurückliegen; maßgeblich ist die englische Fassung.
+
 Bare-Metal-Installationen, das Auth-Modell im Detail, GPU-Stats, Request-Aufzeichnung, Speicher-Backends und die vollständige Umgebungsvariablen-Referenz.
 
 ## Inhalt

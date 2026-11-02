@@ -6,6 +6,8 @@
 
 [English](../../README.md) · [简体中文](../zh-CN/README.md) · [日本語](../ja/README.md) · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Español](../es/README.md) · [Português](../pt-BR/README.md) · **Русский** · [Български](../bg/README.md)
 
+> **Примечание:** это перевод, он может отставать от [английской версии](../../README.md), которая является основной.
+
 **Что это.** Браузерный UI + API-фронтенд для запуска нескольких инстансов сервера [llama.cpp](https://github.com/ggml-org/llama.cpp), на одной машине или на небольшом кластере таких машин. В комплекте прокси, совместимый с Ollama, поэтому его можно напрямую подключить к [Open WebUI](https://github.com/open-webui/open-webui).
 
 **Чем отличается.** В самом llamaMan **нет кода llama.cpp и нет зависимости от GPU** - он порождает контейнеры `ghcr.io/ggml-org/llama.cpp:server-*` как соседние через Docker-сокет. Обновляйте llama.cpp, не трогая llamaMan: `docker pull` более свежего образа `server-*`. Та же машинерия порождения и проксирования не зависит от движка: инстансы [Strata](STRATA.md) работают рядом с llama.cpp-инстансами — так же запускаются, мониторятся, проксируются и укладываются в сон.
@@ -152,7 +154,7 @@ flowchart LR
 | [Настройки запуска](LAUNCH-SETTINGS.md) | Каждое поле формы запуска и его флаг llama-server: ctx, KV-кэш, GPU layers, MoE offload, spec decoding, переопределения сэмплирования, параллелизм и очереди, живые правки пресета, [ввод изображений и PDF](LAUNCH-SETTINGS.md#image--pdf-input), [Anti-Loop](LAUNCH-SETTINGS.md#anti-loop), по-инстансный прокси, idle timeout |
 | [Модели](MODELS.md) | Отображаемые имена, обновления моделей, [Decision-модели](MODELS.md#decision-models) (`/v1/systemone`), [вытеснение моделей](MODELS.md#model-eviction), настройки загрузок, управление Docker-образами, архив моделей, бэкап и восстановление, очистка |
 | [Конфигурация и хранение](CONFIGURATION.md) | Bare-metal установки, детали auth, GPU-статистика, запись запросов, бэкенды JSON vs MariaDB, [жизнь при недоступности БД](CONFIGURATION.md#surviving-a-database-outage-local-mirror) и полная справка [Переменные окружения](CONFIGURATION.md#environment-variables) |
-| [Кластер](CLUSTERING.md) | Многоузловая настройка: общая БД, heartbeat, балансировка общей очереди |
+| [Кластер](CLUSTERING.md) | Многоузловая настройка: общая БД, heartbeat, балансировка общей очереди, пробуждение под нагрузкой, ошибки маршрутизации |
 | [База знаний и MCP](KNOWLEDGE-BASE.md) | Темы, эмбеддинги, MCP-эндпоинт, режимы доступа |
 | [Strata](STRATA.md) | Второй движок инференса: настройка, каталог, ограничения, заметки по дизайну |
 | [REST API](API.md) | Основные эндпоинты: инстансы, загрузки, пресеты, настройки, журнал запросов, особенности тела запуска |

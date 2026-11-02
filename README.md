@@ -152,7 +152,7 @@ How it works in depth - request flow, queue-aware dispatch, failure behavior, de
 | [Launch settings](docs/en/LAUNCH-SETTINGS.md) | Every launch-form field and its llama-server flag: ctx, KV cache, GPU layers, MoE offload, spec decoding, sampling overrides, concurrency & queueing, live preset updates, [Image & PDF input](docs/en/LAUNCH-SETTINGS.md#image--pdf-input), [Anti-Loop](docs/en/LAUNCH-SETTINGS.md#anti-loop), per-instance proxy, idle timeout |
 | [Models](docs/en/MODELS.md) | Display names, model updates, [Decision Models](docs/en/MODELS.md#decision-models) (`/v1/systemone`), [Model Eviction](docs/en/MODELS.md#model-eviction), download settings, Docker image management, model archive, backup & restore, cleanup |
 | [Configuration & storage](docs/en/CONFIGURATION.md) | Bare-metal installs, auth detail, GPU stats, request recording, JSON vs MariaDB backends, [surviving a DB outage](docs/en/CONFIGURATION.md#surviving-a-database-outage-local-mirror), and the full [Environment Variables](docs/en/CONFIGURATION.md#environment-variables) reference |
-| [Clustering](docs/en/CLUSTERING.md) | Multi-node setup: shared DB, heartbeats, shared-queue load balancing |
+| [Clustering](docs/en/CLUSTERING.md) | Multi-node setup: shared DB, heartbeats, shared-queue load balancing, waking under load, routing errors |
 | [Knowledge Base & MCP](docs/en/KNOWLEDGE-BASE.md) | Topics, embeddings, MCP endpoint, access modes |
 | [Strata](docs/en/STRATA.md) | The second inference engine: setup, catalogue, limits, design notes |
 | [REST API](docs/en/API.md) | Core endpoints: instances, downloads, presets, settings, request log, launch-body quirks |

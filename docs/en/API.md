@@ -4,7 +4,7 @@ All endpoints return / accept JSON. Management endpoints need a session cookie (
 
 ## Contents
 
-- [Auth & keys](#auth--keys) · [Instances](#instances) · [Downloads, Models, Presets](#downloads-models-presets) · [Settings, System, Request log](#settings-system-request-log) · [Ollama & OpenAI compat](#ollama--openai-compat)
+- [Auth & keys](#auth--keys) · [Instances](#instances) · [Downloads, Models, Presets](#downloads-models-presets) · [Model errors on inference routes](#model-errors-on-inference-routes) · [Settings, System, Request log](#settings-system-request-log) · [Ollama & OpenAI compat](#ollama--openai-compat)
 
 ## Auth & keys
 
@@ -63,13 +63,29 @@ Boundary quirks worth pinning:
 
 Download body: `{"repo_id": "...", "filename": "...", "hf_token": "...", "speed_limit_mbps": 0}`. Blank `filename` pulls the full repo.
 
-Instances and presets take an optional `engine` (`llamacpp` default, or `strata`; inferred from a `/strata/...` model path) plus, for Strata, `strata_vision` (`no`/`yes`/`cpu`), `strata_kv` (`""`/`int8`/`q4_0`/`k8v4`) and `strata_low_ram` (`auto`/`on`/`off`). Strata model paths are virtual: `/strata/<family>-<SIZE>`, e.g. `PUT /api/presets/strata/qwen-IQ2_XS`. See [Strata](STRATA.md).
+Instances and presets take an optional `engine` (`llamacpp` default, or `strata`; inferred from a `/strata/...` model path) plus, for Strata, `strata_vision` (`no`/`yes`/`cpu`), `strata_kv` (`""`/`int8`/`q4_0`/`k8v4`) and `strata_low_ram` (`auto`/`on`/`off`). Qwen3.6-35B-A3B also takes `strata_parallel` (`1` to `8`, default `1`), which any other Strata family refuses above `1`. Strata model paths are virtual: `/strata/<family>-<SIZE>`, e.g. `PUT /api/presets/strata/qwen-IQ2_XS`. See [Strata](STRATA.md).
+
+## Model errors on inference routes
+
+When a model can't be served, the Ollama routes return `{"error": "<message>"}` and the OpenAI routes return `{"error": {"message": "<message>", "code": "<code>"}}`.
+
+| Status | Code | Meaning |
+|---|---|---|
+| `429` | `group_full` | Other nodes host the group and at least one peer's queue is full. Retrying can work. |
+| `503` | `group_unavailable` | Other nodes host the group, but none can take the request. The message names each node and why. |
+| `503` | `group_stopped` | Every member of the group on this node is stopped |
+| `503` | `model_stopping` | The member is shutting down |
+| `503` | `wake_failed` | The model failed to wake |
+| `503` | `wake_timeout` | The model didn't become healthy in time |
+| `503` | `model_limit` | `LLAMAMAN_MAX_MODELS` is reached and nothing can be evicted |
+
+A model that simply isn't known returns `model '<name>' not found`, as `500` on Ollama routes and `503` on OpenAI routes, with no code. A forwarded request that times out on a peer returns `504`. A model that was launched or was already loading but never becomes ready returns `500`, with no code, and the request doesn't try another member.
 
 ## Settings, System, Request log
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` / `POST` | `/api/settings` | Get / save global settings |
+| `GET` / `POST` | `/api/settings` | Get / save global settings. Per-node keys include `eager_wake_enabled` and `eager_wake_polls`; see [Waking under load](CLUSTERING.md#waking-under-load) |
 | `GET` | `/api/system-info` | CPU usage, core count, RAM usage |
 | `GET` | `/api/gpu-info` | Per-GPU VRAM and utilization (native; falls back to container exec) |
 | `GET` | `/health` | `{"status": "ok"}` - always open, no auth required |
@@ -80,6 +96,6 @@ Instances and presets take an optional `engine` (`llamacpp` default, or `strata`
 ## Ollama & OpenAI compat
 
 Ollama: `/api/tags`, `/api/version`, `/api/show`, `/api/ps`, `/api/chat`, `/api/generate` (chat/generate auto-start).
-OpenAI: `/v1/models`, `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` (chat auto-starts).
+OpenAI: `/v1/models`, `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` (chat auto-starts). In a cluster, `/v1/embeddings` routes across nodes like the other inference routes.
 Decision models: `/v1/systemone` (auto-starts) - see [Decision Models](MODELS.md#decision-models).
 Knowledge base: `/api/kb/*` (admin-only) and the MCP endpoint `/mcp/knowledge` - see [Knowledge Base & MCP](KNOWLEDGE-BASE.md). Cluster node-to-node endpoints use `X-Cluster-Secret` - see [Clustering](CLUSTERING.md).

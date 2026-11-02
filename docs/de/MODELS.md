@@ -1,5 +1,7 @@
 # Modelle, Downloads & Eviction
 
+> **Hinweis:** Dies ist eine Übersetzung und kann hinter der [englischen Fassung](../en/MODELS.md) zurückliegen; maßgeblich ist die englische Fassung.
+
 Alles rund um die Modellbibliothek: Modelle hinzufügen, aktuell halten, wie der Proxy sie auswählt und verdrängt, und die Aufräum-Einstellungen.
 
 ## Inhalt
@@ -70,7 +72,7 @@ Drei Umschalter unter **Settings → App Settings** lockern diese Defaults:
 Weitere Details:
 
 - Alle laufenden Chat-Instanzen zählen (sowohl Admin-UI- als auch proxy-verwaltete).
-- **Schlafende Instanzen zählen weiterhin** (die Slot-Belegung bleibt über die Idle-Pause bestehen) - aber das Wecken eines Schläfers für sein eigenes Modell wird niemals durch das Cap blockiert.
+- **Schlafende Instanzen zählen weiterhin** (die Slot-Belegung bleibt über die Idle-Pause bestehen) - aber das Wecken eines Schläfers für sein eigenes Modell wird niemals durch das Cap blockiert. Das schließt ein Warteschlangengruppen-Mitglied ein, das [unter Last aufwacht](CLUSTERING.md#waking-under-load).
 - Instanzen mit **Exclude from Max Models** an (Launch-Formular) zählen nicht und werden nie verdrängt: Embedding-Modelle, Decision Models, alles Kleine, das dauerhaft laufen soll. **Embedding Model** einzuschalten schaltet es ebenfalls ein, und Presets, die vor Einführung des Umschalters gespeichert wurden, erhalten ihn aus ihrer Embedding-Model-Einstellung.
 - `LLAMAMAN_MAX_MODELS=0` deaktiviert die Eviction vollständig.
 

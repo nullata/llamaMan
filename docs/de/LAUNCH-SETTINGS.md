@@ -1,5 +1,7 @@
 # Launch-Einstellungen
 
+> **Hinweis:** Dies ist eine Übersetzung und kann hinter der [englischen Fassung](../en/LAUNCH-SETTINGS.md) zurückliegen; maßgeblich ist die englische Fassung.
+
 Jedes Feld im Launch-Formular, worauf es sich abbildet, und die Verhaltensnotizen. Für die Vier-Schritte-Anleitung „Wie starte ich“ siehe die [README](../../README.md#your-first-model).
 
 ## Inhalt
@@ -105,6 +107,8 @@ Wenn **Max Concurrent** > 0, setzt llamaMan ein FIFO-Gate vor die Instanz. Über
 
 **Parallel vs Max Concurrent:** `Parallel` steuert llama-server-interne KV-Slots; `Max Concurrent` begrenzt, wie viele Requests llamaMan gleichzeitig weiterleitet. Beides zusammen verwenden (z. B. `Parallel=4`, `Max Concurrent=4`), um den Server gut zu versorgen, ohne seine Slots zu überfüllen.
 
+**Über Nodes hinweg:** **Queue-Sharing** fasst Instanzen unter einem Namen zusammen. Routing-Reihenfolge, Aufwecken und Fehler sind unter [Queue-Gruppen](CLUSTERING.md#queue-groups) beschrieben.
+
 <a id="image--pdf-input"></a>
 ## Bild- & PDF-Input
 
@@ -180,6 +184,6 @@ Wenn **Idle Timeout**, **Max Concurrent** oder **Proxy Sampling Overrides** für
 <a id="idle-timeout"></a>
 ## Idle-Timeout
 
-Setzen Sie **Idle Timeout min** im Launch-Formular (0 = deaktiviert). Wenn aktiviert, wird der llama-server-Container nach N Minuten ohne Requests gestoppt, um VRAM freizugeben; der nächste Request weckt einen neuen Container mit derselben Konfiguration. Clients sehen denselben Port mit einer Cold-Start-Verzögerung.
+Setzen Sie **Idle Timeout min** im Launch-Formular (0 = deaktiviert). Wenn aktiviert, wird der llama-server-Container nach N Minuten ohne Requests gestoppt, um VRAM freizugeben; der nächste Request weckt einen neuen Container mit derselben Konfiguration. Clients sehen denselben Port mit einer Cold-Start-Verzögerung. Ein schlafendes Warteschlangengruppen-Mitglied kann auch ohne eintreffenden Request aufwachen, wenn seine Gruppe ausgelastet bleibt: siehe [Aufwecken unter Last](CLUSTERING.md#waking-under-load).
 
 Für proxy-verwaltete (OpenWebUI-)Instanzen stattdessen `LLAMAMAN_IDLE_TIMEOUT` verwenden.

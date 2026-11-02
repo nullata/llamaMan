@@ -1,10 +1,12 @@
 # Motor Strata
 
-*(opt-in, solo NVIDIA)* [Strata](https://github.com/Niko1221/Strata) ejecuta la familia mixture-of-experts Qwen3.8-Flash-Next (y sus variantes Coder, Swift 1.5 y Unsloth) en GPUs NVIDIA de consumo más RAM del sistema. llamaMan puede lanzar, monitorizar, hacer de proxy, dormir/despertar y detener instancias Strata junto a las de llama.cpp. El comportamiento de llama.cpp no cambia: la capa de motor (`core/engines/`) mantiene el lanzamiento de llama.cpp idéntico byte a byte (probado con snapshots).
+> **Nota:** esta es una traducción y puede ir por detrás de la [versión en inglés](../en/STRATA.md), que es la de referencia.
+
+*(opt-in, solo NVIDIA)* [Strata](https://github.com/Niko1221/Strata) ejecuta la familia mixture-of-experts Qwen3.8-Flash-Next (y sus variantes Coder, Swift 1.5 y Unsloth) y Qwen3.6-35B-A3B en GPUs NVIDIA de consumo más RAM del sistema. llamaMan puede lanzar, monitorizar, hacer de proxy, dormir/despertar y detener instancias Strata junto a las de llama.cpp. El comportamiento de llama.cpp no cambia: la capa de motor (`core/engines/`) mantiene el lanzamiento de llama.cpp idéntico byte a byte (probado con snapshots).
 
 ## Contenido
 
-- [Primeros pasos](#getting-started) · [Límites y comportamiento](#limits-and-behaviour) · [Notas de diseño y verificación](#design-notes-and-verification)
+- [Primeros pasos](#getting-started) · [Qwen3.6-35B-A3B y fine-tunes](#qwen36-35b-a3b-and-fine-tunes) · [Límites y comportamiento](#limits-and-behaviour) · [Notas de diseño y verificación](#design-notes-and-verification)
 
 <a id="getting-started"></a>
 ## Primeros pasos
@@ -19,19 +21,39 @@ docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (f
 
 **2. Habilítalo** en el node llamaMan: `STRATA_ENABLED=true` (ver [Strata variables](CONFIGURATION.md#strata)). Settings → Docker Images muestra entonces *Manage Strata images*: las imágenes Strata descargadas, la construida (commits descargado y construido, el botón de build) y su auto-update. El formulario de lanzamiento ofrece Strata cuando una de ellas está en el node.
 
-**3. Lanza.** La biblioteca de modelos gana una entrada virtual por familia × tamaño: `strata/qwen-Q2_0`, `strata/qwen-IQ2_XS`, `strata/qwen-IQ3_XXS`, `strata/qwen-IQ3_S`, `strata/swift-IQ2_XS`, `strata/swift-IQ3_XXS`, `strata/coder-IQ1_M`, `strata/unsloth-UD-Q4_K_XL` *(experimental)*. Cada una es su propia instancia y container, así que cambiar de modelos funciona como en llama.cpp: lanza o despierta otra instancia, con las reglas habituales de [desalojo](MODELS.md#model-eviction) (una instancia Strata es un modelo de chat). Las entradas también aparecen en `/api/tags` y `/v1/models`, y las peticiones pueden usar el id (`strata/qwen-IQ2_XS`, sin distinguir mayúsculas/minúsculas, `:tag` ignorado) o el nombre servido por Strata (`qwen3.8-flash-next-iq2_xs`).
+**3. Lanza.** La biblioteca de modelos gana una entrada virtual por familia × tamaño: `strata/qwen-Q2_0`, `strata/qwen-IQ2_XS`, `strata/qwen-IQ3_XXS`, `strata/qwen-IQ3_S`, `strata/swift-IQ2_XS`, `strata/swift-IQ3_XXS`, `strata/coder-IQ1_M`, `strata/unsloth-UD-Q4_K_XL` *(experimental)*, `strata/unsloth-UD-IQ4_XS`, `strata/qwen36-UD-Q4_K_XL`, `strata/qwen36-UD-Q6_K_XL`, `strata/qwen36-Q8_0`. Cada una es su propia instancia y container, así que cambiar de modelos funciona como en llama.cpp: lanza o despierta otra instancia, con las reglas habituales de [desalojo](MODELS.md#model-eviction) (una instancia Strata es un modelo de chat). Las entradas también aparecen en `/api/tags` y `/v1/models`, y las peticiones pueden usar el id (`strata/qwen-IQ2_XS`, sin distinguir mayúsculas/minúsculas, `:tag` ignorado) o el nombre servido por Strata (`qwen3.8-flash-next-iq2_xs`).
 
 El formulario de lanzamiento oculta los campos solo-llama.cpp (GPU layers, MoE, threads, parallel, KV types, flash attention, spec decoding, mmproj, DRY, extra args) y muestra **Image Input** (no / GPU / CPU), **KV Cache** (int8 por defecto de Strata, `int8`, `q4_0`, `k8v4`) y **Low-RAM Mode** (auto / on / off). La API rechaza los campos solo-llama.cpp definidos para un modelo Strata.
 
-**Primer arranque.** Strata descarga ~58-111 GB, prepara su "pack" y obtiene su capa MTP antes de que el servidor abra su puerto; los arranques posteriores van directo a la carga (1-3 minutos). La tarjeta de instancia muestra *setting up → downloading (con %) → preparing pack → loading* parseado del log del container, y el botón Logs transmite el log. Dos formas de descargar:
+**Primer arranque.** En las familias Flash-Next, Strata descarga ~58-111 GB, prepara su "pack" y obtiene su capa MTP antes de que el servidor abra su puerto ([Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) es más pequeño y omite la capa MTP); los arranques posteriores van directo a la carga (1-3 minutos). La tarjeta de instancia muestra *setting up → downloading (con %) → preparing pack → loading* parseado del log del container, y el botón Logs transmite el log. Dos formas de descargar:
 
 - **Deja que Strata descargue** en su volumen `/data` (por defecto).
 - **Pre-descarga con llamaMan** (botón en la sección Strata, o `POST /api/engines/strata/download`): una entrada ordinaria en la pestaña Downloads (progreso, pausa/reanudar, reintento, tokens HF, límites de velocidad) que obtiene los shards de la revisión de Hugging Face fijada por Strata en `MODELS_DIR/strata/<tag>/`. Una vez completos se montan en el container mediante bind mount y el setup de Strata los usa en lugar de descargar. Un lanzamiento se rechaza mientras esa descarga sigue en curso. La capa MTP (~5 GB) y el pack los sigue preparando Strata en el primer arranque.
 
+<a id="qwen36-35b-a3b-and-fine-tunes"></a>
+## Qwen3.6-35B-A3B y fine-tunes
+
+Qwen3.6-35B-A3B tiene su propia ruta de motor en Strata y es un archivo GGUF único, sin pack ni capa MTP separada.
+
+| Tamaño | Descarga | RAM |
+|---|---|---|
+| `UD-Q4_K_XL` | 22.9 GB | 32 GB |
+| `UD-Q6_K_XL` | 32.6 GB | 44 GB |
+| `Q8_0` | 37.8 GB | 52 GB |
+
+**Los fine-tunes funcionan.** Cualquier GGUF único en la biblioteca de modelos puede ejecutarse en Strata si su nombre termina en uno de esos tamaños y bien su nombre contiene `35B-A3B` o la arquitectura del archivo es `qwen35moe`. llamaMan lo monta bajo el nombre publicado, y Strata avisa de una build diferente pero no lo rechaza. Los clientes se dirigen a él como `strata/qwen36-<size>`, como `qwen3.6-35b-a3b-<size>`, o a través de un nombre de grupo de cola, no por el propio nombre del fine-tune.
+
+- **Peticiones a la vez.** El campo **Requests at Once** del formulario de lanzamiento (`strata_parallel`, 1 a 8, por defecto 1) establece cuántas peticiones se ejecutan juntas, y Max Concurrent lo sigue. Cada slot adicional resta aproximadamente 1.5 GB de VRAM a 32K de contexto a los expertos, y en tarjetas de 12 o 16 GB en modo híbrido más slots hacen que cada petición sea más lenta. Cambiarlo no requiere un setup nuevo.
+- **El contexto** está limitado a 262144 tokens, la longitud entrenada del modelo.
+- **Las imágenes están desactivadas por ahora.** Su codificador de imágenes aún no se descarga ni se monta.
+- **Una GPU.** Strata usa únicamente la primera GPU en esta ruta. KV Cache, Low-RAM Mode y Layer Split no aplican y están ocultos.
+- **Cambiar de archivo vuelve a hacer setup.** Dos archivos del mismo tamaño comparten un id de modelo, una config de ejecución y un tokenizador en el volumen. Lanzar un archivo diferente ejecuta el setup y reconstruye el tokenizador, y no pueden ejecutarse uno al lado del otro en un mismo node.
+- **Imágenes antiguas.** Si el motor de la imagen no dispone de esta familia, el setup se detiene y la tarjeta de la instancia indica que se actualice la imagen.
+
 <a id="limits-and-behaviour"></a>
 ## Límites y comportamiento
 
-- **Una petición a la vez.** Max Concurrent se fuerza a 1; las peticiones siguientes se encolan en el gate de llamaMan (Max Queue Depth, y luego 429).
+- **Una petición a la vez** (excepto [Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes)). Max Concurrent se fuerza a 1; las peticiones siguientes se encolan en el gate de llamaMan (Max Queue Depth, y luego 429).
 - **RAM.** Strata carga 32-62 GB en RAM (`--ulimit memlock=-1` se define siempre). Un **System Memory Limit** fuerza Low-RAM mode activado, porque el setup de Strata lee la RAM del host y no puede ver un límite de container; la UI avisa por debajo de ~64 GB.
 - **Los ajustes quedan fijados en el setup de Strata.** Context / image input / KV / Low-RAM / GPU pinning se registran por modelo en el volumen de datos. llamaMan recuerda los ajustes con los que cada modelo quedó healthy por última vez y pasa `REINSTALL=1` solo cuando cambian (los archivos se reutilizan).
 - **Idle timeout** funciona (sleep detiene el container; la siguiente petición lo despierta), pero un cold start tarda minutos y la petición que despierta espera por él (`STRATA_LOAD_TIMEOUT`).
@@ -77,10 +99,10 @@ core/engines/
   |---|---|
   | image | `STRATA_IMAGE` (si no la construida, y si no una imagen Strata descargada) |
   | command | ninguna (el entrypoint solo lee variables de entorno) |
-  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`? |
+  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`? (solo familias con ruta propia; peticiones a la vez) |
   | ulimits | `memlock=-1` |
   | GPU | NVIDIA `device_requests` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
-  | mounts | volumen de datos → `/data`; logs; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>` (`<family>-<SIZE>` para los no-qwen; la carpeta de shards sensible a mayúsculas de setup.py) (rw), cuando llamaMan tiene shards completos |
+  | mounts | volumen de datos → `/data`; logs; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>` (`<family>-<SIZE>` para los no-qwen; la carpeta de shards sensible a mayúsculas de setup.py) (rw), cuando llamaMan tiene shards completos, y también lo es un modelo de un solo archivo lanzado desde la biblioteca, cualquiera que sea su nombre |
   | mem_limit | de System Memory Limit (fuerza `LOW_RAM=on`) |
   | network / ports / labels | como para llama-server (`llamaman-net`, `8080 → host port`, `llamaman.*`) |
 
@@ -112,19 +134,21 @@ core/engines/
    código fuente, un límite de memlock ausente parece una ralentización más que un fallo, pero **no pude verificarlo sin
    una GPU**. llamaMan siempre lo define.
 
-También del código fuente: Strata sirve una petición a la vez (`server.py:1323`). El Dockerfile define `STRATA_EXECV=1`,
+También del código fuente: en la ruta Flash-Next, Strata sirve una petición a la vez (`server.py:1323`). El Dockerfile define `STRATA_EXECV=1`,
 así que el servidor es PID 1 y `docker stop` lo alcanza. Un container detenido a mitad de descarga se reanuda desde sus
 archivos `.part` en el siguiente arranque.
 
 <a id="design-decisions"></a>
 ## Decisiones de diseño
 
-- **La concurrencia se fuerza a 1** en el lanzamiento, en la fusión de preset, en ediciones en vivo y en los presets
+- **La concurrencia se fuerza a 1** (a `strata_parallel` en una familia con ruta propia) en el lanzamiento, en la fusión de preset, en ediciones en vivo y en los presets
   guardados. El gate fuerza el proxy sidecar, así que el encolado ocurre en llamaMan (`RequestGate`), no dentro de Strata.
 - **`REINSTALL` por huella digital.** Context, vision, KV, Low-RAM y GPU pinning se registran en la config por modelo de
   Strata en el volumen. `DATA_DIR/strata_setups.json` recuerda los ajustes con los que cada modelo se puso healthy por
   última vez, indexado por volumen de datos y setup tag, y `REINSTALL=1` se envía solo cuando difieren. Una huella
   desconocida (primer lanzamiento vía llamaMan, o un volumen montado a mano) también reinstala. Cuesta una pasada de setup que reutiliza los archivos.
+  La huella de una familia con ruta propia también contiene la ruta, el tamaño y la hora de modificación del archivo de origen, y su setup
+  reconstruye el tokenizador, para que un fine-tune diferente del mismo tamaño no se sirva con el del anterior.
 - **Una instancia viva por modelo Strata por node.** Dos instancias de un modelo ejecutarían setup sobre los mismos archivos.
 - **Un lanzamiento se rechaza mientras llamaMan sigue descargando ese modelo**, para que el container no lo descargue una
   segunda vez en su volumen.
@@ -153,7 +177,6 @@ archivos `.part` en el siguiente arranque.
 ## Limitaciones conocidas
 
 - Solo NVIDIA. La ruta AMD (HIP) de Strata es un build manual experimental en upstream y no se ofrece.
-- `LAYER_SPLIT` (colocación de capas multi-GPU) no está expuesto. Fijar varias GPUs usa el split automático de Strata.
 - El encoder de visión (mmproj) siempre lo descarga Strata mismo, al volumen.
 - La propia UI web de Strata (`/`, `/settings`, `/load`, `/unload`) es alcanzable por el puerto de la instancia, pero
   llamaMan no la usa ni la gestiona. Su función de idle-unload está sin usar; el sleep de llamaMan detiene el container.
@@ -173,7 +196,7 @@ de disco libre.
    añade `--build-arg CUDA_ARCHITECTURES=<your arch>`. O, tras el paso 2, Settings → Docker Images → *Manage Strata
    images* → **Pull repo & build latest** Construye solo para las generaciones GPU de este node.
 2. **Habilitar:** define `STRATA_ENABLED=true` y reinicia llamaMan.
-   - `GET /api/engines` muestra strata `available: true`, con sus modelos (9 en la lista integrada).
+   - `GET /api/engines` muestra strata `available: true`, con sus modelos (12 en la lista integrada).
    - Settings → Docker Images → *Manage Strata images* muestra `strata:latest` como **local**.
 3. **Gating:** en un node no-NVIDIA (o con `GPU_TYPE=rocm`), los modelos Strata no se listan, y
    `POST /api/instances` para `/strata/qwen-IQ2_XS` devuelve 400 con la razón de NVIDIA.

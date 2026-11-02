@@ -6,6 +6,8 @@
 
 [English](../../README.md) · **简体中文** · [日本語](../ja/README.md) · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Español](../es/README.md) · [Português](../pt-BR/README.md) · [Русский](../ru/README.md) · [Български](../bg/README.md)
 
+> **注意：** 本文为译文，可能落后于[英文版](../../README.md)；以英文版为准。
+
 **这是什么。** 一个用于在单台机器或小型集群上运行多个 [llama.cpp](https://github.com/ggml-org/llama.cpp) server 实例的浏览器 UI + API 前端。内置 Ollama 兼容 proxy，可无缝接入 [Open WebUI](https://github.com/open-webui/open-webui)。
 
 **有何不同。** llamaMan 本身**不包含 llama.cpp 代码，且无 GPU 依赖** —— 它通过 Docker socket 将 `ghcr.io/ggml-org/llama.cpp:server-*` 容器作为同级（sibling）容器拉起。无需触碰 llamaMan 即可更新 llama.cpp：执行 `docker pull` 拉取更新的 `server-*` 镜像即可。相同的容器生成与 proxy 机制完全独立于引擎：[Strata](STRATA.md) 实例与 llama.cpp 实例并存运行，以完全相同的方式启动、监控、proxy 转发与休眠。
@@ -152,7 +154,7 @@ flowchart LR
 | [启动设置](LAUNCH-SETTINGS.md) | 启动表单的每个字段及其 llama-server 标志：ctx、KV 缓存、GPU 层数、MoE 卸载、投机解码、采样覆盖、并发与排队、实时预设更新、[图像与 PDF 输入](LAUNCH-SETTINGS.md#image--pdf-input)、[防循环](LAUNCH-SETTINGS.md#anti-loop)、每实例 proxy、空闲超时 |
 | [模型](MODELS.md) | 显示名称、模型更新、[决策模型](MODELS.md#decision-models) (`/v1/systemone`)、[模型逐出](MODELS.md#model-eviction)、下载设置、Docker 镜像管理、模型归档、备份与恢复、清理设置 |
 | [配置与存储](CONFIGURATION.md) | 裸机安装、认证详情、GPU 统计、请求记录、JSON 与 MariaDB 后端、[数据库故障应对](CONFIGURATION.md#surviving-a-database-outage-local-mirror)，以及完整的[环境变量](CONFIGURATION.md#environment-variables)参考 |
-| [集群](CLUSTERING.md) | 多节点设置：共享数据库、心跳检测、共享队列负载均衡 |
+| [集群](CLUSTERING.md) | 多节点设置：共享数据库、心跳检测、共享队列负载均衡、负载下唤醒、路由错误 |
 | [知识库与 MCP](KNOWLEDGE-BASE.md) | 主题、Embedding、MCP endpoint、访问模式 |
 | [Strata](STRATA.md) | 第二推理引擎：安装设置、模型目录、限制、设计说明 |
 | [REST API](API.md) | 核心 endpoint：实例、下载、预设、设置、请求日志、启动请求体边界行为 |

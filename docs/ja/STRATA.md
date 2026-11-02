@@ -1,10 +1,12 @@
 # Strata エンジン
 
-*(オプトイン、NVIDIA 専用)* [Strata](https://github.com/Niko1221/Strata) は、Qwen3.8-Flash-Next の Mixture-of-Experts ファミリー（およびその Coder、Swift 1.5、Unsloth バリアント）をコンシューマー向け NVIDIA GPU とシステム RAM 上で実行します。llamaMan は、llama.cpp インスタンスの隣で Strata インスタンスの起動、監視、プロキシ、スリープ/復帰、停止を行うことができます。llama.cpp の動作は変わりません: エンジン層（`core/engines/`）により、llama.cpp の起動はバイト単位で同一に保たれます（スナップショットテスト済み）。
+> **注:** これは翻訳であり、[英語版](../en/STRATA.md)より内容が古い場合があります。英語版が正式な内容です。
+
+*(オプトイン、NVIDIA 専用)* [Strata](https://github.com/Niko1221/Strata) は、Qwen3.8-Flash-Next の Mixture-of-Experts ファミリー（およびその Coder、Swift 1.5、Unsloth バリアント）と Qwen3.6-35B-A3B をコンシューマー向け NVIDIA GPU とシステム RAM 上で実行します。llamaMan は、llama.cpp インスタンスの隣で Strata インスタンスの起動、監視、プロキシ、スリープ/復帰、停止を行うことができます。llama.cpp の動作は変わりません: エンジン層（`core/engines/`）により、llama.cpp の起動はバイト単位で同一に保たれます（スナップショットテスト済み）。
 
 ## 目次
 
-- [クイックスタート](#クイックスタート) · [制限と動作](#制限と動作) · [設計上の留意点と検証](#設計上の留意点と検証)
+- [クイックスタート](#クイックスタート) · [Qwen3.6-35B-A3B とファインチューン](#qwen36-35b-a3b-and-fine-tunes) · [制限と動作](#制限と動作) · [設計上の留意点と検証](#設計上の留意点と検証)
 
 ## クイックスタート
 
@@ -18,18 +20,38 @@ docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (f
 
 **2. 有効化** llamaMan ノードで設定: `STRATA_ENABLED=true`（[Strata variables](CONFIGURATION.md#strata) を参照）。設定後、Settings → Docker Images に *Manage Strata images* が表示されます: プルされた Strata イメージ、ビルドされたイメージ（ダウンロード済みおよびビルド済みのコミット、ビルドボタン）、およびそれらの自動更新が表示されます。いずれかがノード上に存在すると、起動フォームで Strata が選択可能になります。
 
-**3. 起動。** モデルライブラリには、ファミリー × サイズごとに1つの仮想エントリが追加されます: `strata/qwen-Q2_0`、`strata/qwen-IQ2_XS`、`strata/qwen-IQ3_XXS`、`strata/qwen-IQ3_S`、`strata/swift-IQ2_XS`、`strata/swift-IQ3_XXS`、`strata/coder-IQ1_M`、`strata/unsloth-UD-Q4_K_XL` *(実験的)*。それぞれが独自のインスタンスおよびコンテナであるため、モデルの切り替えは llama.cpp と同様に機能します: 通常の[エビクション](MODELS.md#model-eviction)ルール（Strata インスタンスは1つのチャットモデル）に従って、別のインスタンスを起動または復帰させます。エントリは `/api/tags` および `/v1/models` にも表示され、リクエストには ID（`strata/qwen-IQ2_XS`、大文字小文字不問、`:tag` は無視）または Strata 自身の提供名（`qwen3.8-flash-next-iq2_xs`）を使用できます。
+**3. 起動。** モデルライブラリには、ファミリー × サイズごとに1つの仮想エントリが追加されます: `strata/qwen-Q2_0`、`strata/qwen-IQ2_XS`、`strata/qwen-IQ3_XXS`、`strata/qwen-IQ3_S`、`strata/swift-IQ2_XS`、`strata/swift-IQ3_XXS`、`strata/coder-IQ1_M`、`strata/unsloth-UD-Q4_K_XL` *(実験的)*、`strata/unsloth-UD-IQ4_XS`、`strata/qwen36-UD-Q4_K_XL`、`strata/qwen36-UD-Q6_K_XL`、`strata/qwen36-Q8_0`。それぞれが独自のインスタンスおよびコンテナであるため、モデルの切り替えは llama.cpp と同様に機能します: 通常の[エビクション](MODELS.md#model-eviction)ルール（Strata インスタンスは1つのチャットモデル）に従って、別のインスタンスを起動または復帰させます。エントリは `/api/tags` および `/v1/models` にも表示され、リクエストには ID（`strata/qwen-IQ2_XS`、大文字小文字不問、`:tag` は無視）または Strata 自身の提供名（`qwen3.8-flash-next-iq2_xs`）を使用できます。
 
 起動フォームでは、llama.cpp 専用フィールド（GPU レイヤー、MoE、スレッド、パラレル、KV タイプ、Flash Attention、投機的デコーディング、mmproj、DRY、追加引数）が非表示になり、**Image Input**（no / GPU / CPU）、**KV Cache**（Strata デフォルト int8、`int8`、`q4_0`、`k8v4`）、**Low-RAM Mode**（auto / on / off）が表示されます。API は Strata モデルに対して設定された llama.cpp 専用フィールドを拒否します。
 
-**初回起動。** Strata は約 58〜111 GB をダウンロードし、「パック」を準備して、サーバーがポートを開く前に MTP レイヤーを取得します。以降の起動は直接ロードに進みます（1〜3分）。インスタンスカードには、コンテナログから解析された *setting up → downloading (with %) → preparing pack → loading* が表示され、Logs ボタンでログをストリーミングできます。ダウンロードには2つの方法があります:
+**初回起動。** Flash-Next ファミリーでは、Strata は約 58〜111 GB をダウンロードし、「パック」を準備して、サーバーがポートを開く前に MTP レイヤーを取得します（[Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) はより小さく、MTP レイヤーを取得しません）。以降の起動は直接ロードに進みます（1〜3分）。インスタンスカードには、コンテナログから解析された *setting up → downloading (with %) → preparing pack → loading* が表示され、Logs ボタンでログをストリーミングできます。ダウンロードには2つの方法があります:
 
 - **Strata にダウンロードさせる** `/data` ボリュームに直接ダウンロードします（デフォルト）。
 - **llamaMan で事前ダウンロード**（Strata セクションのボタン、または `POST /api/engines/strata/download`）: Downloads タブの通常のエントリ（進捗、一時停止/再開、再試行、HF トークン、速度制限）として、Strata が固定している Hugging Face リビジョンからシャードを `MODELS_DIR/strata/<tag>/` に取得します。完了するとコンテナにバインドマウントされ、Strata のセットアップはダウンロードの代わりにこれらを使用します。そのダウンロードの実行中は起動が拒否されます。MTP レイヤー（約 5 GB）とパックは、初回起動時に引き続き Strata によって準備されます。
 
+<a id="qwen36-35b-a3b-and-fine-tunes"></a>
+## Qwen3.6-35B-A3B とファインチューン
+
+Qwen3.6-35B-A3B は Strata 内に独自のエンジンパスを持つ単一の GGUF ファイルで、パックや個別の MTP レイヤーはありません。
+
+| サイズ | ダウンロード | RAM |
+|---|---|---|
+| `UD-Q4_K_XL` | 22.9 GB | 32 GB |
+| `UD-Q6_K_XL` | 32.6 GB | 44 GB |
+| `Q8_0` | 37.8 GB | 52 GB |
+
+**ファインチューンも動作します。** モデルライブラリ内の単一の GGUF は、名前がこれらのサイズのいずれかで終わり、かつ名前に `35B-A3B` を含むかファイルのアーキテクチャが `qwen35moe` であれば、Strata で実行できます。llamaMan はそれを公開名でマウントし、Strata は異なるビルドについて警告しますが、拒否はしません。クライアントはファインチューン自身の名前ではなく、`strata/qwen36-<size>`、`qwen3.6-35b-a3b-<size>`、またはキューグループ名で指定します。
+
+- **同時リクエスト数。** 起動フォームの **Requests at Once** フィールド（`strata_parallel`、1 〜 8、デフォルト 1）で同時に処理するリクエスト数を設定し、Max Concurrent もこれに従います。追加スロットごとに、32K コンテキストで約 1.5 GB の VRAM がエキスパートから奪われ、ハイブリッドモードの 12 GB または 16 GB カードではスロットを増やすとすべてのリクエストが遅くなります。変更に新たなセットアップは不要です。
+- **コンテキスト** は、モデルの学習長である 262144 トークンに制限されます。
+- **画像は当面オフです。** 画像エンコーダーはまだダウンロードもマウントもされません。
+- **GPU は1基。** このパスでは Strata は最初の GPU のみを使用します。KV Cache、Low-RAM Mode、Layer Split は適用されず、非表示になります。
+- **ファイルを切り替えるとセットアップをやり直します。** 同じサイズの2つのファイルは、ボリューム上で1つのモデル ID、1つの実行設定、1つのトークナイザーを共有します。別のファイルを起動するとセットアップが実行されてトークナイザーが再構築され、1つのノード上で同時に実行することはできません。
+- **古いイメージ。** イメージのエンジンがこのファミリーに対応していない場合、セットアップが停止し、インスタンスカードにイメージの更新を促すメッセージが表示されます。
+
 ## 制限と動作
 
-- **一度に1リクエストのみ。** Max Concurrent は強制的に 1 になります。以降のリクエストは llamaMan のゲートでキューイングされます（Max Queue Depth に達すると 429）。
+- **一度に1リクエストのみ**（[Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) を除く）。Max Concurrent は強制的に 1 になります。以降のリクエストは llamaMan のゲートでキューイングされます（Max Queue Depth に達すると 429）。
 - **RAM。** Strata は 32〜62 GB を RAM にロードします（`--ulimit memlock=-1` は常に設定されます）。**System Memory Limit** を設定すると Low-RAM モードが強制的にオンになります。これは、Strata のセットアップがホストの RAM を読み取り、コンテナの制限を認識できないためです。UI は約 64 GB 未満で警告を表示します。
 - **設定は Strata のセットアップに焼き込まれます。** Context / 画像入力 / KV / Low-RAM / GPU ピニングは、データボリューム上のモデルごとに記録されます。llamaMan は各モデルが最後に正常起動したときの設定を記憶し、それらが変更された場合にのみ `REINSTALL=1` を渡します（ファイルは再利用されます）。
 - **アイドルタイムアウト** は機能します（スリープによりコンテナが停止し、次のリクエストで復帰します）が、コールドスタートには数分かかり、復帰リクエストはその完了を待ちます（`STRATA_LOAD_TIMEOUT`）。
@@ -65,10 +87,10 @@ core/engines/
   |---|---|
   | image | `STRATA_IMAGE`（それ以外の場合はビルド済み、次いでプルされた Strata イメージ） |
   | command | なし（entrypoint は環境変数のみを読み取ります） |
-  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`?（ハングウォッチドッグ / 低速ストレージ許容時間）, `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`? |
+  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`?（ハングウォッチドッグ / 低速ストレージ許容時間）, `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`?（独自パスのファミリーのみ。同時リクエスト数） |
   | ulimits | `memlock=-1` |
   | GPU | NVIDIA `device_requests`（`gpu_devices` / `LLAMA_GPU_DEVICES`） |
-  | mounts | データボリューム → `/data`; ログ; llamaMan が完全なシャードを保持している場合、`MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>`（非 qwen の場合は `<family>-<SIZE>`; setup.py の大文字小文字を区別するシャードフォルダ）(rw) |
+  | mounts | データボリューム → `/data`; ログ; llamaMan が完全なシャードを保持している場合、`MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>`（非 qwen の場合は `<family>-<SIZE>`; setup.py の大文字小文字を区別するシャードフォルダ）(rw)。ライブラリから起動した単一ファイルモデルも、名前に関係なく同様です |
   | mem_limit | System Memory Limit から（`LOW_RAM=on` を強制） |
   | network / ports / labels | llama-server と同様（`llamaman-net`、`8080 → host port`、`llamaman.*`） |
 
@@ -79,12 +101,12 @@ core/engines/
 3. **ディスク上の GGUF の再利用。** `setup.py` には `--gguf-dir` がありますが（`setup.py:2954`）、entrypoint はこれを転送しません。ただし、セットアップは `/data/models/<fam tag><SIZE>/<original name>`（例: `IQ3_S`, `coder-IQ1_M`; 大文字小文字を区別）にすでに存在する完全なシャードを受け入れます: 自身のテンソルディレクトリと照合して完了マークを付けます（`setup.py:3389-3405`, "#173"）。したがって、llamaMan は自身のシャードのダウンロードが完了した後にのみ、ローカルコピーをそこにバインドマウントします（`.done` マークのために読み書き可能）。シャードは Strata が固定している Hugging Face リビジョンから取得されます（`setup.py:65-70`、`core/engines/strata.py` にミラーリング）。MTP レイヤー（約 5 GB）とパックは引き続きコンテナ内で準備されます。
 4. **メモリ制限 / memlock。** セットアップはホストの合計である `/proc/meminfo` から RAM を読み取るため、制限されたコンテナは `LOW_RAM=on` を要求する必要があります（Dockerfile のコメント `:31`、`docs/INSTALL.md:116-118`）。これがないとセットアップは RAM 内モードを選択し、コンテナが OOM キルされる可能性が高くなります。llamaMan はメモリ制限が設定されている場合は常に `LOW_RAM=on` を強制し、UI は 64 GB 未満で警告を表示します。`memlock=-1` は重要です。エンジンが GPU DMA 用にアリーナの一部をページロックし、固定できないエキスパートはより低速なホストコピーを経由するためです（`src/prefill/prefill.cpp:110`, `:207-214`）。ソースコード上、memlock 制限がないと失敗というよりは速度低下のように見えますが、**GPU なしでは検証できませんでした**。llamaMan は常にこれを設定します。
 
-また、ソースコードより: Strata は一度に1つのリクエストを処理します（`server.py:1323`）。Dockerfile は `STRATA_EXECV=1` を設定しているため、サーバーは PID 1 となり `docker stop` が届きます。ダウンロードの途中で停止したコンテナは、次回の起動時に `.part` ファイルから再開します。
+また、ソースコードより: Flash-Next パスでは、Strata は一度に1つのリクエストを処理します（`server.py:1323`）。Dockerfile は `STRATA_EXECV=1` を設定しているため、サーバーは PID 1 となり `docker stop` が届きます。ダウンロードの途中で停止したコンテナは、次回の起動時に `.part` ファイルから再開します。
 
 ## 設計上の決定事項
 
-- **並行性は起動時、プリセットマージ時、ライブプリセット編集時、保存されたプリセット内で強制的に 1 になります。** ゲートによりサイドカープロキシが強制されるため、キューイングは Strata の内部ではなく llamaMan（`RequestGate`）内で行われます。
-- **フィンガープリントによる `REINSTALL`。** Context、ビジョン、KV、Low-RAM、GPU ピニングは、ボリューム上の Strata のモデルごとの設定に記録されます。`DATA_DIR/strata_setups.json` は各モデルが最後に正常に稼働した設定を記憶し（データボリュームとセットアップタグをキーとする）、異なる場合にのみ `REINSTALL=1` が送信されます。不明なフィンガープリント（llamaMan 経由の初回起動、または手動でセットアップされたボリューム）も再インストールされます。これにはファイルを再利用する1回のセットアップパスのコストがかかります。
+- **並行性は起動時、プリセットマージ時、ライブプリセット編集時、保存されたプリセット内で強制的に 1（独自パスのファミリーでは `strata_parallel`）になります。** ゲートによりサイドカープロキシが強制されるため、キューイングは Strata の内部ではなく llamaMan（`RequestGate`）内で行われます。
+- **フィンガープリントによる `REINSTALL`。** Context、ビジョン、KV、Low-RAM、GPU ピニングは、ボリューム上の Strata のモデルごとの設定に記録されます。`DATA_DIR/strata_setups.json` は各モデルが最後に正常に稼働した設定を記憶し（データボリュームとセットアップタグをキーとする）、異なる場合にのみ `REINSTALL=1` が送信されます。不明なフィンガープリント（llamaMan 経由の初回起動、または手動でセットアップされたボリューム）も再インストールされます。これにはファイルを再利用する1回のセットアップパスのコストがかかります。独自パスのファミリーのフィンガープリントにはソースファイルのパス、サイズ、更新時刻も含まれ、そのセットアップはトークナイザーを再構築するため、同じサイズの別のファインチューンが前のものとともに提供されることはありません。
 - **ノードあたり Strata モデルごとに1つのアクティブインスタンス。** 1つのモデルの2つのインスタンスが同じファイルに対してセットアップを実行することを防ぎます。
 - **llamaMan がそのモデルをダウンロードしている間は起動が拒否されます。** コンテナがボリュームに2回目のダウンロードを行うのを防ぐためです。
 - **事前ダウンロードされたシャードは更新チェックの出所確認をスキップします。** 固定されたファイルがリポジトリの `main` に「更新」されてはならないためです。
@@ -102,7 +124,6 @@ core/engines/
 ## 既知の制限事項
 
 - NVIDIA 専用。Strata の AMD (HIP) パスは上流で実験的な手動ビルドであり、提供されていません。
-- `LAYER_SPLIT`（マルチ GPU レイヤー配置）は公開されていません。複数の GPU をピニングすると Strata の自動分割が使用されます。
 - ビジョンエンコーダ（mmproj）は常に Strata 自身によってボリュームにダウンロードされます。
 - Strata 独自の Web UI（`/`, `/settings`, `/load`, `/unload`）はインスタンスポート経由でアクセス可能ですが、llamaMan はこれを使用または管理しません。アイドル時のアンロード機能は使用されず、代わりに llamaMan のスリープがコンテナを停止します。
 - セットアップに記録されている設定を変更すると、次回の起動時に Strata のセットアップパスが再実行されます（ファイルは再利用されます）。
@@ -115,7 +136,7 @@ core/engines/
 
 1. **ビルド:** `git clone https://github.com/Niko1221/Strata && cd Strata && docker build -t strata .`。オプションで `--build-arg CUDA_ARCHITECTURES=<your arch>` を追加。またはステップ2の後、Settings → Docker Images → *Manage Strata images* → **Pull repo & build latest**。このノードの GPU 世代向けにのみビルドされます。
 2. **有効化:** `STRATA_ENABLED=true` を設定し、llamaMan を再起動します。
-   - `GET /api/engines` で strata の `available: true` とそのモデル（組み込みリストに9個）が表示されること。
+   - `GET /api/engines` で strata の `available: true` とそのモデル（組み込みリストに12個）が表示されること。
    - Settings → Docker Images → *Manage Strata images* で `strata:latest` が **local** として表示されること。
 3. **ゲーティング:** 非 NVIDIA ノード（または `GPU_TYPE=rocm`）では Strata モデルは一覧表示されず、`/strata/qwen-IQ2_XS` に対する `POST /api/instances` は NVIDIA の理由とともに 400 を返すこと。
 4. **UI からの起動:** `strata/qwen-IQ2_XS` を選択。

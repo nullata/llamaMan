@@ -1,5 +1,7 @@
 # 知识库与 MCP
 
+> **注意：** 本文为译文，可能落后于[英文版](../en/KNOWLEDGE-BASE.md)；以英文版为准。
+
 将文档按**主题（topic）**分组存储，llamaman 会对文档进行分块（chunk，约 1200 字符，按段落对齐，200 字符重叠），计算 embedding，并将向量存储在你的 MariaDB 数据库中（`VECTOR` 列 + 余弦 ANN 索引）。任何 MCP 客户端（Claude Desktop、Claude Code、智能体等）均可通过语义进行搜索。所有内容都在你已有的硬件上运行：embedding 来自你启动并启用了 **Embedding model** 的 llama.cpp 实例，向量保存在数据库中，且 llamaman 自身提供 MCP endpoint 服务。
 
 **系统要求：** 需要运行在 **11.8+** 版本上的 MariaDB 后端（`DATABASE_URL`，参见 [Storage Backends](CONFIGURATION.md#storage-backends)），该版本开始支持 `VECTOR`。在 JSON 后端或旧版 MariaDB 上，MCP 标签页会说明知识库不受支持的原因并拒绝启用；其他任何内容不受影响。无需数据迁移：`kb_*` 数据表会在首次使用时自动创建。

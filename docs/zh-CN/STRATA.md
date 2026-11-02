@@ -1,10 +1,12 @@
 # Strata 引擎
 
-*(可选功能，仅限 NVIDIA)* [Strata](https://github.com/Niko1221/Strata) 能够在消费级 NVIDIA GPU 配合系统 RAM 上运行 Qwen3.8-Flash-Next 混合专家（MoE）系列（及其 Coder、Swift 1.5 和 Unsloth 变体）。llamaMan 支持启动、监控、proxy 转发、休眠/唤醒以及停止 Strata 实例，与 llama.cpp 实例并存运行。llama.cpp 的运行机制不受任何影响：引擎抽象层（`core/engines/`）保证了 llama.cpp 的启动逻辑逐字节一致（已通过快照测试）。
+> **注意：** 本文为译文，可能落后于[英文版](../en/STRATA.md)；以英文版为准。
+
+*(可选功能，仅限 NVIDIA)* [Strata](https://github.com/Niko1221/Strata) 能够在消费级 NVIDIA GPU 配合系统 RAM 上运行 Qwen3.8-Flash-Next 混合专家（MoE）系列（及其 Coder、Swift 1.5 和 Unsloth 变体）以及 Qwen3.6-35B-A3B。llamaMan 支持启动、监控、proxy 转发、休眠/唤醒以及停止 Strata 实例，与 llama.cpp 实例并存运行。llama.cpp 的运行机制不受任何影响：引擎抽象层（`core/engines/`）保证了 llama.cpp 的启动逻辑逐字节一致（已通过快照测试）。
 
 ## 目录
 
-- [快速入门](#快速入门) · [限制与运行机制](#限制与运行机制) · [设计说明与验证](#设计说明与验证)
+- [快速入门](#快速入门) · [Qwen3.6-35B-A3B 与微调模型](#qwen36-35b-a3b-and-fine-tunes) · [限制与运行机制](#限制与运行机制) · [设计说明与验证](#设计说明与验证)
 
 ## 快速入门
 
@@ -18,18 +20,38 @@ docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (f
 
 **2. 启用功能** 在 llamaMan 节点上设置：`STRATA_ENABLED=true`（参见 [Strata variables](CONFIGURATION.md#strata)）。Settings → Docker Images 随后会显示 *Manage Strata images*：已拉取的 Strata 镜像、已构建的镜像（下载和构建的 commit，以及构建按钮）和它们的自动更新选项。一旦节点上存在其中一个镜像，启动表单就会提供 Strata 选项。
 
-**3. 启动实例。** 模型库按“系列 × 尺寸”增加对应的虚拟条目：`strata/qwen-Q2_0`、`strata/qwen-IQ2_XS`、`strata/qwen-IQ3_XXS`、`strata/qwen-IQ3_S`、`strata/swift-IQ2_XS`、`strata/swift-IQ3_XXS`、`strata/coder-IQ1_M`、`strata/unsloth-UD-Q4_K_XL` *(实验性)*。每个条目都是独立的实例和容器，因此切换模型的逻辑与 llama.cpp 相同：启动或唤醒另一个实例，并遵循常规的[逐出](MODELS.md#model-eviction)规则（一个 Strata 实例就是一个 chat 模型）。这些条目也会出现在 `/api/tags` 和 `/v1/models` 中，请求可以使用其 id（`strata/qwen-IQ2_XS`，不区分大小写，忽略 `:tag`）或 Strata 自身对外服务的名称（`qwen3.8-flash-next-iq2_xs`）。
+**3. 启动实例。** 模型库按“系列 × 尺寸”增加对应的虚拟条目：`strata/qwen-Q2_0`、`strata/qwen-IQ2_XS`、`strata/qwen-IQ3_XXS`、`strata/qwen-IQ3_S`、`strata/swift-IQ2_XS`、`strata/swift-IQ3_XXS`、`strata/coder-IQ1_M`、`strata/unsloth-UD-Q4_K_XL` *(实验性)*、`strata/unsloth-UD-IQ4_XS`、`strata/qwen36-UD-Q4_K_XL`、`strata/qwen36-UD-Q6_K_XL`、`strata/qwen36-Q8_0`。每个条目都是独立的实例和容器，因此切换模型的逻辑与 llama.cpp 相同：启动或唤醒另一个实例，并遵循常规的[逐出](MODELS.md#model-eviction)规则（一个 Strata 实例就是一个 chat 模型）。这些条目也会出现在 `/api/tags` 和 `/v1/models` 中，请求可以使用其 id（`strata/qwen-IQ2_XS`，不区分大小写，忽略 `:tag`）或 Strata 自身对外服务的名称（`qwen3.8-flash-next-iq2_xs`）。
 
 启动表单会隐藏仅适用于 llama.cpp 的字段（GPU 层数、MoE、线程、并发 slot、KV 类型、flash attention、投机解码、mmproj、DRY、额外参数），并显示 **Image Input**（no / GPU / CPU）、**KV Cache**（Strata 默认 int8、`int8`、`q4_0`、`k8v4`）以及 **Low-RAM Mode**（auto / on / off）。API 会拒绝为 Strata 模型设置仅适用于 llama.cpp 的字段。
 
-**首次启动。** Strata 会下载约 58-111 GB 数据，准备其“pack”并在服务端口打开前拉取其 MTP 层；后续启动则直接进入加载流程（1-3 分钟）。实例卡片会显示从容器日志解析出的状态：*setting up → downloading (with %) → preparing pack → loading*，点击 Logs 按钮可流式查看日志。下载有两种方式：
+**首次启动。** 对于 Flash-Next 系列，Strata 会下载约 58-111 GB 数据，准备其“pack”并在服务端口打开前拉取其 MTP 层（[Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) 更小，且不需要 MTP 层）；后续启动则直接进入加载流程（1-3 分钟）。实例卡片会显示从容器日志解析出的状态：*setting up → downloading (with %) → preparing pack → loading*，点击 Logs 按钮可流式查看日志。下载有两种方式：
 
 - **让 Strata 自动下载** 到其 `/data` 卷中（默认）。
 - **通过 llamaMan 预下载**（Strata 区域中的按钮，或调用 `POST /api/engines/strata/download`）：在 Downloads 标签页中生成一个普通任务（支持进度显示、暂停/继续、重试、HF token、限速），从 Strata 固定的 Hugging Face revision 将分片下载到 `MODELS_DIR/strata/<tag>/`。下载完成后，这些分片会被 bind-mount 挂载到容器中，Strata 的 setup 会直接使用它们而无需重复下载。在该下载仍在运行期间，启动请求会被拒绝。首次启动时，MTP 层（约 5 GB）和 pack 仍由 Strata 自行准备。
 
+<a id="qwen36-35b-a3b-and-fine-tunes"></a>
+## Qwen3.6-35B-A3B 与微调模型
+
+Qwen3.6-35B-A3B 在 Strata 中有独立的引擎路径，是单个 GGUF 文件，没有 pack 或单独的 MTP 层。
+
+| 尺寸 | 下载 | RAM |
+|---|---|---|
+| `UD-Q4_K_XL` | 22.9 GB | 32 GB |
+| `UD-Q6_K_XL` | 32.6 GB | 44 GB |
+| `Q8_0` | 37.8 GB | 52 GB |
+
+**微调模型可以运行。** 模型库中的任何单个 GGUF，只要名称以上述尺寸之一结尾，并且名称包含 `35B-A3B` 或文件架构为 `qwen35moe`，就能在 Strata 上运行。llamaMan 会以发布名称挂载它，Strata 会对不同的构建发出警告，但不会拒绝。客户端通过 `strata/qwen36-<size>`、`qwen3.6-35b-a3b-<size>` 或队列分组名称来访问它，而不是微调模型自身的名称。
+
+- **同时请求数。** 启动表单的 **Requests at Once** 字段（`strata_parallel`，1 到 8，默认 1）设置同时运行的请求数，Max Concurrent 随之变化。在 32K context 下，每增加一个槽位会从 experts 占用约 1.5 GB 显存；在混合模式的 12 或 16 GB 显卡上，槽位越多，每个请求越慢。更改它不需要重新 setup。
+- **Context** 上限为 262144 个 token，即模型的训练长度。
+- **图像暂时关闭。** 其图像编码器尚未下载或挂载。
+- **单 GPU。** 在此路径上 Strata 仅使用第一个 GPU。KV Cache、Low-RAM Mode 和 Layer Split 不适用并会隐藏。
+- **切换文件会重新 setup。** 相同尺寸的两个文件在卷上共享一个模型 id、一个运行配置和一个 tokenizer。启动不同的文件会运行 setup 并重建 tokenizer，且它们不能在同一节点上并行运行。
+- **旧镜像。** 如果镜像的引擎没有此系列，setup 会停止，实例卡片会提示更新镜像。
+
 ## 限制与运行机制
 
-- **一次处理一个请求。** Max Concurrent 强制为 1；超出请求在 llamaMan 的 gate 中排队（达到 Max Queue Depth 后返回 429）。
+- **一次处理一个请求**（[Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) 除外）。Max Concurrent 强制为 1；超出请求在 llamaMan 的 gate 中排队（达到 Max Queue Depth 后返回 429）。
 - **RAM 需求。** Strata 会向 RAM 加载 32-62 GB 数据（始终设置 `--ulimit memlock=-1`）。配置 **System Memory Limit** 会强制开启 Low-RAM 模式，因为 Strata 的 setup 读取宿主机 RAM，无法感知容器限制；UI 会在内存低于约 64 GB 时发出警告。
 - **设置已固化至 Strata setup 中。** Context / 图像输入 / KV / Low-RAM / GPU 绑定均按模型记录在数据卷上。llamaMan 会记住每个模型上次健康运行时使用的设置，仅在设置变更时才传入 `REINSTALL=1`（文件会被复用）。
 - **空闲超时正常生效**（休眠会停止容器；下一个请求将其唤醒），但冷启动需要数分钟，唤醒请求需要等待其完成（`STRATA_LOAD_TIMEOUT`）。
@@ -65,10 +87,10 @@ core/engines/
   |---|---|
   | image | `STRATA_IMAGE`（否则为已构建的镜像，再否则为已拉取的 Strata 镜像） |
   | command | 无（entrypoint 仅读取环境变量） |
-  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`?（挂起看门狗 / 慢速存储宽限期）, `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`? |
+  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`?（挂起看门狗 / 慢速存储宽限期）, `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`?（仅限独立路径系列；同时请求数） |
   | ulimits | `memlock=-1` |
   | GPU | NVIDIA `device_requests`（`gpu_devices` / `LLAMA_GPU_DEVICES`） |
-  | mounts | 数据卷 → `/data`；日志；当 llamaMan 持有完整分片时，`MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>`（非 qwen 为 `<family>-<SIZE>`；setup.py 区分大小写的分片文件夹）(rw) |
+  | mounts | 数据卷 → `/data`；日志；当 llamaMan 持有完整分片时，`MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>`（非 qwen 为 `<family>-<SIZE>`；setup.py 区分大小写的分片文件夹）(rw)；从模型库启动的单文件模型也一样，无论其名称如何 |
   | mem_limit | 来自 System Memory Limit（强制 `LOW_RAM=on`） |
   | network / ports / labels | 与 llama-server 相同（`llamaman-net`，`8080 → host port`，`llamaman.*`） |
 
@@ -79,12 +101,12 @@ core/engines/
 3. **复用磁盘上的 GGUF。** `setup.py` 具有 `--gguf-dir` 参数（`setup.py:2954`），但 entrypoint 从未透传该参数。不过，Setup 确实接受已经位于 `/data/models/<fam tag><SIZE>/<original name>`（例如 `IQ3_S`, `coder-IQ1_M`；区分大小写）的完整分片：它会对照自身的张量目录进行检查并标记为已完成（`setup.py:3389-3405`, "#173"）。因此，llamaMan 会将本地副本挂载到此处（读写模式，以便写入 `.done` 标记），且仅在这些分片完全下载完成后挂载。分片是从 Strata 固定的 Hugging Face revision 获取的（`setup.py:65-70`，镜像在 `core/engines/strata.py` 中）。MTP 层（约 5 GB）和 pack 仍会在容器内部生成。
 4. **内存限制 / memlock。** Setup 从 `/proc/meminfo` 读取 RAM，这是宿主机的总内存，因此受限容器必须要求 `LOW_RAM=on`（Dockerfile 注释在 `:31`，`docs/INSTALL.md:116-118`）。若未设置，setup 会选择内存驻留模式，容器极易因 OOM 被杀。每当设置内存限制时，llamaMan 都会强制开启 `LOW_RAM=on`，且 UI 会在低于 64 GB 时发出警告。`memlock=-1` 至关重要，因为引擎会对其内存池的一部分进行页锁定以用于 GPU DMA，无法锁定的专家将通过较慢的主机内存拷贝传输（`src/prefill/prefill.cpp:110`, `:207-214`）。从源码来看，缺少 memlock 限制更像是变慢而非报错，但**在没有 GPU 的情况下无法对此进行验证**。llamaMan 始终对其进行配置。
 
-同样来自源码：Strata 一次只处理一个请求（`server.py:1323`）。Dockerfile 设置了 `STRATA_EXECV=1`，因此服务端进程为 PID 1，`docker stop` 可以正常发送信号。中途停止下载的容器在下次启动时会从其 `.part` 文件断点续传。
+同样来自源码：在 Flash-Next 路径上，Strata 一次只处理一个请求（`server.py:1323`）。Dockerfile 设置了 `STRATA_EXECV=1`，因此服务端进程为 PID 1，`docker stop` 可以正常发送信号。中途停止下载的容器在下次启动时会从其 `.part` 文件断点续传。
 
 ## 设计决策
 
-- **并发强制为 1**，无论在启动时、预设合并时、实时预设编辑还是保存的预设中均是如此。Gate 会强制启用 sidecar proxy，因此排队发生在 llamaMan（`RequestGate`）中，而不是在 Strata 内部。
-- **基于指纹的 `REINSTALL`。** Context、vision、KV、Low-RAM 和 GPU 绑定会记录在卷上 Strata 的按模型配置中。`DATA_DIR/strata_setups.json` 记录每个模型上次健康上线所使用的设置，以数据卷和 setup tag 为键，仅在设置不同时才发送 `REINSTALL=1`。未知的指纹（首次通过 llamaMan 启动，或手动搭建的数据卷）同样会执行重新安装。这只需要耗费一次复用文件的 setup 过程。
+- **并发强制为 1**（独立路径系列为 `strata_parallel`），无论在启动时、预设合并时、实时预设编辑还是保存的预设中均是如此。Gate 会强制启用 sidecar proxy，因此排队发生在 llamaMan（`RequestGate`）中，而不是在 Strata 内部。
+- **基于指纹的 `REINSTALL`。** Context、vision、KV、Low-RAM 和 GPU 绑定会记录在卷上 Strata 的按模型配置中。`DATA_DIR/strata_setups.json` 记录每个模型上次健康上线所使用的设置，以数据卷和 setup tag 为键，仅在设置不同时才发送 `REINSTALL=1`。未知的指纹（首次通过 llamaMan 启动，或手动搭建的数据卷）同样会执行重新安装。这只需要耗费一次复用文件的 setup 过程。独立路径系列的指纹还包含源文件的路径、大小和修改时间，其 setup 会重建 tokenizer，因此相同尺寸的另一个微调模型不会沿用上一个的 tokenizer。
 - **每个节点每种 Strata 模型仅限一个活跃实例。** 同一模型的两个实例会在相同的文件上并发运行 setup。
 - **当 llamaMan 仍在下载该模型时拒绝启动**，避免容器在其卷中重复下载一次。
 - **预下载的分片跳过更新检查溯源。** 固定的文件绝不能“更新”为仓库的 `main` 分支。
@@ -102,7 +124,6 @@ core/engines/
 ## 已知局限
 
 - 仅限 NVIDIA。Strata 的 AMD (HIP) 路径在上游属于实验性手动构建，暂不提供支持。
-- 未暴露 `LAYER_SPLIT`（多 GPU 层分配）。绑定多个 GPU 时使用 Strata 的自动分配。
 - 视觉编码器（mmproj）始终由 Strata 自身下载至数据卷中。
 - Strata 自身的 Web UI（`/`, `/settings`, `/load`, `/unload`）可以通过实例端口访问，但 llamaMan 不使用也不管理它。其空闲卸载功能未被使用；llamaMan 的休眠机制通过停止容器来替代。
 - 修改 setup 中记录的设置会在下次启动时重新触发 Strata 的 setup 流程（文件会被复用）。
@@ -115,7 +136,7 @@ core/engines/
 
 1. **构建：** `git clone https://github.com/Niko1221/Strata && cd Strata && docker build -t strata .`。可选择添加 `--build-arg CUDA_ARCHITECTURES=<your arch>`。或者在完成步骤 2 之后，前往 Settings → Docker Images → *Manage Strata images* → **Pull repo & build latest**。该操作仅针对当前节点的 GPU 架构代数进行构建。
 2. **启用：** 设置 `STRATA_ENABLED=true` 并重启 llamaMan。
-   - `GET /api/engines` 显示 strata 的 `available: true`，并列出其模型（内置列表中有 9 个模型）。
+   - `GET /api/engines` 显示 strata 的 `available: true`，并列出其模型（内置列表中有 12 个模型）。
    - Settings → Docker Images → *Manage Strata images* 显示 `strata:latest` 为 **local**。
 3. **门禁校验：** 在非 NVIDIA 节点上（或设置了 `GPU_TYPE=rocm`），不会列出 Strata 模型，针对 `/strata/qwen-IQ2_XS` 调用 `POST /api/instances` 会返回 400 并提示 NVIDIA 相关原因。
 4. **从 UI 启动：** 选择 `strata/qwen-IQ2_XS`。

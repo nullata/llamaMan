@@ -1,5 +1,7 @@
 # Configuration et stockage
 
+> **Remarque :** ceci est une traduction et peut être en retard sur la [version anglaise](../en/CONFIGURATION.md), qui fait foi.
+
 Installations bare-metal, le modèle d'authentification en détail, les statistiques GPU, l'enregistrement des requêtes, les backends de stockage, et la référence complète des variables d'environnement.
 
 ## Sommaire

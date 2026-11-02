@@ -65,7 +65,7 @@ Three toggles under **Settings → App Settings** relax these defaults:
 Other details:
 
 - All running chat instances count (both admin UI and proxy-managed).
-- **Sleeping instances still count** (slot claim persists across the idle pause) - but waking a sleeper for its own model is never blocked by the cap.
+- **Sleeping instances still count** (slot claim persists across the idle pause) - but waking a sleeper for its own model is never blocked by the cap. That includes a queue group member [waking under load](CLUSTERING.md#waking-under-load).
 - Instances with **Exclude from Max Models** on (launch form) are not counted and never evicted: embedding models, decision models, anything small that should stay up. Turning **Embedding Model** on turns it on too, and presets saved before the toggle existed get it from their Embedding Model setting.
 - `LLAMAMAN_MAX_MODELS=0` disables eviction entirely.
 

@@ -1,10 +1,12 @@
 # REST API
 
+> **注:** これは翻訳であり、[英語版](../en/API.md)より内容が古い場合があります。英語版が正式な内容です。
+
 すべてのエンドポイントは JSON を返却 / 受信します。管理エンドポイントにはセッション Cookie（ブラウザログイン）または `Authorization: Bearer <key>` が必要です。`require_auth` がオン（デフォルト）の場合、モデル配信エンドポイントにも Bearer トークンが必要です。認証の詳細: [Authentication](CONFIGURATION.md#authentication-detail)。
 
 ## 目次
 
-- [認証とキー](#認証とキー) · [インスタンス](#インスタンス) · [ダウンロード、モデル、プリセット](#ダウンロードモデルプリセット) · [設定、システム、リクエストログ](#設定システムリクエストログ) · [Ollama と OpenAI の互換性](#ollama-と-openai-の互換性)
+- [認証とキー](#認証とキー) · [インスタンス](#インスタンス) · [ダウンロード、モデル、プリセット](#ダウンロードモデルプリセット) · [推論ルートのモデルエラー](#model-errors-on-inference-routes) · [設定、システム、リクエストログ](#設定システムリクエストログ) · [Ollama と OpenAI の互換性](#ollama-と-openai-の互換性)
 
 ## 認証とキー
 
@@ -63,13 +65,30 @@
 
 ダウンロードボディ: `{"repo_id": "...", "filename": "...", "hf_token": "...", "speed_limit_mbps": 0}`。`filename` を空にするとリポジトリ全体をプルします。
 
-インスタンスとプリセットは、オプションの `engine`（デフォルトは `llamacpp`、または `strata`。`/strata/...` モデルパスから推測）、および Strata の場合は `strata_vision`（`no`/`yes`/`cpu`）、`strata_kv`（`""`/`int8`/`q4_0`/`k8v4`）、`strata_low_ram`（`auto`/`on`/`off`）を受け入れます。Strata のモデルパスは仮想パスです: `/strata/<family>-<SIZE>`（例: `PUT /api/presets/strata/qwen-IQ2_XS`）。[Strata](STRATA.md) を参照してください。
+インスタンスとプリセットは、オプションの `engine`（デフォルトは `llamacpp`、または `strata`。`/strata/...` モデルパスから推測）、および Strata の場合は `strata_vision`（`no`/`yes`/`cpu`）、`strata_kv`（`""`/`int8`/`q4_0`/`k8v4`）、`strata_low_ram`（`auto`/`on`/`off`）を受け入れます。Qwen3.6-35B-A3B はさらに `strata_parallel`（`1` 〜 `8`、デフォルト `1`）も受け入れ、他の Strata ファミリーは `1` を超える値を拒否します。Strata のモデルパスは仮想パスです: `/strata/<family>-<SIZE>`（例: `PUT /api/presets/strata/qwen-IQ2_XS`）。[Strata](STRATA.md) を参照してください。
+
+<a id="model-errors-on-inference-routes"></a>
+## 推論ルートのモデルエラー
+
+モデルを提供できない場合、Ollama ルートは `{"error": "<message>"}` を、OpenAI ルートは `{"error": {"message": "<message>", "code": "<code>"}}` を返します。
+
+| ステータス | コード | 意味 |
+|---|---|---|
+| `429` | `group_full` | 他のノードがグループをホストしており、少なくとも1つのピアのキューが満杯です。再試行すれば成功する可能性があります。 |
+| `503` | `group_unavailable` | 他のノードがグループをホストしていますが、どのノードもリクエストを受け付けられません。メッセージに各ノードとその理由が示されます。 |
+| `503` | `group_stopped` | このノード上のグループのメンバーがすべて停止しています |
+| `503` | `model_stopping` | メンバーがシャットダウン中です |
+| `503` | `wake_failed` | モデルのウェイクに失敗しました |
+| `503` | `wake_timeout` | モデルが時間内に正常な状態になりませんでした |
+| `503` | `model_limit` | `LLAMAMAN_MAX_MODELS` に達しており、エビクションできるものがありません |
+
+単に不明なモデルは `model '<name>' not found` を返します（Ollama ルートでは `500`、OpenAI ルートでは `503`、コードなし）。転送されたリクエストがピアでタイムアウトした場合は `504` を返します。起動された、またはすでにロード中のモデルが準備完了にならない場合は、コードなしの `500` を返し、そのリクエストは他のメンバーを試しません。
 
 ## 設定、システム、リクエストログ
 
 | メソッド | エンドポイント | 説明 |
 |---|---|---|
-| `GET` / `POST` | `/api/settings` | グローバル設定の取得 / 保存 |
+| `GET` / `POST` | `/api/settings` | グローバル設定の取得 / 保存。ノード単位のキーには `eager_wake_enabled` と `eager_wake_polls` があります。[負荷時のウェイク](CLUSTERING.md#waking-under-load) を参照 |
 | `GET` | `/api/system-info` | CPU 使用率、コア数、RAM 使用量 |
 | `GET` | `/api/gpu-info` | GPU ごとの VRAM と使用率（ネイティブ取得。コンテナ内 exec にフォールバック） |
 | `GET` | `/health` | `{"status": "ok"}` - 常に公開、認証不要 |
@@ -80,6 +99,6 @@
 ## Ollama と OpenAI の互換性
 
 Ollama: `/api/tags`、`/api/version`、`/api/show`、`/api/ps`、`/api/chat`、`/api/generate`（chat/generate は自動起動）。
-OpenAI: `/v1/models`、`/v1/chat/completions`、`/v1/completions`、`/v1/embeddings`（chat は自動起動）。
+OpenAI: `/v1/models`、`/v1/chat/completions`、`/v1/completions`、`/v1/embeddings`（chat は自動起動）。クラスタでは、`/v1/embeddings` も他の推論ルートと同様にノード間でルーティングされます。
 意思決定モデル: `/v1/systemone`（自動起動）- [Decision Models](MODELS.md#decision-models) を参照。
 ナレッジベース: `/api/kb/*`（管理者専用）および MCP エンドポイント `/mcp/knowledge` - [Knowledge Base & MCP](KNOWLEDGE-BASE.md) を参照。クラスタのノード間エンドポイントは `X-Cluster-Secret` を使用 - [Clustering](CLUSTERING.md) を参照。

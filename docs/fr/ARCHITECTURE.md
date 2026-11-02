@@ -1,5 +1,7 @@
 # Architecture, flux de requêtes et décisions de conception
 
+> **Remarque :** ceci est une traduction et peut être en retard sur la [version anglaise](../en/ARCHITECTURE.md), qui fait foi.
+
 Comment llamaMan fonctionne en coulisses. La vue mono-node est dans le [README](../../README.md#architecture) ; cette page ajoute la vue cluster et les détails profonds.
 
 ## Sommaire
@@ -44,7 +46,7 @@ flowchart TB
 
 **Clusters hétérogènes.** Chaque node a son propre matériel (nombre/fabricant/VRAM de GPU), ses propres fichiers de modèles sur disque, sa propre image llama.cpp, et ses propres overrides de préréglage liés au matériel. La DB partagée porte les préréglages, utilisateurs, clés API, l'état d'instance par node et les heartbeats cluster - pas les fichiers de modèles. Voir [Clustering](CLUSTERING.md).
 
-**Dispatch conscient des files + vol de travail inter-nodes.** Quand deux nodes servent le même modèle (ou le même alias `share_queue_group`), une requête entrante pour ce nom est routée vers le peer ayant le moins de requêtes en vol. Si le node choisi est saturé, son `RequestGate` essaie quand même de confier la requête à un peer ayant de la capacité libre au lieu de la mettre en file.
+**Dispatch conscient des files + vol de travail inter-nodes.** Quand deux nodes servent le même modèle (ou le même alias `share_queue_group`), une requête entrante pour ce nom est routée vers le membre éveillé ayant le moins de requêtes en cours. Les membres sains passent en premier, puis ceux en cours de chargement, et les membres endormis uniquement après tout ce qui est éveillé, fallbacks compris. Si le node choisi est saturé, son `RequestGate` essaie quand même de confier la requête à un peer ayant un slot libre sur un membre sain au lieu de la mettre en file. Quand un groupe reste saturé, un membre endormi se réveille par anticipation ; voir [Réveil sous charge](CLUSTERING.md#waking-under-load). Les membres arrêtés ne sont jamais démarrés pour équilibrer la charge.
 
 **Chargement de modèles + éviction LRU.** Le proxy de compatibilité `:42069` auto-lance les modèles à la demande. Une fois `LLAMAMAN_MAX_MODELS` atteint, l'instance non-admin la moins récemment utilisée est stoppée pour faire de la place. Les instances endormies comptent toujours dans le slot ; l'idle timeout est un axe séparé. Règles complètes : [Éviction de modèles](MODELS.md#model-eviction).
 
@@ -62,12 +64,12 @@ Une requête de chat OpenAI-compatible concrète contre un cluster à deux nodes
 
 1. Le client `POST /v1/chat/completions` sur `nodeA:42069` avec le modèle `qwen2.5-14b`.
 2. `nodeA` cherche la cible : c'est un modèle live sur ce node **et** sur `nodeB`. Les deux appartiennent au même groupe de file effectif.
-3. Le dispatcher interroge la charge live de chaque candidat (depuis le cache de heartbeats + un compteur inflight sur fenêtre courte). `nodeB` est moins chargé → la requête est transférée vers l'URL d'annonce de `nodeB` (son port UI/API `:5000`) sur le même chemin.
+3. Le dispatcher interroge la charge live de chaque candidat (une sonde en cache de courte durée + un compteur inflight sur fenêtre courte) et classe les membres éveillés avant les membres endormis. Un peer qui ne répond pas à la sonde reste candidat à partir de son snapshot, mais arrive en dernier. `nodeB` est moins chargé → la requête est transférée vers l'URL d'annonce de `nodeB` (son port UI/API `:5000`) sur le même chemin.
 4. `nodeB` réclame un slot de gate (429 si la file est pleine et qu'aucun peer n'a de place). Si les overrides d'échantillonnage sont activés, ils sont injectés. Si un sidecar par instance existe (idle / max-concurrent / proxy-sampling), la requête arrive d'abord sur le sidecar, qui réveille le conteneur s'il est endormi.
 5. Le sidecar transfère à `llama-server` sur son port interne. Le stream revient à travers le sidecar → `nodeB` → `nodeA` → client.
 6. À la fin du stream : le worker du request-log enregistre TTFT / débit / nombre final de tokens ; le slot de gate est libéré ; l'horodatage LRU est mis à jour pour que cette instance ne soit pas la prochaine évincée.
 
-Si `nodeB` était passé hors ligne entre le heartbeat et cet appel, le dispatcher aurait détecté l'erreur de connexion et re-choisi le candidat suivant (en local dans ce cas).
+Si `nodeB` était passé hors ligne entre le heartbeat et cet appel, le dispatcher aurait détecté l'erreur de connexion et re-choisi le candidat suivant (en local dans ce cas). La même chose se produit si la file de `nodeB` est pleine, ou s'il ne peut pas servir la requête parce que son membre s'arrête ou est arrêté, ou que son réveil a échoué. Si aucun node ne peut prendre la requête, le client reçoit une erreur `429` ou `503` nommant chaque node et la raison.
 
 ## Décisions de conception et compromis
 

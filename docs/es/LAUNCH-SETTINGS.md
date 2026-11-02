@@ -1,5 +1,7 @@
 # Ajustes de lanzamiento
 
+> **Nota:** esta es una traducción y puede ir por detrás de la [versión en inglés](../en/LAUNCH-SETTINGS.md), que es la de referencia.
+
 Cada campo del formulario de lanzamiento, a qué mapea, y las notas de comportamiento. Para el recorrido de cuatro pasos "cómo lanzar", ver el [README](../../README.md#your-first-model).
 
 ## Contenido
@@ -105,6 +107,8 @@ Cuando **Max Concurrent** > 0, llamaMan coloca un gate FIFO delante de la instan
 
 **Parallel vs Max Concurrent:** `Parallel` controla los slots KV internos de llama-server; `Max Concurrent` controla cuántas peticiones reenvía llamaMan a la vez. Úsalos juntos (p. ej. `Parallel=4`, `Max Concurrent=4`) para mantener el servidor bien alimentado sin desbordar sus slots.
 
+**Entre nodes:** **Compartir cola (Queue sharing)** agrupa instancias bajo un mismo nombre. El orden de enrutamiento, el despertar y los errores están en [Grupos de cola](CLUSTERING.md#queue-groups).
+
 <a id="image--pdf-input"></a>
 ## Entrada de imagen y PDF
 
@@ -180,6 +184,6 @@ Cuando **Idle Timeout**, **Max Concurrent**, o **Proxy Sampling Overrides** est�
 <a id="idle-timeout"></a>
 ## Tiempo de inactividad (Idle Timeout)
 
-Define **Idle Timeout min** en el formulario de lanzamiento (0 = desactivado). Cuando está habilitado, tras N minutos sin peticiones el container llama-server se detiene para liberar VRAM; la siguiente petición despierta un container nuevo con la misma config. Los clientes ven el mismo puerto con un retardo de cold-start.
+Define **Idle Timeout min** en el formulario de lanzamiento (0 = desactivado). Cuando está habilitado, tras N minutos sin peticiones el container llama-server se detiene para liberar VRAM; la siguiente petición despierta un container nuevo con la misma config. Los clientes ven el mismo puerto con un retardo de cold-start. Un miembro dormido de un grupo de cola también puede despertar sin que le llegue ninguna petición, cuando su grupo permanece saturado: ver [Despertar bajo carga](CLUSTERING.md#waking-under-load).
 
 Para instancias gestionadas por proxy (OpenWebUI), usa `LLAMAMAN_IDLE_TIMEOUT` en su lugar.

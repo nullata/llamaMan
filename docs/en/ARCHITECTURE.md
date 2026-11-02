@@ -44,7 +44,7 @@ flowchart TB
 
 **Heterogeneous clusters.** Every node has its own hardware (GPU count/vendor/VRAM), its own model files on disk, its own llama.cpp image, and its own hardware-scoped preset overrides. The shared DB carries presets, users, API keys, per-node instance state, and cluster heartbeats - not the model files. See [Clustering](CLUSTERING.md).
 
-**Queue-aware dispatch + cross-node work stealing.** When two nodes serve the same model (or the same `share_queue_group` alias), an inbound request for that name gets routed to whichever peer has the fewest in-flight requests. If the picked node is saturated its `RequestGate` still tries to hand the request off to a peer with free capacity instead of queueing.
+**Queue-aware dispatch + cross-node work stealing.** When two nodes serve the same model (or the same `share_queue_group` alias), an inbound request for that name gets routed to the awake member with the fewest in-flight requests. Healthy members come first, then ones still loading, and sleeping members only after everything awake, fallbacks included. If the picked node is saturated its `RequestGate` still tries to hand the request off to a peer with a free slot on a healthy member instead of queueing. When a group stays saturated, one sleeping member wakes ahead of need; see [Waking under load](CLUSTERING.md#waking-under-load). Stopped members are never started to balance load.
 
 **Model loading + LRU eviction.** The `:42069` compat proxy auto-launches models on demand. Once `LLAMAMAN_MAX_MODELS` is hit, the least-recently-used non-admin instance is stopped to make room. Sleeping instances still count against the slot; idle timeout is a separate axis. Full rules: [Model Eviction](MODELS.md#model-eviction).
 
@@ -62,12 +62,12 @@ A concrete OpenAI-compatible chat request against a two-node cluster:
 
 1. Client `POST /v1/chat/completions` to `nodeA:42069` with model `qwen2.5-14b`.
 2. `nodeA` looks up the target: it's a live model on this node **and** on `nodeB`. Both belong to the same effective queue group.
-3. Dispatcher polls each candidate's live load (from the heartbeat cache + short-window inflight counter). `nodeB` is less loaded → the request is forwarded to `nodeB`'s advertise URL (its `:5000` UI/API port) on the same path.
+3. Dispatcher polls each candidate's live load (a short-lived cached probe + short-window inflight counter), and ranks awake members ahead of sleeping ones. A peer that doesn't answer the probe stays a candidate from its snapshot, but ranks last. `nodeB` is less loaded → the request is forwarded to `nodeB`'s advertise URL (its `:5000` UI/API port) on the same path.
 4. `nodeB` claims a gate slot (429 if the queue is full and no peer has room). If sampling overrides are on, they're injected. If a per-instance sidecar exists (idle / max-concurrent / proxy-sampling), the request lands on the sidecar first, which wakes the container if it's sleeping.
 5. Sidecar forwards to `llama-server` on its internal port. Stream flows back through the sidecar → `nodeB` → `nodeA` → client.
 6. On stream end: the request-log worker records TTFT / throughput / final token count; the gate slot is released; the LRU timestamp is bumped so this instance won't get evicted next.
 
-If `nodeB` had gone offline between the heartbeat and this call, the dispatcher would have detected the connection error and re-picked the next candidate (locally in this case).
+If `nodeB` had gone offline between the heartbeat and this call, the dispatcher would have detected the connection error and re-picked the next candidate (locally in this case). The same happens if `nodeB`'s queue is full, or if it can't serve the request because its member is stopping or stopped, or its wake failed. If no node can take the request, the client gets a `429` or `503` naming each node and why.
 
 ## Design Decisions & Trade-offs
 

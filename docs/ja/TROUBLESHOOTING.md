@@ -1,5 +1,7 @@
 # トラブルシューティング
 
+> **注:** これは翻訳であり、[英語版](../en/TROUBLESHOOTING.md)より内容が古い場合があります。英語版が正式な内容です。
+
 完全な「症状 → 解決策」の一覧表。[README](../../README.md#troubleshooting) には初回実行時によくある9つの代表的な問題が記載されています。その他の問題はすべてここに記載されています。
 
 | 症状 | 解決策 |
@@ -17,6 +19,7 @@
 | Strata: _"Docker image 'strata:latest' not found"_ | Settings → Docker Images で Strata イメージをプルまたはビルドしてください（または Strata リポジトリのクローン内で `docker build -t strata .` を実行）。[Strata](STRATA.md) を参照 |
 | Strata モデルが表示されない | `STRATA_ENABLED=true` を設定してください。ノードは NVIDIA である必要があります（検出に失敗する場合は `GPU_TYPE=cuda`）。`GET /api/engines` で理由を確認できます |
 | Strata インスタンスが **starting** のまま停止する | 初回起動時は数分かかるのが正常です（ダウンロード + パック準備）。カードに進捗ステージが表示され、ログに Strata のセットアップが出力されます。「setup failed」はセットアップが停止したことを意味します — ログの `[X]` 行を確認してください |
+| Strata カードに _"this Strata image can't run ... yet: update it"_ と表示される | イメージのエンジンがそのモデルファミリーに対応していません。Settings → Docker Images で新しい Strata イメージをプルまたはビルドしてください |
 | 統計モーダルが空である | **Settings → App Settings → Request recording** を有効にしてください（[Request Recording & Stats](CONFIGURATION.md#request-recording--stats) を参照） |
 | GPU パススルーのないホストで起動が GPU/CDI エラーで失敗する | GPU デバイスをアタッチせず CPU のみを使用する場合は **GPU Layers** を `0` に設定するか、GPU ランタイムを修復してください |
 | ポートの競合 | フォームは未使用のポートを自動提案します。必要に応じて調整してください |
@@ -26,3 +29,6 @@
 | 停止後にコンテナがクリーンアップされない | llamaMan は停止時にコンテナを削除します。クラッシュ後に孤立したコンテナがある場合: `docker ps --filter name=llamaman-` を実行するか、llamaMan を再起動してください（起動時に孤立コンテナの引き取り処理が実行されます） |
 | クライアント（Hermes / OpenWebUI など）がプリセットの上限ではなく学習時のコンテキストウィンドウを報告する | 1.1.2+ にアップグレードしてください。`/api/ps` にインスタンス起動時のランタイム ctx を反映した `context_length` が含まれるようになり、`/api/show` の `model_info["<arch>.context_length"]` も有効な上限値で上書きされます |
 | キューグループ名を問い合わせたクライアントが実際のデプロイの ctx ではなく独自のデフォルト ctx（例: 128k）を取得する | `/api/show` および `/v1/models` は、共有状態から得られるピアのランタイム ctx を使用して、クラスタ化された任意のノード（ローカルメンバーを持たないノードを含む）上でキューグループに応答するようになりました。複数メンバーのグループは、通知値がどのディスパッチ先でも安全になるよう、アクティブメンバー全体の最小値を報告します。[Clustering](CLUSTERING.md) を参照 |
+| キューグループへのリクエストが `group_full` または `group_unavailable` を返す | どのノードも受け付けられず、メッセージに各ノードとその理由が示されています。`group_full` は再試行で成功する可能性があります。それ以外は示されたノードを確認してください: [グループを処理できない場合](CLUSTERING.md#when-a-group-cant-be-served) |
+| キューグループ名が `/api/tags` と `/v1/models` にない | 停止したメンバー、およびオフラインまたは表示専用のノード上のメンバーは掲載されません。メンバーが実行中であることと、そのノードの `CLUSTER_ADVERTISE_URL` を確認してください: [キューグループ](CLUSTERING.md#queue-groups) |
+| キューグループのスリープ中のメンバーがリクエストなしで起動する | グループが飽和し続けている場合の想定どおりの動作です: [負荷時のウェイク](CLUSTERING.md#waking-under-load)。無効にするには、そのノードで `eager_wake_enabled` を `false` に設定してください |
