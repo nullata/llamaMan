@@ -219,6 +219,55 @@ def get_cached_gguf_metadata(filepath: str) -> dict:
     return meta
 
 
+# ggml_type ids -> names (ggml.h), for the types a tensor directory reports.
+GGML_TYPE_NAMES = {
+    0: "F32", 1: "F16", 2: "Q4_0", 3: "Q4_1", 6: "Q5_0", 7: "Q5_1", 8: "Q8_0", 9: "Q8_1",
+    10: "Q2_K", 11: "Q3_K", 12: "Q4_K", 13: "Q5_K", 14: "Q6_K", 15: "Q8_K",
+    16: "IQ2_XXS", 17: "IQ2_XS", 18: "IQ3_XXS", 19: "IQ1_S", 20: "IQ4_NL", 21: "IQ3_S",
+    22: "IQ2_S", 23: "IQ4_XS", 24: "I8", 25: "I16", 26: "I32", 27: "I64", 28: "F64",
+    29: "IQ1_M", 30: "BF16", 34: "TQ1_0", 35: "TQ2_0", 39: "MXFP4",
+}
+
+_tensor_types_cache: dict[str, tuple[float, int, dict]] = {}
+
+
+def get_gguf_tensor_types(filepath: str) -> dict:
+    """{tensor name: its type name} from a GGUF's tensor directory (an unknown
+    type id stays an int). {} when the header can't be read. Cached per file like
+    get_cached_gguf_metadata."""
+    try:
+        st = os.stat(filepath)
+    except OSError:
+        return {}
+    with _gguf_cache_lock:
+        cached = _tensor_types_cache.get(filepath)
+        if cached and cached[0] == st.st_mtime and cached[1] == st.st_size:
+            return cached[2]
+    out: dict = {}
+    try:
+        with open(filepath, "rb") as f:
+            if f.read(4) != b"GGUF":
+                return {}
+            struct.unpack("<I", f.read(4))   # version
+            tensor_count = struct.unpack("<Q", f.read(8))[0]
+            kv_count = struct.unpack("<Q", f.read(8))[0]
+            for _ in range(kv_count):
+                _read_gguf_string(f)
+                _skip_gguf_value(f, struct.unpack("<I", f.read(4))[0])
+            for _ in range(tensor_count):
+                name = _read_gguf_string(f)
+                n_dims = struct.unpack("<I", f.read(4))[0]
+                f.read(8 * n_dims)
+                ttype = struct.unpack("<I", f.read(4))[0]
+                f.read(8)                    # offset
+                out[name] = GGML_TYPE_NAMES.get(ttype, ttype)
+    except Exception:
+        return {}
+    with _gguf_cache_lock:
+        _tensor_types_cache[filepath] = (st.st_mtime, st.st_size, out)
+    return out
+
+
 def get_gguf_metadata(filepath: str) -> dict:
     """Architecture metadata used by the layer-fit calculator. Backed by the
     cached full reader so /api/model-layers and /api/ps share one parse."""

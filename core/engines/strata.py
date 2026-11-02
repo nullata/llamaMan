@@ -147,6 +147,28 @@ OWN_PATH_MAX_CONTEXT = 262144
 PARALLEL_MAX = 8
 
 
+# The expert types an own-path engine's native kernels take: the ones the
+# published sizes use (UD-Q4_K_XL: Q4_K/Q5_K/Q6_K, UD-Q6_K_XL: Q6_K/Q8_0, Q8_0).
+# A build with others (another quantizer's MTP layer in Q3_K, say) passes setup
+# and then kills the engine at load: "blk.N.experts are Q3_K/Q3_K, which the
+# native expert kernels do not take".
+OWN_PATH_EXPERT_TYPES = frozenset({"Q4_K", "Q5_K", "Q6_K", "Q8_0"})
+_EXPERT_TENSOR_RE = re.compile(r"^blk\.(\d+)\.ffn_(?:gate|up|down)_exps\.weight$")
+
+
+def unsupported_expert_types(path: str) -> dict[int, list[str]]:
+    """{layer: its expert types} for each layer of the GGUF at `path` with an
+    expert tensor the own-path kernels don't take. {} when every one fits or the
+    header can't be read (the engine then has the last word)."""
+    from api.models import get_gguf_tensor_types
+    bad: dict[int, set] = {}
+    for name, ttype in get_gguf_tensor_types(path).items():
+        m = _EXPERT_TENSOR_RE.match(name)
+        if m and ttype not in OWN_PATH_EXPERT_TYPES:
+            bad.setdefault(int(m.group(1)), set()).add(str(ttype))
+    return {layer: sorted(types) for layer, types in sorted(bad.items())}
+
+
 def is_own_path(family: str) -> bool:
     return bool(FAMILIES.get(family, {}).get("own_path"))
 
@@ -957,6 +979,15 @@ class StrataEngine(Engine):
             if missing:
                 return (f"not every shard of {model_id_for(*parsed)} is next to "
                         f"{os.path.basename(model_path)} (missing {', '.join(missing)})")
+            if is_own_path(parsed[0]):
+                bad = unsupported_expert_types(model_path)
+                if bad:
+                    found = sorted({t for types in bad.values() for t in types})
+                    layers = ", ".join(str(n) for n in list(bad)[:6]) + (", ..." if len(bad) > 6 else "")
+                    return (f"{os.path.basename(model_path)} can't run on Strata: its expert weights in "
+                            f"layer {layers} are {'/'.join(found)}, and Strata's expert kernels take only "
+                            f"{', '.join(sorted(OWN_PATH_EXPERT_TYPES))}. Use the published "
+                            f"{FAMILIES[parsed[0]]['repo']} file or a build quantized like it")
         elif not local_shard_dir(*parsed):
             return (f"{model_id_for(*parsed)} is not downloaded: download it from Recommended "
                     f"models in the Strata settings, then launch it from the model library")

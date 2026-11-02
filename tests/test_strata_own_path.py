@@ -270,6 +270,55 @@ class MountTests(unittest.TestCase):
         self.assertEqual((env["FAMILY"], env["MODEL"], env["VISION"]), ("qwen36", "UD-Q4_K_XL", "no"))
 
 
+def _write_gguf(path, tensors):
+    """A GGUF with one KV and a tensor directory of (name, ggml type id) - no data."""
+    import struct
+    def string(s):
+        b = s.encode()
+        return struct.pack("<Q", len(b)) + b
+    out = b"GGUF" + struct.pack("<IQQ", 3, len(tensors), 1)
+    out += string("general.architecture") + struct.pack("<I", 8) + string("qwen35moe")
+    for name, ttype in tensors:
+        out += string(name) + struct.pack("<I", 2) + struct.pack("<QQ", 2048, 512) \
+            + struct.pack("<IQ", ttype, 0)
+    with open(path, "wb") as f:
+        f.write(out)
+
+
+Q3_K, Q4_K, Q5_K, Q6_K = 11, 12, 13, 14
+
+
+class ExpertTypeTests(MountTests):
+    """A build whose experts the native kernels don't take is refused at launch,
+    not left to kill the engine after setup."""
+
+    def _gguf(self, mtp_gate_up):
+        path = os.path.join(self.models, FINE_TUNE)
+        tensors = []
+        for layer, (gate_up, down) in enumerate(((Q4_K, Q5_K), (Q4_K, Q6_K), (mtp_gate_up, Q5_K))):
+            tensors += [(f"blk.{layer}.ffn_gate_exps.weight", gate_up),
+                        (f"blk.{layer}.ffn_up_exps.weight", gate_up),
+                        (f"blk.{layer}.ffn_down_exps.weight", down),
+                        (f"blk.{layer}.attn_q.weight", Q3_K)]
+        _write_gguf(path, tensors)
+        return path
+
+    def test_the_published_types_launch(self):
+        path = self._gguf(Q4_K)
+        self.assertEqual(S.unsupported_expert_types(path), {})
+        self.assertIsNone(ENGINE.launch_blocker(path))
+
+    def test_q3_k_experts_block_the_launch(self):
+        path = self._gguf(Q3_K)
+        self.assertEqual(S.unsupported_expert_types(path), {2: ["Q3_K"]})
+        why = ENGINE.launch_blocker(path)
+        self.assertIn("layer 2 are Q3_K", why)
+        self.assertIn("unsloth/Qwen3.6-35B-A3B-MTP-GGUF", why)
+
+    def test_an_unreadable_header_is_left_to_the_engine(self):
+        self.assertEqual(S.unsupported_expert_types(self._file(FINE_TUNE)), {})
+
+
 class SetupFingerprintTests(MountTests):
     """Two fine-tunes of a size are one virtual model with one run config."""
 
