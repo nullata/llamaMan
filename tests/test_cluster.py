@@ -185,6 +185,32 @@ class SnapshotAndOnlineTests(unittest.TestCase):
         self.assertIsInstance(snap["gpus"], list)
         self.assertIsInstance(snap["models"], list)
 
+    def test_snapshot_models_carry_engine_models(self):
+        # The peer's launch form offers Strata for a file on this node only
+        # if the snapshot's model entries keep the engine_models tag; without
+        # it the engine dropdown stays disabled on the remote node's models.
+        import api.cluster as cluster_api
+        fake = [
+            {"name": "plain", "path": "/models/plain.gguf", "type": "gguf",
+             "quant": "Q4_K_M", "size_bytes": 1, "size_display": "1 B"},
+            {"name": "qwen36", "path": "/models/Tiel-Coder-35B-A3B-MTP-UD-Q4_K_XL.gguf",
+             "type": "gguf", "quant": "Q4_K_XL", "size_bytes": 2, "size_display": "2 B",
+             "engine_models": {"strata": "strata/qwen36-UD-Q4_K_XL"}},
+        ]
+        cluster_api._local_models_cache["at"] = 0.0
+        cluster_api._local_models_cache["data"] = []
+        try:
+            with patch("api.models.discover_models", return_value=fake), \
+                 patch("api.models.attach_model_sources", side_effect=lambda m, s: m):
+                models = cluster_api._local_models_snapshot()
+        finally:
+            cluster_api._local_models_cache["at"] = 0.0
+            cluster_api._local_models_cache["data"] = []
+        by_name = {m["name"]: m for m in models}
+        self.assertNotIn("engine_models", by_name["plain"])
+        self.assertEqual(by_name["qwen36"]["engine_models"],
+                         {"strata": "strata/qwen36-UD-Q4_K_XL"})
+
 
 class ClusterGroupAdvertiseTests(unittest.TestCase):
     """Surfacing share_queue_group aliases in the model-listing APIs."""

@@ -60,11 +60,20 @@ def _local_models_snapshot() -> list[dict]:
         from config import MODELS_DIR
         models = discover_models(MODELS_DIR)
         models = attach_model_sources(models, get_model_sources(get_storage().get_settings()))
-        compact = [{
-            "name": m["name"], "path": m["path"], "type": m.get("type"),
-            "quant": m.get("quant", ""), "size_bytes": m.get("size_bytes"),
-            "size_display": m.get("size_display", ""), "repo_id": m.get("repo_id"),
-        } for m in models]
+        compact = []
+        for m in models:
+            entry = {
+                "name": m["name"], "path": m["path"], "type": m.get("type"),
+                "quant": m.get("quant", ""), "size_bytes": m.get("size_bytes"),
+                "size_display": m.get("size_display", ""), "repo_id": m.get("repo_id"),
+            }
+            # Which other engines can run this file (a downloaded Strata
+            # model's engine_models tag). Without it a peer's launch form
+            # can't offer the engine for a file that lives on this node;
+            # unknown model-entry keys are opaque to older peers.
+            if m.get("engine_models"):
+                entry["engine_models"] = m["engine_models"]
+            compact.append(entry)
     except Exception:
         compact = []
     _local_models_cache["at"] = now
