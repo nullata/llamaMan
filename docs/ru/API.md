@@ -105,5 +105,6 @@
 
 Ollama: `/api/tags`, `/api/version`, `/api/show`, `/api/ps`, `/api/chat`, `/api/generate` (chat/generate автозапускаются).
 OpenAI: `/v1/models`, `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` (chat автозапускается). В кластере `/v1/embeddings` маршрутизируется между узлами, как и другие маршруты инференса.
+Rerank: `/v1/rerank` (а также `/rerank`, `/v1/reranking`), маршрутизируется по `model`, как `/v1/embeddings`, и автозапускается. Инстанс должен запускать llama-server с `--reranking` (например, Extra Args `--reranking`); иначе возвращается собственная ошибка 501 от llama-server.
 Модели решений: `/v1/systemone` (автозапускается) — см. [Decision-модели](MODELS.md#decision-models).
 База знаний: `/api/kb/*` (только для админов) и MCP-эндпоинт `/mcp/knowledge` — см. [Knowledge Base & MCP](KNOWLEDGE-BASE.md). Межузловые эндпоинты кластера используют `X-Cluster-Secret` — см. [Clustering](CLUSTERING.md).

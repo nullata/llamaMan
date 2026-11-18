@@ -2,7 +2,7 @@
 
 > **注意：** 本文为译文，可能落后于[英文版](../en/STRATA.md)；以英文版为准。
 
-*(可选功能，仅限 NVIDIA)* [Strata](https://github.com/Niko1221/Strata) 能够在消费级 NVIDIA GPU 配合系统 RAM 上运行 Qwen3.8-Flash-Next 混合专家（MoE）系列（及其 Coder、Swift 1.5 和 Unsloth 变体）以及 Qwen3.6-35B-A3B。llamaMan 支持启动、监控、proxy 转发、休眠/唤醒以及停止 Strata 实例，与 llama.cpp 实例并存运行。llama.cpp 的运行机制不受任何影响：引擎抽象层（`core/engines/`）保证了 llama.cpp 的启动逻辑逐字节一致（已通过快照测试）。
+*(可选功能，NVIDIA 或 AMD)* [Strata](https://github.com/Niko1221/Strata) 能够在消费级 NVIDIA 或 AMD (ROCm) GPU 配合系统 RAM 上运行 Qwen3.8-Flash-Next 混合专家（MoE）系列（及其 Coder、Swift 1.5 和 Unsloth 变体）以及 Qwen3.6-35B-A3B。llamaMan 支持启动、监控、proxy 转发、休眠/唤醒以及停止 Strata 实例，与 llama.cpp 实例并存运行。llama.cpp 的运行机制不受任何影响：引擎抽象层（`core/engines/`）保证了 llama.cpp 的启动逻辑逐字节一致（已通过快照测试）。
 
 ## 目录
 
@@ -10,13 +10,29 @@
 
 ## 快速入门
 
-**1. 获取镜像**（上游不发布预构建镜像；宿主机需要 NVIDIA 驱动 **580+**，即 CUDA 13，以及 NVIDIA Container Toolkit）。在启用 Strata（步骤 2）后，可以在 **Settings → Docker Images** 中按名称拉取你信任的镜像（拉取行中选择引擎 *Strata*），或者使用 **Manage Strata images → Pull repo & build latest**，该操作会将仓库下载到 `STRATA_SRC_DIR` 中并通过 Docker socket 针对当前节点的 GPU 架构代数（从驱动读取；若读取失败则包含所有受支持的架构）构建 `STRATA_BUILD_IMAGE`，亦可手动构建：
+**1. 获取镜像。** AMD 请参见下文的 [AMD (ROCm)](#amd-rocm)。NVIDIA 的情况下（宿主机需要 NVIDIA 驱动 **580+**，即 CUDA 13，以及 NVIDIA Container Toolkit）。在启用 Strata（步骤 2）后，可以在 **Settings → Docker Images** 中按名称拉取你信任的镜像（拉取行中选择引擎 *Strata*），或者使用 **Manage Strata images → Pull repo & build latest**，该操作会将仓库下载到 `STRATA_SRC_DIR` 中并通过 Docker socket 针对当前节点的 GPU 架构代数（从驱动读取；若读取失败则包含所有受支持的架构）构建 `STRATA_BUILD_IMAGE`，亦可手动构建：
 
 ```bash
 git clone https://github.com/Niko1221/Strata && cd Strata
 docker build -t strata .                                        # all supported GPU generations
 docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (faster build)
 ```
+
+### AMD (ROCm)
+
+上游为每个 GPU 系列发布一个 ROCm 镜像。在 **Settings → Docker Images**（引擎 *Strata*）中拉取适合你显卡的镜像，或将其设为 `STRATA_IMAGE`：
+
+| 显卡 | 镜像 |
+|---|---|
+| RX 9000 系列、Radeon AI PRO R9700 (RDNA 4) | `ghcr.io/niko1221/strata:latest-rocm-gfx120x` |
+| RX 7000 系列 (RDNA 3) | `ghcr.io/niko1221/strata:latest-rocm-gfx110x` |
+| Ryzen AI Max "Strix Halo" (Radeon 8060S) | `ghcr.io/niko1221/strata:latest-rocm-gfx1151` |
+
+- 节点必须以 ROCm 模式运行：通过 AMD 显卡自动检测，或设置 `GPU_TYPE=rocm`。设置 `GPU_TYPE=vulkan` 时 Strata 会被拒绝，因为 Vulkan 模式不会传入 `/dev/kfd`。当 AMD 显卡旁边还有 Intel 核显时，也请设置 `GPU_TYPE=rocm`。
+- AMD 节点上会隐藏 *Pull repo & build latest*：仓库的 Dockerfile 只构建 CUDA 引擎。
+- 一个镜像只包含一个 GPU 系列，因此装有两个系列显卡的节点（例如 RX 7900 XTX + RX 9070）需要将 **GPU Devices** 固定到其中一个系列。
+- RX 6000 (RDNA 2) 和 780M 没有已发布的镜像，暂不支持。
+- 尚未在 AMD 硬件上验证；欢迎反馈哪些可以正常工作。
 
 **2. 启用功能** 在 llamaMan 节点上设置：`STRATA_ENABLED=true`（参见 [Strata variables](CONFIGURATION.md#strata)）。Settings → Docker Images 随后会显示 *Manage Strata images*：已拉取的 Strata 镜像、已构建的镜像（下载和构建的 commit，以及构建按钮）和它们的自动更新选项。一旦节点上存在其中一个镜像，启动表单就会提供 Strata 选项。
 
@@ -56,7 +72,7 @@ Qwen3.6-35B-A3B 在 Strata 中有独立的引擎路径，是单个 GGUF 文件�
 - **设置已固化至 Strata setup 中。** Context / 图像输入 / KV / Low-RAM / GPU 绑定均按模型记录在数据卷上。llamaMan 会记住每个模型上次健康运行时使用的设置，仅在设置变更时才传入 `REINSTALL=1`（文件会被复用）。
 - **空闲超时正常生效**（休眠会停止容器；下一个请求将其唤醒），但冷启动需要数分钟，唤醒请求需要等待其完成（`STRATA_LOAD_TIMEOUT`）。
 - **每个节点每种 Strata 模型仅限一个实例**（同模型的实例共享卷上的 setup 产物）。
-- **仅限 NVIDIA。** 在 ROCm / Intel / Vulkan / CPU 节点上以及当 `STRATA_ENABLED` 关闭时，该选项不可用并会显示原因。在集群中，每个节点都会宣告其支持的引擎，因此仅具备能力的节点才会提供 Strata 模型。
+- **仅限 NVIDIA 或 AMD (ROCm)。** 在 Intel / Vulkan / CPU 节点上以及当 `STRATA_ENABLED` 关闭时，该选项不可用并会显示原因。在集群中，每个节点都会宣告其支持的引擎，因此仅具备能力的节点才会提供 Strata 模型。
 - 裸机运行的 llamaMan 访问 Strata 的方式与 llama-server 相同（通过 `LLAMA_HOST_ADDR` 上的映射端口）。
 
 ---
@@ -89,7 +105,7 @@ core/engines/
   | command | 无（entrypoint 仅读取环境变量） |
   | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`?（挂起看门狗 / 慢速存储宽限期）, `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`?（仅限独立路径系列；同时请求数） |
   | ulimits | `memlock=-1` |
-  | GPU | NVIDIA `device_requests`（`gpu_devices` / `LLAMA_GPU_DEVICES`） |
+  | GPU | NVIDIA `device_requests`，AMD 上为 `/dev/kfd` + `/dev/dri`、宿主机的 render/video GID 和 `ROCR_VISIBLE_DEVICES`（`gpu_devices` / `LLAMA_GPU_DEVICES`） |
   | mounts | 数据卷 → `/data`；日志；当 llamaMan 持有完整分片时，`MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>`（非 qwen 为 `<family>-<SIZE>`；setup.py 区分大小写的分片文件夹）(rw)；从模型库启动的单文件模型也一样，无论其名称如何 |
   | mem_limit | 来自 System Memory Limit（强制 `LOW_RAM=on`） |
   | network / ports / labels | 与 llama-server 相同（`llamaman-net`，`8080 → host port`，`llamaman.*`） |
@@ -97,7 +113,7 @@ core/engines/
 ## 待定问题解答
 
 1. **就绪状态。** 在经过 API key 门禁前，`/health` 返回 `{"status": "ok", ..., "service": "strata"}`（`serve/server.py:2172`）。HTTP 端口仅在模型加载完成后才会打开：`serve()` 运行在 `server.py:3008`，位于引擎启动代码 `:2925` 之后。在 Strata 下载或加载期间，连接会被拒绝，因此 llamaMan 现有的健康检查（`status == "ok"`）无需特殊处理。在 lazy 模式下模型未加载时 `/v1/models` 返回空列表（`server.py:2190`），因此不是良好的就绪信号。当设置了 API key 时，`/v1/status` 需要提供该 key。
-2. **设置。** 所有内容均作为环境变量传递并由 `docker-entrypoint.sh` 读取：`HOST`, `PORT`, `API_KEY`, `GPU` / `GPUS` / `LAYER_SPLIT`, `LOW_RAM`, `KV`, `CONTEXT`, `VISION`（`:14-24`）。命令行参数会被忽略，因为 entrypoint 会重新构建 `$@`（`:42`, `:65`）。GPU 绑定使用容器编号：NVIDIA 运行时会对 llamaMan 挂载的宿主机 GPU 进行重新编号，因此宿主机的 `1,3` 变为 `GPUS=0,1`。llamaMan 不设置 `API_KEY`，这与运行 llama-server（无 key）一致；自身的 proxy 和认证机制前置生效。
+2. **设置。** 所有内容均作为环境变量传递并由 `docker-entrypoint.sh` 读取：`HOST`, `PORT`, `API_KEY`, `GPU` / `GPUS` / `LAYER_SPLIT`, `LOW_RAM`, `KV`, `CONTEXT`, `VISION`（`:14-24`）。命令行参数会被忽略，因为 entrypoint 会重新构建 `$@`（`:42`, `:65`）。GPU 绑定使用容器编号：NVIDIA 运行时（AMD 上为 `ROCR_VISIBLE_DEVICES`）会对 llamaMan 挂载的宿主机 GPU 进行重新编号，因此宿主机的 `1,3` 变为 `GPUS=0,1`。llamaMan 不设置 `API_KEY`，这与运行 llama-server（无 key）一致；自身的 proxy 和认证机制前置生效。
 3. **复用磁盘上的 GGUF。** `setup.py` 具有 `--gguf-dir` 参数（`setup.py:2954`），但 entrypoint 从未透传该参数。不过，Setup 确实接受已经位于 `/data/models/<fam tag><SIZE>/<original name>`（例如 `IQ3_S`, `coder-IQ1_M`；区分大小写）的完整分片：它会对照自身的张量目录进行检查并标记为已完成（`setup.py:3389-3405`, "#173"）。因此，llamaMan 会将本地副本挂载到此处（读写模式，以便写入 `.done` 标记），且仅在这些分片完全下载完成后挂载。分片是从 Strata 固定的 Hugging Face revision 获取的（`setup.py:65-70`，镜像在 `core/engines/strata.py` 中）。MTP 层（约 5 GB）和 pack 仍会在容器内部生成。
 4. **内存限制 / memlock。** Setup 从 `/proc/meminfo` 读取 RAM，这是宿主机的总内存，因此受限容器必须要求 `LOW_RAM=on`（Dockerfile 注释在 `:31`，`docs/INSTALL.md:116-118`）。若未设置，setup 会选择内存驻留模式，容器极易因 OOM 被杀。每当设置内存限制时，llamaMan 都会强制开启 `LOW_RAM=on`，且 UI 会在低于 64 GB 时发出警告。`memlock=-1` 至关重要，因为引擎会对其内存池的一部分进行页锁定以用于 GPU DMA，无法锁定的专家将通过较慢的主机内存拷贝传输（`src/prefill/prefill.cpp:110`, `:207-214`）。从源码来看，缺少 memlock 限制更像是变慢而非报错，但**在没有 GPU 的情况下无法对此进行验证**。llamaMan 始终对其进行配置。
 
@@ -110,7 +126,7 @@ core/engines/
 - **每个节点每种 Strata 模型仅限一个活跃实例。** 同一模型的两个实例会在相同的文件上并发运行 setup。
 - **当 llamaMan 仍在下载该模型时拒绝启动**，避免容器在其卷中重复下载一次。
 - **预下载的分片跳过更新检查溯源。** 固定的文件绝不能“更新”为仓库的 `main` 分支。
-- **虚拟模型仅在能够运行的环境中列出**（`STRATA_ENABLED` 加上 NVIDIA）：在 `/api/models`、`/api/tags`、`/v1/models` 以及名称解析中。更新扫描和集群模型快照仅针对实体文件。对等节点从 `snapshot.system.engines`（嵌套在 `system` 下，因此较旧的对等节点会忽略它）获取引擎可用性信息。
+- **虚拟模型仅在能够运行的环境中列出**（`STRATA_ENABLED` 加上 NVIDIA 或 ROCm GPU）：在 `/api/models`、`/api/tags`、`/v1/models` 以及名称解析中。更新扫描和集群模型快照仅针对实体文件。对等节点从 `snapshot.system.engines`（嵌套在 `system` 下，因此较旧的对等节点会忽略它）获取引擎可用性信息。
 - **加载阶段** 从容器日志的最后 64 KB 中提取：setup 的 `=== Step N ===` 标头、下载的 `\r` 进度行，以及服务端的 "loading the model"。该解析为尽力而为（best-effort），解析不到时优雅退化为无阶段显示。
 - **vLLM (#53)** 将作为另一个 `Engine`：拥有独立的镜像、命令、端口（`internal_port`）、健康检查机制和启动字段。届时只需对假定两个引擎均使用 8080 端口的地方（`resolve_llama_endpoint` 调用方）进行参数化改造即可。
 
@@ -123,7 +139,7 @@ core/engines/
 
 ## 已知局限
 
-- 仅限 NVIDIA。Strata 的 AMD (HIP) 路径在上游属于实验性手动构建，暂不提供支持。
+- AMD：镜像需手动选择（尚未检测 gfx 架构），setup 之前不会检查镜像是否与显卡匹配，也无法识别共享数据卷上由其他变体镜像生成的 run config。
 - 视觉编码器（mmproj）始终由 Strata 自身下载至数据卷中。
 - Strata 自身的 Web UI（`/`, `/settings`, `/load`, `/unload`）可以通过实例端口访问，但 llamaMan 不使用也不管理它。其空闲卸载功能未被使用；llamaMan 的休眠机制通过停止容器来替代。
 - 修改 setup 中记录的设置会在下次启动时重新触发 Strata 的 setup 流程（文件会被复用）。
@@ -138,7 +154,7 @@ core/engines/
 2. **启用：** 设置 `STRATA_ENABLED=true` 并重启 llamaMan。
    - `GET /api/engines` 显示 strata 的 `available: true`，并列出其模型（内置列表中有 12 个模型）。
    - Settings → Docker Images → *Manage Strata images* 显示 `strata:latest` 为 **local**。
-3. **门禁校验：** 在非 NVIDIA 节点上（或设置了 `GPU_TYPE=rocm`），不会列出 Strata 模型，针对 `/strata/qwen-IQ2_XS` 调用 `POST /api/instances` 会返回 400 并提示 NVIDIA 相关原因。
+3. **门禁校验：** 在既没有 NVIDIA 也没有 ROCm GPU 的节点上（或设置了 `GPU_TYPE=intel` / `vulkan`），不会列出 Strata 模型，针对 `/strata/qwen-IQ2_XS` 调用 `POST /api/instances` 会返回 400 并提示原因。
 4. **从 UI 启动：** 选择 `strata/qwen-IQ2_XS`。
    - 隐藏仅限 llama.cpp 的字段，显示 Strata 区域，且 Max Concurrent 锁定为 1。
    - 设置 32g 内存限制并确认出现低于 64 GB 警告；随后重新清除限制。
@@ -174,8 +190,8 @@ core/engines/
     - 使用 `python app.py` 运行 llamaMan（`LLAMAMAN_IN_DOCKER=false`）并重复步骤 4-6。
     - llamaMan 通过 `LLAMA_HOST_ADDR` 上的映射端口访问服务。
 13. **集群：**
-    - 添加非 NVIDIA 对等节点。仅当选择 NVIDIA 节点作为 Target node 时才会显示 Strata 模型。
-    - 从另一个节点的 UI 在 NVIDIA 对等节点上启动实例可正常工作。
+    - 添加无法运行 Strata 的对等节点（没有 NVIDIA 或 ROCm GPU）。仅当选择具备能力的节点作为 Target node 时才会显示 Strata 模型。
+    - 从另一个节点的 UI 在具备能力的对等节点上启动实例可正常工作。
 14. **llama.cpp 不受影响：** 如往常一样启动 GGUF 模型。
     - 命令行（`docker inspect` Args）与升级前一致。
     - 升级前保存的预设加载和启动均不受影响。

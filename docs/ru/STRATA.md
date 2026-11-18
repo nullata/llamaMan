@@ -2,7 +2,7 @@
 
 > **Примечание:** это перевод, он может отставать от [английской версии](../en/STRATA.md), которая является основной.
 
-*(opt-in, только NVIDIA)* [Strata](https://github.com/Niko1221/Strata) гоняет семейство mixture-of-experts Qwen3.8-Flash-Next (и его варианты Coder, Swift 1.5 и Unsloth) и Qwen3.6-35B-A3B на потребительских NVIDIA GPU плюс системной RAM. llamaMan умеет запускать, мониторить, проксировать, укладывать в сон/будить и останавливать Strata-инстансы рядом с llama.cpp. Поведение llama.cpp не меняется: слой движков (`core/engines/`) сохраняет запуск llama.cpp побайтово идентичным (snapshot-тесты).
+*(opt-in, NVIDIA или AMD)* [Strata](https://github.com/Niko1221/Strata) гоняет семейство mixture-of-experts Qwen3.8-Flash-Next (и его варианты Coder, Swift 1.5 и Unsloth) и Qwen3.6-35B-A3B на потребительских NVIDIA или AMD (ROCm) GPU плюс системной RAM. llamaMan умеет запускать, мониторить, проксировать, укладывать в сон/будить и останавливать Strata-инстансы рядом с llama.cpp. Поведение llama.cpp не меняется: слой движков (`core/engines/`) сохраняет запуск llama.cpp побайтово идентичным (snapshot-тесты).
 
 ## Содержание
 
@@ -11,13 +11,29 @@
 <a id="getting-started"></a>
 ## Начало работы
 
-**1. Достаньте образ** (upstream никаких не публикует; хосту нужен NVIDIA драйвер **580+**, т.е. CUDA 13, и NVIDIA Container Toolkit). После включения Strata (шаг 2) либо подтяните доверенный по имени в **Settings → Docker Images** (движок *Strata* в строке pull), либо воспользуйтесь **Manage Strata images → Pull repo & build latest**, что скачивает репозиторий в `STRATA_SRC_DIR` и собирает `STRATA_BUILD_IMAGE` через Docker-сокет для GPU-поколений узла (считываются из драйвера; всех поддерживаемых, если это не удаётся), либо соберите вручную:
+**1. Достаньте образ.** Для AMD см. [AMD (ROCm)](#amd-rocm) ниже. Для NVIDIA (хосту нужен NVIDIA драйвер **580+**, т.е. CUDA 13, и NVIDIA Container Toolkit). После включения Strata (шаг 2) либо подтяните доверенный по имени в **Settings → Docker Images** (движок *Strata* в строке pull), либо воспользуйтесь **Manage Strata images → Pull repo & build latest**, что скачивает репозиторий в `STRATA_SRC_DIR` и собирает `STRATA_BUILD_IMAGE` через Docker-сокет для GPU-поколений узла (считываются из драйвера; всех поддерживаемых, если это не удаётся), либо соберите вручную:
 
 ```bash
 git clone https://github.com/Niko1221/Strata && cd Strata
 docker build -t strata .                                        # all supported GPU generations
 docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (faster build)
 ```
+
+### AMD (ROCm)
+
+Upstream публикует по одному ROCm-образу на семейство GPU. Подтяните образ для своей карты в **Settings → Docker Images** (движок *Strata*) или задайте его как `STRATA_IMAGE`:
+
+| Карта | Образ |
+|---|---|
+| Серия RX 9000, Radeon AI PRO R9700 (RDNA 4) | `ghcr.io/niko1221/strata:latest-rocm-gfx120x` |
+| Серия RX 7000 (RDNA 3) | `ghcr.io/niko1221/strata:latest-rocm-gfx110x` |
+| Ryzen AI Max "Strix Halo" (Radeon 8060S) | `ghcr.io/niko1221/strata:latest-rocm-gfx1151` |
+
+- Узел должен работать в режиме ROCm: определён по AMD-карте или `GPU_TYPE=rocm`. С `GPU_TYPE=vulkan` Strata отклоняется, потому что режим Vulkan не пробрасывает `/dev/kfd`. Задайте `GPU_TYPE=rocm` и тогда, когда рядом с AMD-картой стоит Intel iGPU.
+- *Pull repo & build latest* скрыт на AMD-узлах: Dockerfile репозитория собирает только CUDA-движок.
+- Один образ содержит одно семейство GPU, поэтому узлу с картами двух семейств (например, RX 7900 XTX + RX 9070) нужно закрепить **GPU Devices** за одним семейством.
+- У RX 6000 (RDNA 2) и 780M нет опубликованного образа, они не поддерживаются.
+- Пока не проверено на AMD-железе; пожалуйста, сообщайте, что работает.
 
 **2. Включите** на узле llamaMan: `STRATA_ENABLED=true` (см. [Strata variables](CONFIGURATION.md#strata)). Settings → Docker Images тогда покажет *Manage Strata images*: подтянутые Strata-образы, собранный (скачанные и собранные коммиты, кнопка сборки) и их автообновление. Форма запуска предложит Strata, как только один из них окажется на узле.
 
@@ -58,7 +74,7 @@ docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (f
 - **Настройки запекаются в setup Strata.** Context / image input / KV / Low-RAM / закрепление GPU записываются по моделям на томе данных. llamaMan помнит настройки, с которыми каждая модель последний раз стала healthy, и передаёт `REINSTALL=1` только при их изменении (файлы переиспользуются).
 - **Idle timeout** работает (сон останавливает контейнер; следующий запрос будит), но холодный старт занимает минуты, и будящий запрос ждёт (`STRATA_LOAD_TIMEOUT`).
 - **Один инстанс на Strata-модель на узел** (инстансы одной модели делят её setup на томе).
-- **Только NVIDIA.** Опция недоступна, с указанием причины, на ROCm / Intel / Vulkan / CPU узлах и когда `STRATA_ENABLED` выкл. В кластере каждый узел рекламирует свои движки, поэтому Strata-модели предлагают только способные узлы.
+- **Только NVIDIA или AMD (ROCm).** Опция недоступна, с указанием причины, на Intel / Vulkan / CPU узлах и когда `STRATA_ENABLED` выкл. В кластере каждый узел рекламирует свои движки, поэтому Strata-модели предлагают только способные узлы.
 - llamaMan в bare-metal режиме обращается к Strata так же, как к llama-server (опубликованный порт на `LLAMA_HOST_ADDR`).
 
 ---
@@ -101,7 +117,7 @@ core/engines/
   | command | нет (entrypoint читает только переменные окружения) |
   | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`? (только семейства с собственным путём; запросы одновременно) |
   | ulimits | `memlock=-1` |
-  | GPU | NVIDIA `device_requests` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
+  | GPU | NVIDIA `device_requests`, а на AMD `/dev/kfd` + `/dev/dri`, render/video GID хоста и `ROCR_VISIBLE_DEVICES` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
   | mounts | том данных → `/data`; логи; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>` (`<family>-<SIZE>` для не-qwen; чувствительная к регистру папка шардов setup.py) (rw), когда llamaMan держит полные шарды, а также однофайловая модель, запущенная из библиотеки, как бы она ни называлась |
   | mem_limit | из System Memory Limit (принудительно `LOW_RAM=on`) |
   | network / ports / labels | как для llama-server (`llamaman-net`, `8080 → host port`, `llamaman.*`) |
@@ -117,7 +133,7 @@ core/engines/
    `/v1/status` требует API-ключ, когда тот задан.
 2. **Настройки.** Всё передаётся переменными окружения, которые читает `docker-entrypoint.sh`: `HOST`, `PORT`, `API_KEY`,
    `GPU` / `GPUS` / `LAYER_SPLIT`, `LOW_RAM`, `KV`, `CONTEXT`, `VISION` (`:14-24`). Аргументы команды игнорируются,
-   потому что entrypoint пересобирает `$@` (`:42`, `:65`). Закрепление GPU использует контейнерную нумерацию: NVIDIA runtime
+   потому что entrypoint пересобирает `$@` (`:42`, `:65`). Закрепление GPU использует контейнерную нумерацию: NVIDIA runtime (или `ROCR_VISIBLE_DEVICES` на AMD)
    перенумеровывает хост-GPU, которые подключает llamaMan, поэтому хостовые `1,3` становятся `GPUS=0,1`. llamaMan не задаёт `API_KEY`, что
    совпадает с тем, как он гоняет llama-server (без ключа); его собственный прокси и auth стоят спереди.
 3. **Переиспользование GGUF на диске.** У `setup.py` есть `--gguf-dir` (`setup.py:2954`), но entrypoint его никогда не передаёт.
@@ -153,7 +169,7 @@ core/engines/
 - **Запуск отвергается, пока llamaMan ещё скачивает эту модель**, чтобы контейнер не скачал её второй раз в свой
   том.
 - **Предварительно скачанные шарды пропускают provenance проверки обновлений.** Закреплённый файл нельзя "обновить" до `main` репозитория.
-- **Виртуальные модели перечисляются только там, где могут работать** (`STRATA_ENABLED` плюс NVIDIA): в `/api/models`,
+- **Виртуальные модели перечисляются только там, где могут работать** (`STRATA_ENABLED` плюс NVIDIA или ROCm GPU): в `/api/models`,
   `/api/tags`, `/v1/models` и разрешении имён. Сканы обновлений и кластерный снимок моделей остаются только по файлам. Пиры
   узнают доступность движков из `snapshot.system.engines` (вложены в `system`, поэтому старые пиры их игнорируют).
 - **Стадия загрузки** берётся из последних 64 КБ лога контейнера: заголовки setup `=== Step N ===`, строка прогресса
@@ -176,7 +192,7 @@ core/engines/
 <a id="known-limitations"></a>
 ## Известные ограничения
 
-- Только NVIDIA. Путь Strata для AMD (HIP) — экспериментальная ручная сборка в upstream, и не предлагается.
+- AMD: образ выбирается вручную (определения gfx-архитектуры пока нет), ничто не проверяет перед setup, подходит ли он к карте, а run config, созданный образом другого варианта на общем томе данных, не распознаётся.
 - Vision-энкодер (mmproj) всегда скачивает сам Strata, в том.
 - Собственный веб-UI Strata (`/`, `/settings`, `/load`, `/unload`) достижим через порт инстанса, но llamaMan его
   не использует и не управляет им. Его idle-unload функция не используется; сон llamaMan вместо этого останавливает контейнер.
@@ -198,8 +214,8 @@ core/engines/
 2. **Включение:** задайте `STRATA_ENABLED=true` и перезапустите llamaMan.
    - `GET /api/engines` показывает strata `available: true`, с его моделями (12 во встроенном списке).
    - Settings → Docker Images → *Manage Strata images* показывает `strata:latest` как **local**.
-3. **Гейтинг:** на не-NVIDIA узле (или с `GPU_TYPE=rocm`) Strata-модели не перечисляются, а
-   `POST /api/instances` для `/strata/qwen-IQ2_XS` возвращает 400 с причиной про NVIDIA.
+3. **Гейтинг:** на узле без NVIDIA и без ROCm GPU (или с `GPU_TYPE=intel` / `vulkan`) Strata-модели не
+   перечисляются, а `POST /api/instances` для `/strata/qwen-IQ2_XS` возвращает 400 с причиной.
 4. **Запуск из UI:** выберите `strata/qwen-IQ2_XS`.
    - Поля только для llama.cpp скрыты, секция Strata показана, и Max Concurrent зафиксирован на 1.
    - Задайте лимит памяти 32g и проверьте, что предупреждение ниже 64 ГБ появилось; снова снимите.
@@ -238,8 +254,9 @@ core/engines/
     - Запустите llamaMan через `python app.py` (`LLAMAMAN_IN_DOCKER=false`) и повторите 4-6.
     - llamaMan обращается к опубликованному порту на `LLAMA_HOST_ADDR`.
 13. **Кластер:**
-    - Добавьте не-NVIDIA пир. Strata-модели появляются для NVIDIA-узла только когда он — Target node.
-    - Запуск на NVIDIA-пире из UI другого узла работает.
+    - Добавьте пир, который не может запускать Strata (без NVIDIA или ROCm GPU). Strata-модели появляются для
+      способного узла только когда он — Target node.
+    - Запуск на способном пире из UI другого узла работает.
 14. **llama.cpp не затронут:** запустите GGUF-модель как раньше.
     - Командная строка (Args в `docker inspect`) совпадает с прежней, до апгрейда.
     - Пресеты, сохранённые до апгрейда, загружаются и запускаются без изменений.

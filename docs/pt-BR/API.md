@@ -105,5 +105,6 @@ Um modelo simplesmente desconhecido retorna `model '<name>' not found`, como `50
 
 Ollama: `/api/tags`, `/api/version`, `/api/show`, `/api/ps`, `/api/chat`, `/api/generate` (chat/generate auto-iniciam).
 OpenAI: `/v1/models`, `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` (chat auto-inicia). Em um cluster, `/v1/embeddings` é roteado entre os nodes como as outras rotas de inferência.
+Rerank: `/v1/rerank` (também `/rerank`, `/v1/reranking`), roteado por `model` como `/v1/embeddings` e auto-iniciado. A instância precisa rodar o llama-server com `--reranking` (ex.: Extra Args `--reranking`); caso contrário, volta o próprio erro 501 do llama-server.
 Modelos de decisão: `/v1/systemone` (auto-inicia) - veja [Modelos de decisão](MODELS.md#decision-models).
 Base de conhecimento: `/api/kb/*` (só admin) e o endpoint MCP `/mcp/knowledge` - veja [Knowledge Base & MCP](KNOWLEDGE-BASE.md). Os endpoints node-a-node de cluster usam `X-Cluster-Secret` - veja [Clustering](CLUSTERING.md).

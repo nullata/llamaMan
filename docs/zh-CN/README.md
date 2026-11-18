@@ -24,7 +24,7 @@
 - **实例监控** - 每张 GPU 的显存占用、容器 CPU/RAM，以及每实例 TTFT / 吞吐量 / 延迟
 - **认证** - 用户账号、API key（bearer token）、单 endpoint 认证开关
 - **多节点集群** *(可选功能)* - 异构节点组成单个逻辑集群；聚合仪表盘；共享队列负载均衡
-- 🆕 **Strata 引擎** *(可选功能，NVIDIA)* - 在 llama.cpp 旁启动 [Strata](https://github.com/Niko1221/Strata) 实例
+- 🆕 **Strata 引擎** *(可选功能，NVIDIA 或 AMD)* - 在 llama.cpp 旁启动 [Strata](https://github.com/Niko1221/Strata) 实例
 - 🆕 **知识库与 MCP 服务器** *(可选功能，MariaDB 后端)* - 将文档按主题存储，使用你自己的 embedding 模型按语义进行搜索，并向任何 MCP 客户端暴露完整接口 —— 全部本地运行
 
 ## 系统要求

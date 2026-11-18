@@ -2,7 +2,7 @@
 
 > **注:** これは翻訳であり、[英語版](../en/STRATA.md)より内容が古い場合があります。英語版が正式な内容です。
 
-*(オプトイン、NVIDIA 専用)* [Strata](https://github.com/Niko1221/Strata) は、Qwen3.8-Flash-Next の Mixture-of-Experts ファミリー（およびその Coder、Swift 1.5、Unsloth バリアント）と Qwen3.6-35B-A3B をコンシューマー向け NVIDIA GPU とシステム RAM 上で実行します。llamaMan は、llama.cpp インスタンスの隣で Strata インスタンスの起動、監視、プロキシ、スリープ/復帰、停止を行うことができます。llama.cpp の動作は変わりません: エンジン層（`core/engines/`）により、llama.cpp の起動はバイト単位で同一に保たれます（スナップショットテスト済み）。
+*(オプトイン、NVIDIA または AMD)* [Strata](https://github.com/Niko1221/Strata) は、Qwen3.8-Flash-Next の Mixture-of-Experts ファミリー（およびその Coder、Swift 1.5、Unsloth バリアント）と Qwen3.6-35B-A3B をコンシューマー向け NVIDIA または AMD (ROCm) GPU とシステム RAM 上で実行します。llamaMan は、llama.cpp インスタンスの隣で Strata インスタンスの起動、監視、プロキシ、スリープ/復帰、停止を行うことができます。llama.cpp の動作は変わりません: エンジン層（`core/engines/`）により、llama.cpp の起動はバイト単位で同一に保たれます（スナップショットテスト済み）。
 
 ## 目次
 
@@ -10,13 +10,29 @@
 
 ## クイックスタート
 
-**1. イメージの取得**（上流はイメージを公開していません。ホストには NVIDIA ドライバ **580+**（つまり CUDA 13）および NVIDIA Container Toolkit が必要です）。Strata を有効にした後（ステップ2）、**Settings → Docker Images** で名前を指定して信頼できるイメージをプルするか（プル行でエンジン *Strata* を選択）、**Manage Strata images → Pull repo & build latest** を使用してリポジトリを `STRATA_SRC_DIR` にダウンロードし、Docker socket 経由でノードの GPU 世代向けに `STRATA_BUILD_IMAGE` をビルドします（ドライバから読み取り、失敗した場合はサポートされているすべての世代を対象とします）。または手動でビルドします:
+**1. イメージの取得。** AMD の場合は下記の [AMD (ROCm)](#amd-rocm) を参照してください。NVIDIA の場合（ホストには NVIDIA ドライバ **580+**（つまり CUDA 13）および NVIDIA Container Toolkit が必要です）。Strata を有効にした後（ステップ2）、**Settings → Docker Images** で名前を指定して信頼できるイメージをプルするか（プル行でエンジン *Strata* を選択）、**Manage Strata images → Pull repo & build latest** を使用してリポジトリを `STRATA_SRC_DIR` にダウンロードし、Docker socket 経由でノードの GPU 世代向けに `STRATA_BUILD_IMAGE` をビルドします（ドライバから読み取り、失敗した場合はサポートされているすべての世代を対象とします）。または手動でビルドします:
 
 ```bash
 git clone https://github.com/Niko1221/Strata && cd Strata
 docker build -t strata .                                        # all supported GPU generations
 docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (faster build)
 ```
+
+### AMD (ROCm)
+
+上流は GPU ファミリーごとに 1 つの ROCm イメージを公開しています。お使いのカード用のイメージを **Settings → Docker Images**（エンジン *Strata*）でプルするか、`STRATA_IMAGE` に設定してください:
+
+| カード | イメージ |
+|---|---|
+| RX 9000 シリーズ、Radeon AI PRO R9700 (RDNA 4) | `ghcr.io/niko1221/strata:latest-rocm-gfx120x` |
+| RX 7000 シリーズ (RDNA 3) | `ghcr.io/niko1221/strata:latest-rocm-gfx110x` |
+| Ryzen AI Max "Strix Halo" (Radeon 8060S) | `ghcr.io/niko1221/strata:latest-rocm-gfx1151` |
+
+- ノードは ROCm モードで動作している必要があります（AMD カードから検出、または `GPU_TYPE=rocm`）。`GPU_TYPE=vulkan` では Vulkan モードが `/dev/kfd` を渡さないため、Strata は拒否されます。AMD カードの横に Intel iGPU がある場合も `GPU_TYPE=rocm` を設定してください。
+- AMD ノードでは *Pull repo & build latest* は非表示です。リポジトリの Dockerfile は CUDA エンジンのみをビルドします。
+- 1 つのイメージには 1 つの GPU ファミリーしか含まれないため、2 つのファミリーのカードを持つノード（例: RX 7900 XTX + RX 9070）では **GPU Devices** を 1 つのファミリーに固定する必要があります。
+- RX 6000 (RDNA 2) と 780M には公開イメージがなく、サポートされていません。
+- AMD ハードウェアでの検証はまだです。動作した内容をぜひ報告してください。
 
 **2. 有効化** llamaMan ノードで設定: `STRATA_ENABLED=true`（[Strata variables](CONFIGURATION.md#strata) を参照）。設定後、Settings → Docker Images に *Manage Strata images* が表示されます: プルされた Strata イメージ、ビルドされたイメージ（ダウンロード済みおよびビルド済みのコミット、ビルドボタン）、およびそれらの自動更新が表示されます。いずれかがノード上に存在すると、起動フォームで Strata が選択可能になります。
 
@@ -56,7 +72,7 @@ Qwen3.6-35B-A3B は Strata 内に独自のエンジンパスを持つ単一の G
 - **設定は Strata のセットアップに焼き込まれます。** Context / 画像入力 / KV / Low-RAM / GPU ピニングは、データボリューム上のモデルごとに記録されます。llamaMan は各モデルが最後に正常起動したときの設定を記憶し、それらが変更された場合にのみ `REINSTALL=1` を渡します（ファイルは再利用されます）。
 - **アイドルタイムアウト** は機能します（スリープによりコンテナが停止し、次のリクエストで復帰します）が、コールドスタートには数分かかり、復帰リクエストはその完了を待ちます（`STRATA_LOAD_TIMEOUT`）。
 - **ノードあたり Strata モデルごとに1インスタンス**（同一モデルのインスタンスはボリューム上のセットアップを共有します）。
-- **NVIDIA 専用。** ROCm / Intel / Vulkan / CPU ノード、および `STRATA_ENABLED` がオフの場合は理由付きで利用不可となります。クラスタでは各ノードが自身のエンジンを通知するため、対応ノードのみが Strata モデルを提供します。
+- **NVIDIA または AMD (ROCm) 専用。** Intel / Vulkan / CPU ノード、および `STRATA_ENABLED` がオフの場合は理由付きで利用不可となります。クラスタでは各ノードが自身のエンジンを通知するため、対応ノードのみが Strata モデルを提供します。
 - ベアメタル実行の llamaMan は、llama-server と同様の方法で Strata にアクセスします（`LLAMA_HOST_ADDR` 上の公開ポート）。
 
 ---
@@ -89,7 +105,7 @@ core/engines/
   | command | なし（entrypoint は環境変数のみを読み取ります） |
   | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`?（ハングウォッチドッグ / 低速ストレージ許容時間）, `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`?（独自パスのファミリーのみ。同時リクエスト数） |
   | ulimits | `memlock=-1` |
-  | GPU | NVIDIA `device_requests`（`gpu_devices` / `LLAMA_GPU_DEVICES`） |
+  | GPU | NVIDIA `device_requests`、AMD では `/dev/kfd` + `/dev/dri`、ホストの render/video GID、`ROCR_VISIBLE_DEVICES`（`gpu_devices` / `LLAMA_GPU_DEVICES`） |
   | mounts | データボリューム → `/data`; ログ; llamaMan が完全なシャードを保持している場合、`MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>`（非 qwen の場合は `<family>-<SIZE>`; setup.py の大文字小文字を区別するシャードフォルダ）(rw)。ライブラリから起動した単一ファイルモデルも、名前に関係なく同様です |
   | mem_limit | System Memory Limit から（`LOW_RAM=on` を強制） |
   | network / ports / labels | llama-server と同様（`llamaman-net`、`8080 → host port`、`llamaman.*`） |
@@ -97,7 +113,7 @@ core/engines/
 ## 未解決の疑問への回答
 
 1. **準備完了判定。** API キーゲートの前に、`/health` は `{"status": "ok", ..., "service": "strata"}` を返します（`serve/server.py:2172`）。HTTP ポートはモデルがロードされた後にのみ開きます: `server.py:3008` で `serve()` が実行され、その前に `:2925` でエンジンが起動します。Strata がダウンロード中またはロード中の間は接続が拒否されるため、llamaMan の既存のヘルスチェック（`status == "ok"`）に特別なケースは不要です。lazy モードでモデルがアンロードされている間、`/v1/models` は空のリストを返すため（`server.py:2190`）、準備完了のシグナルとしては適していません。API キーが設定されている場合、`/v1/status` にはそのキーが必要です。
-2. **設定。** すべて `docker-entrypoint.sh` によって読み取られる環境変数として渡されます: `HOST`, `PORT`, `API_KEY`, `GPU` / `GPUS` / `LAYER_SPLIT`, `LOW_RAM`, `KV`, `CONTEXT`, `VISION`（`:14-24`）。コマンド引数は無視されます。entrypoint が `$@` を再構築するためです（`:42`, `:65`）。GPU ピニングはコンテナの番号付けを使用します: NVIDIA ランタイムは llamaMan がアタッチするホスト GPU に番号を振り直すため、ホストの `1,3` は `GPUS=0,1` になります。llamaMan は `API_KEY` を設定しません。これは llama-server の実行方法（キーなし）と一致しており、前面に自身のプロキシと認証が配置されます。
+2. **設定。** すべて `docker-entrypoint.sh` によって読み取られる環境変数として渡されます: `HOST`, `PORT`, `API_KEY`, `GPU` / `GPUS` / `LAYER_SPLIT`, `LOW_RAM`, `KV`, `CONTEXT`, `VISION`（`:14-24`）。コマンド引数は無視されます。entrypoint が `$@` を再構築するためです（`:42`, `:65`）。GPU ピニングはコンテナの番号付けを使用します: NVIDIA ランタイム（AMD では `ROCR_VISIBLE_DEVICES`）は llamaMan がアタッチするホスト GPU に番号を振り直すため、ホストの `1,3` は `GPUS=0,1` になります。llamaMan は `API_KEY` を設定しません。これは llama-server の実行方法（キーなし）と一致しており、前面に自身のプロキシと認証が配置されます。
 3. **ディスク上の GGUF の再利用。** `setup.py` には `--gguf-dir` がありますが（`setup.py:2954`）、entrypoint はこれを転送しません。ただし、セットアップは `/data/models/<fam tag><SIZE>/<original name>`（例: `IQ3_S`, `coder-IQ1_M`; 大文字小文字を区別）にすでに存在する完全なシャードを受け入れます: 自身のテンソルディレクトリと照合して完了マークを付けます（`setup.py:3389-3405`, "#173"）。したがって、llamaMan は自身のシャードのダウンロードが完了した後にのみ、ローカルコピーをそこにバインドマウントします（`.done` マークのために読み書き可能）。シャードは Strata が固定している Hugging Face リビジョンから取得されます（`setup.py:65-70`、`core/engines/strata.py` にミラーリング）。MTP レイヤー（約 5 GB）とパックは引き続きコンテナ内で準備されます。
 4. **メモリ制限 / memlock。** セットアップはホストの合計である `/proc/meminfo` から RAM を読み取るため、制限されたコンテナは `LOW_RAM=on` を要求する必要があります（Dockerfile のコメント `:31`、`docs/INSTALL.md:116-118`）。これがないとセットアップは RAM 内モードを選択し、コンテナが OOM キルされる可能性が高くなります。llamaMan はメモリ制限が設定されている場合は常に `LOW_RAM=on` を強制し、UI は 64 GB 未満で警告を表示します。`memlock=-1` は重要です。エンジンが GPU DMA 用にアリーナの一部をページロックし、固定できないエキスパートはより低速なホストコピーを経由するためです（`src/prefill/prefill.cpp:110`, `:207-214`）。ソースコード上、memlock 制限がないと失敗というよりは速度低下のように見えますが、**GPU なしでは検証できませんでした**。llamaMan は常にこれを設定します。
 
@@ -110,7 +126,7 @@ core/engines/
 - **ノードあたり Strata モデルごとに1つのアクティブインスタンス。** 1つのモデルの2つのインスタンスが同じファイルに対してセットアップを実行することを防ぎます。
 - **llamaMan がそのモデルをダウンロードしている間は起動が拒否されます。** コンテナがボリュームに2回目のダウンロードを行うのを防ぐためです。
 - **事前ダウンロードされたシャードは更新チェックの出所確認をスキップします。** 固定されたファイルがリポジトリの `main` に「更新」されてはならないためです。
-- **仮想モデルは実行可能な場合にのみ一覧表示されます**（`STRATA_ENABLED` かつ NVIDIA）: `/api/models`、`/api/tags`、`/v1/models`、および名前解決。更新スキャンとクラスタモデルスナップショットはファイルのみのままです。ピアは `snapshot.system.engines`（`system` の下にネストされているため、古いピアは無視します）からエンジンの利用可能性を学習します。
+- **仮想モデルは実行可能な場合にのみ一覧表示されます**（`STRATA_ENABLED` かつ NVIDIA または ROCm GPU）: `/api/models`、`/api/tags`、`/v1/models`、および名前解決。更新スキャンとクラスタモデルスナップショットはファイルのみのままです。ピアは `snapshot.system.engines`（`system` の下にネストされているため、古いピアは無視します）からエンジンの利用可能性を学習します。
 - **ロード段階** はコンテナログの最後の 64 KB から取得されます: セットアップの `=== Step N ===` ヘッダー、ダウンロードの `\r` 進捗行、サーバーの "loading the model"。これはベストエフォートであり、取得できない場合は段階行の非表示にグレースフルにフォールバックします。
 - **vLLM (#53)** は別の `Engine` となります: 独自のイメージ、コマンド、ポート（`internal_port`）、ヘルスセマンティクス、起動フィールド。両方のエンジンがポート 8080 を使用すると想定している箇所（`resolve_llama_endpoint` の呼び出し元）は、その際にパラメータ化する必要があります。
 
@@ -123,7 +139,7 @@ core/engines/
 
 ## 既知の制限事項
 
-- NVIDIA 専用。Strata の AMD (HIP) パスは上流で実験的な手動ビルドであり、提供されていません。
+- AMD: イメージは手動で選択します（gfx アーキテクチャの検出はまだありません）。セットアップ前にイメージがカードに合っているかは確認されず、共有データボリューム上で別バリアントのイメージが作成した run config も検出されません。
 - ビジョンエンコーダ（mmproj）は常に Strata 自身によってボリュームにダウンロードされます。
 - Strata 独自の Web UI（`/`, `/settings`, `/load`, `/unload`）はインスタンスポート経由でアクセス可能ですが、llamaMan はこれを使用または管理しません。アイドル時のアンロード機能は使用されず、代わりに llamaMan のスリープがコンテナを停止します。
 - セットアップに記録されている設定を変更すると、次回の起動時に Strata のセットアップパスが再実行されます（ファイルは再利用されます）。
@@ -138,7 +154,7 @@ core/engines/
 2. **有効化:** `STRATA_ENABLED=true` を設定し、llamaMan を再起動します。
    - `GET /api/engines` で strata の `available: true` とそのモデル（組み込みリストに12個）が表示されること。
    - Settings → Docker Images → *Manage Strata images* で `strata:latest` が **local** として表示されること。
-3. **ゲーティング:** 非 NVIDIA ノード（または `GPU_TYPE=rocm`）では Strata モデルは一覧表示されず、`/strata/qwen-IQ2_XS` に対する `POST /api/instances` は NVIDIA の理由とともに 400 を返すこと。
+3. **ゲーティング:** NVIDIA GPU も ROCm GPU もないノード（または `GPU_TYPE=intel` / `vulkan`）では Strata モデルは一覧表示されず、`/strata/qwen-IQ2_XS` に対する `POST /api/instances` は理由とともに 400 を返すこと。
 4. **UI からの起動:** `strata/qwen-IQ2_XS` を選択。
    - llama.cpp 専用フィールドが非表示になり、Strata セクションが表示され、Max Concurrent が 1 に固定されること。
    - 32g のメモリ制限を設定し、64 GB 未満の警告が表示されることを確認。再度クリアする。
@@ -174,8 +190,8 @@ core/engines/
     - `python app.py`（`LLAMAMAN_IN_DOCKER=false`）で llamaMan を実行し、ステップ 4〜6 を繰り返す。
     - llamaMan は `LLAMA_HOST_ADDR` 上の公開ポートに接続すること。
 13. **クラスタ:**
-    - 非 NVIDIA ピアを追加。Strata モデルは、NVIDIA ノードがターゲットノードの場合にのみ表示されること。
-    - 他のノードの UI から NVIDIA ピア上で起動できること。
+    - Strata を実行できないピア（NVIDIA GPU も ROCm GPU もない）を追加。Strata モデルは、対応ノードがターゲットノードの場合にのみ表示されること。
+    - 他のノードの UI から対応ピア上で起動できること。
 14. **llama.cpp への影響なし:** 以前と同様に GGUF モデルを起動。
     - コマンドライン（`docker inspect` Args）がアップグレード前と一致すること。
     - アップグレード前に保存されたプリセットが変更なしでロードおよび起動できること。

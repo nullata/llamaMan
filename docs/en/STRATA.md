@@ -215,8 +215,8 @@ free disk.
 2. **Enable:** set `STRATA_ENABLED=true` and restart llamaMan.
    - `GET /api/engines` shows strata `available: true`, with its models (12 in the built-in list).
    - Settings → Docker Images → *Manage Strata images* shows `strata:latest` as **local**.
-3. **Gating:** on a non-NVIDIA node (or with `GPU_TYPE=rocm`), Strata models aren't listed, and
-   `POST /api/instances` for `/strata/qwen-IQ2_XS` returns 400 with the NVIDIA reason.
+3. **Gating:** on a node with neither an NVIDIA nor a ROCm GPU (or with `GPU_TYPE=intel` / `vulkan`), Strata models
+   aren't listed, and `POST /api/instances` for `/strata/qwen-IQ2_XS` returns 400 with the reason.
 4. **Launch from the UI:** select `strata/qwen-IQ2_XS`.
    - The llama.cpp-only fields are hidden, the Strata section is shown, and Max Concurrent is locked at 1.
    - Set a 32g memory limit and check the below-64 GB warning appears; clear it again.
@@ -255,8 +255,9 @@ free disk.
     - Run llamaMan with `python app.py` (`LLAMAMAN_IN_DOCKER=false`) and repeat 4-6.
     - llamaMan reaches the published port on `LLAMA_HOST_ADDR`.
 13. **Cluster:**
-    - Add a non-NVIDIA peer. Strata models appear for the NVIDIA node only when it's the Target node.
-    - Launching on the NVIDIA peer from the other node's UI works.
+    - Add a peer that can't run Strata (no NVIDIA or ROCm GPU). Strata models appear for the capable node only when
+      it's the Target node.
+    - Launching on the capable peer from the other node's UI works.
 14. **llama.cpp unaffected:** launch a GGUF model as before.
     - The command line (`docker inspect` Args) matches one from before the upgrade.
     - Presets saved before the upgrade load and launch unchanged.

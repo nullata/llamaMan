@@ -24,7 +24,7 @@
 - **Surveillance d'instances** - VRAM par GPU, CPU/RAM du conteneur, TTFT / débit / latence par instance
 - **Auth** - comptes utilisateurs, clés API (jetons bearer), interrupteur d'auth par endpoint
 - **Clustering multi-nodes** *(opt-in)* - des nodes hétérogènes comme un seul cluster logique ; dashboard agrégé ; équilibrage de charge par file partagée
-- 🆕 **Moteur Strata** *(opt-in, NVIDIA)* - lancez des instances [Strata](https://github.com/Niko1221/Strata) à côté de celles de llama.cpp
+- 🆕 **Moteur Strata** *(opt-in, NVIDIA ou AMD)* - lancez des instances [Strata](https://github.com/Niko1221/Strata) à côté de celles de llama.cpp
 - 🆕 **Knowledge base + serveur MCP** *(opt-in, backend MariaDB)* - stockez des documents en topics, cherchez-les par le sens avec votre propre modèle d'embedding, et exposez le tout à n'importe quel client MCP — le tout en local
 
 ## Prérequis

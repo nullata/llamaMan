@@ -167,7 +167,7 @@ MariaDB は、[クラスタリング](CLUSTERING.md) および [ナレッジベ�
 
 | 変数名 | デフォルト値 | 説明 |
 |---|---|---|
-| `STRATA_ENABLED` | `false` | このノードで Strata モデルを提供します。NVIDIA GPU も必要です（`GPU_TYPE=cuda` または検出済み） |
+| `STRATA_ENABLED` | `false` | このノードで Strata モデルを提供します。NVIDIA GPU、または ROCm モードの AMD GPU も必要です（`GPU_TYPE=cuda` / `rocm` または検出済み） |
 | `STRATA_IMAGE` | `strata:latest` | 起動に使用する優先 Strata イメージ。ノード上に存在しない場合は、ビルド済みイメージ、次にプルされたイメージが使用されます |
 | `STRATA_BUILD_IMAGE` | `strata:latest` | *Pull repo & build latest* でビルドされるタグ |
 | `STRATA_DATA_VOLUME` | `llamaman-strata-data` | すべての Strata コンテナ内の `/data` にマウントされる名前付き Docker ボリューム（モデルファイル、パック、MTP レイヤー、モデルごとのセットアップ。モデルあたり 70〜120 GB）。初回使用時に Docker によって作成されます |

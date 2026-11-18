@@ -24,7 +24,7 @@
 - **Monitorización de instancias** - VRAM por GPU, CPU/RAM de container, TTFT / throughput / latencia por instancia
 - **Auth** - cuentas de usuario, claves API (tokens bearer), interruptor de auth por endpoint
 - **Clustering multi-node** *(opt-in)* - nodes heterogéneos como un único cluster lógico; dashboard agregado; balanceo de carga de cola compartida
-- 🆕 **Motor Strata** *(opt-in, NVIDIA)* - lanza instancias [Strata](https://github.com/Niko1221/Strata) junto a las de llama.cpp
+- 🆕 **Motor Strata** *(opt-in, NVIDIA o AMD)* - lanza instancias [Strata](https://github.com/Niko1221/Strata) junto a las de llama.cpp
 - 🆕 **Base de conocimiento + servidor MCP** *(opt-in, backend MariaDB)* - almacena documentos como topics, búscalos por significado con tu propio modelo de embedding, y expón todo ello a cualquier cliente MCP — todo local
 
 ## Requisitos

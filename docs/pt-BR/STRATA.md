@@ -2,7 +2,7 @@
 
 > **Observação:** esta é uma tradução e pode estar desatualizada em relação à [versão em inglês](../en/STRATA.md), que é a referência.
 
-*(opt-in, só NVIDIA)* O [Strata](https://github.com/Niko1221/Strata) roda a família de mixture-of-experts Qwen3.8-Flash-Next (e suas variantes Coder, Swift 1.5 e Unsloth) e o Qwen3.6-35B-A3B em GPUs NVIDIA de consumo mais RAM do sistema. O llamaMan pode lançar, monitorar, fazer proxy de, dormir/acordar e parar instâncias Strata ao lado das de llama.cpp. O comportamento do llama.cpp não muda: a camada de motores (`core/engines/`) mantém o lançamento do llama.cpp byte por byte idêntico (testado por snapshot).
+*(opt-in, NVIDIA ou AMD)* O [Strata](https://github.com/Niko1221/Strata) roda a família de mixture-of-experts Qwen3.8-Flash-Next (e suas variantes Coder, Swift 1.5 e Unsloth) e o Qwen3.6-35B-A3B em GPUs NVIDIA ou AMD (ROCm) de consumo mais RAM do sistema. O llamaMan pode lançar, monitorar, fazer proxy de, dormir/acordar e parar instâncias Strata ao lado das de llama.cpp. O comportamento do llama.cpp não muda: a camada de motores (`core/engines/`) mantém o lançamento do llama.cpp byte por byte idêntico (testado por snapshot).
 
 ## Índice
 
@@ -11,13 +11,29 @@
 <a id="getting-started"></a>
 ## Primeiros passos
 
-**1. Consiga uma imagem** (o upstream não publica nenhuma; o host precisa do driver NVIDIA **580+**, i.e. CUDA 13, e do NVIDIA Container Toolkit). Depois de habilitar o Strata (passo 2), ou baixe uma em que você confie pelo nome em **Settings → Docker Images** (motor *Strata* na linha de pull), ou use **Manage Strata images → Pull repo & build latest**, que baixa o repositório para `STRATA_SRC_DIR` e constrói `STRATA_BUILD_IMAGE` através do socket Docker para as gerações de GPU do node (lidas do driver; todas as suportadas se isso falhar), ou construa-a à mão:
+**1. Consiga uma imagem.** Para AMD, veja [AMD (ROCm)](#amd-rocm) abaixo. Para NVIDIA (o host precisa do driver NVIDIA **580+**, i.e. CUDA 13, e do NVIDIA Container Toolkit). Depois de habilitar o Strata (passo 2), ou baixe uma em que você confie pelo nome em **Settings → Docker Images** (motor *Strata* na linha de pull), ou use **Manage Strata images → Pull repo & build latest**, que baixa o repositório para `STRATA_SRC_DIR` e constrói `STRATA_BUILD_IMAGE` através do socket Docker para as gerações de GPU do node (lidas do driver; todas as suportadas se isso falhar), ou construa-a à mão:
 
 ```bash
 git clone https://github.com/Niko1221/Strata && cd Strata
 docker build -t strata .                                        # all supported GPU generations
 docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (faster build)
 ```
+
+### AMD (ROCm)
+
+O upstream publica uma imagem ROCm por família de GPU. Baixe a da sua placa em **Settings → Docker Images** (motor *Strata*), ou defina-a como `STRATA_IMAGE`:
+
+| Placa | Imagem |
+|---|---|
+| Série RX 9000, Radeon AI PRO R9700 (RDNA 4) | `ghcr.io/niko1221/strata:latest-rocm-gfx120x` |
+| Série RX 7000 (RDNA 3) | `ghcr.io/niko1221/strata:latest-rocm-gfx110x` |
+| Ryzen AI Max "Strix Halo" (Radeon 8060S) | `ghcr.io/niko1221/strata:latest-rocm-gfx1151` |
+
+- O node precisa rodar em modo ROCm: detectado por uma placa AMD, ou `GPU_TYPE=rocm`. Com `GPU_TYPE=vulkan` o Strata é recusado, porque o modo Vulkan não repassa `/dev/kfd`. Defina `GPU_TYPE=rocm` também quando houver uma iGPU Intel ao lado da placa AMD.
+- *Pull repo & build latest* fica oculto em nodes AMD: o Dockerfile do repositório compila só o motor CUDA.
+- Uma imagem contém uma família de GPU, então um node com placas de duas famílias (ex.: RX 7900 XTX + RX 9070) precisa de **GPU Devices** fixado em uma família.
+- RX 6000 (RDNA 2) e a 780M não têm imagem publicada e não são suportadas.
+- Ainda não verificado em hardware AMD; por favor, relate o que funciona.
 
 **2. Habilite-o** no node llamaMan: `STRATA_ENABLED=true` (veja [Strata variables](CONFIGURATION.md#strata)). Settings → Docker Images então mostra *Manage Strata images*: as imagens Strata baixadas, a construída (commits baixado e construído, o botão de build) e o auto-update delas. O formulário de lançamento oferece Strata quando uma delas está no node.
 
@@ -58,7 +74,7 @@ O Qwen3.6-35B-A3B tem seu próprio caminho de motor no Strata e é um único arq
 - **As configurações ficam fixadas no setup do Strata.** Context / image input / KV / Low-RAM / GPU pinning são registrados por modelo no volume de dados. O llamaMan lembra as configurações com que cada modelo ficou healthy por último e passa `REINSTALL=1` só quando elas mudam (os arquivos são reutilizados).
 - **Idle timeout** funciona (o sono para o container; a próxima requisição o acorda), mas um cold start leva minutos e a requisição que desperta espera por ele (`STRATA_LOAD_TIMEOUT`).
 - **Uma instância por modelo Strata por node** (instâncias de um modelo compartilham seu setup no volume).
-- **Só NVIDIA.** A opção fica indisponível, com o motivo, em nodes ROCm / Intel / Vulkan / CPU e quando `STRATA_ENABLED` está desligado. Num cluster cada node anuncia seus motores, então só nodes capazes oferecem modelos Strata.
+- **Só NVIDIA ou AMD (ROCm).** A opção fica indisponível, com o motivo, em nodes Intel / Vulkan / CPU e quando `STRATA_ENABLED` está desligado. Num cluster cada node anuncia seus motores, então só nodes capazes oferecem modelos Strata.
 - O llamaMan bare-metal alcança o Strata do mesmo jeito que o llama-server (porta publicada em `LLAMA_HOST_ADDR`).
 
 ---
@@ -101,7 +117,7 @@ core/engines/
   | command | nenhuma (o entrypoint só lê variáveis de ambiente) |
   | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`? (só famílias com caminho próprio; requisições simultâneas) |
   | ulimits | `memlock=-1` |
-  | GPU | NVIDIA `device_requests` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
+  | GPU | NVIDIA `device_requests`, ou na AMD `/dev/kfd` + `/dev/dri`, os GIDs render/video do host e `ROCR_VISIBLE_DEVICES` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
   | mounts | volume de dados → `/data`; logs; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>` (`<family>-<SIZE>` para não-qwen; a pasta de shards sensível a caixa do setup.py) (rw), quando o llamaMan tem shards completos, e também um modelo de arquivo único lançado da biblioteca, seja qual for o nome |
   | mem_limit | do System Memory Limit (força `LOW_RAM=on`) |
   | network / ports / labels | como para o llama-server (`llamaman-net`, `8080 → host port`, `llamaman.*`) |
@@ -117,7 +133,7 @@ core/engines/
    O `/v1/status` precisa da chave de API quando uma está definida.
 2. **Configurações.** Tudo é passado como uma variável de ambiente lida pelo `docker-entrypoint.sh`: `HOST`, `PORT`, `API_KEY`,
    `GPU` / `GPUS` / `LAYER_SPLIT`, `LOW_RAM`, `KV`, `CONTEXT`, `VISION` (`:14-24`). Argumentos de comando são ignorados,
-   porque o entrypoint reconstrói `$@` (`:42`, `:65`). O GPU pinning usa a numeração de container: o runtime NVIDIA
+   porque o entrypoint reconstrói `$@` (`:42`, `:65`). O GPU pinning usa a numeração de container: o runtime NVIDIA (ou `ROCR_VISIBLE_DEVICES` na AMD)
    renumera as GPUs do host que o llamaMan anexa, então host `1,3` vira `GPUS=0,1`. O llamaMan não define `API_KEY`, o que
    casa com como ele roda o llama-server (sem chave); seu próprio proxy e auth ficam na frente.
 3. **Reusar GGUFs no disco.** O `setup.py` tem `--gguf-dir` (`setup.py:2954`), mas o entrypoint nunca o encaminha.
@@ -153,7 +169,7 @@ na inicialização seguinte.
 - **Um lançamento é recusado enquanto o llamaMan ainda está baixando aquele modelo**, para que o container não o baixe uma
   segunda vez no seu volume.
 - **Shards pré-baixados pulam a procedência de checagem de atualização.** Um arquivo fixado não deve ser "atualizado" ao `main` do repo.
-- **Os modelos virtuais são listados só onde podem rodar** (`STRATA_ENABLED` mais NVIDIA): em `/api/models`,
+- **Os modelos virtuais são listados só onde podem rodar** (`STRATA_ENABLED` mais uma GPU NVIDIA ou ROCm): em `/api/models`,
   `/api/tags`, `/v1/models` e na resolução de nomes. As varreduras de atualização e o snapshot de modelos do cluster
   continuam baseados apenas em arquivos. Os peers aprendem a disponibilidade de motores de `snapshot.system.engines` (aninhado sob `system`,
   então peers mais antigos o ignoram).
@@ -177,7 +193,7 @@ na inicialização seguinte.
 <a id="known-limitations"></a>
 ## Limitações conhecidas
 
-- Só NVIDIA. O caminho AMD (HIP) do Strata é um build manual experimental no upstream e não é oferecido.
+- AMD: a imagem é escolhida à mão (ainda sem detecção da arquitetura gfx), nada verifica antes do setup se ela corresponde à placa, e uma run config criada por uma imagem de outra variante num volume de dados compartilhado não é detectada.
 - O codificador de visão (mmproj) é sempre baixado pelo próprio Strata, para o volume.
 - A própria UI web do Strata (`/`, `/settings`, `/load`, `/unload`) é alcançável pela porta da instância, mas o llamaMan
   não a usa nem a gerencia. Sua função de idle-unload fica sem uso; o sono do llamaMan para o container.
@@ -199,8 +215,8 @@ de disco livre.
 2. **Habilite:** defina `STRATA_ENABLED=true` e reinicie o llamaMan.
    - `GET /api/engines` mostra strata `available: true`, com seus modelos (12 na lista embutida).
    - Settings → Docker Images → *Manage Strata images* mostra `strata:latest` como **local**.
-3. **Gating:** num node não-NVIDIA (ou com `GPU_TYPE=rocm`), os modelos Strata não são listados, e
-   `POST /api/instances` para `/strata/qwen-IQ2_XS` retorna 400 com o motivo NVIDIA.
+3. **Gating:** num node sem GPU NVIDIA nem ROCm (ou com `GPU_TYPE=intel` / `vulkan`), os modelos Strata não são
+   listados, e `POST /api/instances` para `/strata/qwen-IQ2_XS` retorna 400 com o motivo.
 4. **Lance pela UI:** selecione `strata/qwen-IQ2_XS`.
    - Os campos exclusivos de llama.cpp ficam escondidos, a seção Strata é mostrada, e Max Concurrent fica travado em 1.
    - Defina um limite de memória de 32g e confira que o aviso abaixo de 64 GB aparece; limpe-o de novo.
@@ -238,8 +254,9 @@ de disco livre.
     - Rode o llamaMan com `python app.py` (`LLAMAMAN_IN_DOCKER=false`) e repita 4-6.
     - O llamaMan alcança a porta publicada em `LLAMA_HOST_ADDR`.
 13. **Cluster:**
-    - Adicione um peer não-NVIDIA. Os modelos Strata aparecem para o node NVIDIA só quando ele é o Target node.
-    - Lançar no peer NVIDIA a partir da UI do outro node funciona.
+    - Adicione um peer que não roda Strata (sem GPU NVIDIA nem ROCm). Os modelos Strata aparecem para o node capaz só
+      quando ele é o Target node.
+    - Lançar no peer capaz a partir da UI do outro node funciona.
 14. **llama.cpp inalterado:** lance um modelo GGUF como antes.
     - A linha de comando (Args do `docker inspect`) casa com uma de antes da atualização.
     - Presets salvos antes da atualização carregam e lançam inalterados.

@@ -24,7 +24,7 @@
 - **Instanz-Monitoring** - VRAM pro GPU, Container-CPU/RAM, TTFT / Durchsatz / Latenz pro Instanz
 - **Auth** - Benutzerkonten, API-Keys (Bearer-Tokens), Auth-Umschalter pro Endpoint
 - **Multi-Node-Clustering** *(opt-in)* - heterogene Nodes als ein logischer Cluster; aggregiertes Dashboard; Load Balancing über gemeinsame Warteschlangen
-- 🆕 **Strata-Engine** *(opt-in, NVIDIA)* - [Strata](https://github.com/Niko1221/Strata)-Instanzen neben llama.cpp-Instanzen starten
+- 🆕 **Strata-Engine** *(opt-in, NVIDIA oder AMD)* - [Strata](https://github.com/Niko1221/Strata)-Instanzen neben llama.cpp-Instanzen starten
 - 🆕 **Knowledge Base + MCP-Server** *(opt-in, MariaDB-Backend)* - Dokumente als Topics ablegen, mit dem eigenen Embedding-Modell nach Bedeutung durchsuchen und das Ganze für jeden MCP-Client bereitstellen - alles lokal
 
 ## Voraussetzungen

@@ -167,7 +167,7 @@ MariaDB 同样是启用[集群](CLUSTERING.md)和[知识库](KNOWLEDGE-BASE.md)�
 
 | 变量名 | 默认值 | 描述 |
 |---|---|---|
-| `STRATA_ENABLED` | `false` | 在此节点上提供 Strata 模型。同时需要 NVIDIA GPU（`GPU_TYPE=cuda` 或已检测到） |
+| `STRATA_ENABLED` | `false` | 在此节点上提供 Strata 模型。同时需要 NVIDIA GPU 或 ROCm 模式下的 AMD GPU（`GPU_TYPE=cuda` / `rocm` 或已检测到） |
 | `STRATA_IMAGE` | `strata:latest` | 启动实例首选的 Strata 镜像。当节点上不存在该镜像时，使用已构建的镜像，再其次使用已拉取的镜像 |
 | `STRATA_BUILD_IMAGE` | `strata:latest` | *Pull repo & build latest* 构建的目标标签 |
 | `STRATA_DATA_VOLUME` | `llamaman-strata-data` | 挂载在每个 Strata 容器中 `/data` 下的 Docker 具名卷（模型文件、pack、MTP 层、按模型 setup；每个模型 70-120 GB）。Docker 首次使用时自动创建 |

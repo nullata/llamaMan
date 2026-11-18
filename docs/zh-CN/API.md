@@ -100,5 +100,6 @@
 
 Ollama：`/api/tags`、`/api/version`、`/api/show`、`/api/ps`、`/api/chat`、`/api/generate`（chat/generate 会自动按需启动）。
 OpenAI：`/v1/models`、`/v1/chat/completions`、`/v1/completions`、`/v1/embeddings`（chat 会自动按需启动）。在集群中，`/v1/embeddings` 与其他推理路由一样在节点间路由。
+Rerank：`/v1/rerank`（也可用 `/rerank`、`/v1/reranking`），与 `/v1/embeddings` 一样按 `model` 路由并自动启动。实例必须以 `--reranking` 运行 llama-server（例如在 Extra Args 中加入 `--reranking`）；否则会返回 llama-server 自身的 501 错误。
 决策模型：`/v1/systemone`（自动启动）- 参见[决策模型](MODELS.md#decision-models)。
 知识库：`/api/kb/*`（仅限管理员）及 MCP endpoint `/mcp/knowledge` - 参见[知识库与 MCP](KNOWLEDGE-BASE.md)。集群节点间 endpoint 使用 `X-Cluster-Secret` - 参见[集群](CLUSTERING.md)。

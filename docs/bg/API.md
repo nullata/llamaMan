@@ -105,5 +105,6 @@
 
 Ollama: `/api/tags`, `/api/version`, `/api/show`, `/api/ps`, `/api/chat`, `/api/generate` (chat/generate стартират автоматично).
 OpenAI: `/v1/models`, `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` (chat стартира автоматично). В клъстер `/v1/embeddings` се маршрутизира между възлите както останалите маршрути за инференс.
+Rerank: `/v1/rerank` (също `/rerank`, `/v1/reranking`), маршрутизира се по `model` като `/v1/embeddings` и стартира автоматично. Инстанцията трябва да изпълнява llama-server с `--reranking` (напр. Extra Args `--reranking`); иначе се връща собствената 501 грешка на llama-server.
 Decision модели: `/v1/systemone` (стартира автоматично) - вижте [Decision модели](MODELS.md#decision-models).
 База знания: `/api/kb/*` (само за администратори) и MCP ендпойнтът `/mcp/knowledge` - вижте [База знания и MCP](KNOWLEDGE-BASE.md). Ендпойнтите между възлите в клъстера използват `X-Cluster-Secret` - вижте [Клъстериране](CLUSTERING.md).

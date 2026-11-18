@@ -100,5 +100,6 @@
 
 Ollama: `/api/tags`、`/api/version`、`/api/show`、`/api/ps`、`/api/chat`、`/api/generate`（chat/generate は自動起動）。
 OpenAI: `/v1/models`、`/v1/chat/completions`、`/v1/completions`、`/v1/embeddings`（chat は自動起動）。クラスタでは、`/v1/embeddings` も他の推論ルートと同様にノード間でルーティングされます。
+Rerank: `/v1/rerank`（`/rerank`、`/v1/reranking` も可）は `/v1/embeddings` と同様に `model` でルーティングされ、自動起動します。インスタンスは `--reranking` 付きで llama-server を実行している必要があります（例: Extra Args に `--reranking`）。そうでない場合は llama-server 自身の 501 エラーが返されます。
 意思決定モデル: `/v1/systemone`（自動起動）- [Decision Models](MODELS.md#decision-models) を参照。
 ナレッジベース: `/api/kb/*`（管理者専用）および MCP エンドポイント `/mcp/knowledge` - [Knowledge Base & MCP](KNOWLEDGE-BASE.md) を参照。クラスタのノード間エンドポイントは `X-Cluster-Secret` を使用 - [Clustering](CLUSTERING.md) を参照。

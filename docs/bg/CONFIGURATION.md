@@ -168,7 +168,7 @@ MariaDB е също предпоставка за [Клъстериране](CLU
 
 | Променлива | По подразбиране | Описание |
 |---|---|---|
-| `STRATA_ENABLED` | `false` | Предлага Strata модели на този възел. Изисква и NVIDIA GPU (`GPU_TYPE=cuda` или разпознат) |
+| `STRATA_ENABLED` | `false` | Предлага Strata модели на този възел. Изисква и NVIDIA GPU или AMD GPU в режим ROCm (`GPU_TYPE=cuda` / `rocm` или разпознат) |
 | `STRATA_IMAGE` | `strata:latest` | Предпочитан Strata образ за стартиране. Когато го няма на възела, се използва компилираният образ, а след това изтегленият |
 | `STRATA_BUILD_IMAGE` | `strata:latest` | Тагът, който *Pull repo & build latest* компилира |
 | `STRATA_DATA_VOLUME` | `llamaman-strata-data` | Именуван Docker том, монтиран на `/data` във всеки Strata контейнер (файлове на модели, пакети, MTP слой, настройка по модел; 70-120 GB на модел). Създава се от Docker при първа употреба |
