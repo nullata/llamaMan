@@ -22,7 +22,7 @@
 - **Instance monitoring** - per-GPU VRAM, container CPU/RAM, per-instance TTFT / throughput / latency
 - **Auth** - user accounts, API keys (bearer tokens), per-endpoint auth toggle
 - **Multi-node clustering** *(opt-in)* - heterogeneous nodes as one logical cluster; aggregated dashboard; shared-queue load balancing
-- 🆕 **Strata engine** *(opt-in, NVIDIA)* - launch [Strata](https://github.com/Niko1221/Strata) instances next to llama.cpp ones
+- 🆕 **Strata engine** *(opt-in, NVIDIA or AMD)* - launch [Strata](https://github.com/Niko1221/Strata) instances next to llama.cpp ones
 - 🆕 **Knowledge base + MCP server** *(opt-in, MariaDB backend)* - store documents as topics, search them by meaning with your own embedding model, and expose the whole thing to any MCP client — all local
 
 ## Requirements

@@ -85,12 +85,15 @@ services:
       # mounted above. Enables Archive / Restore in the model list.
       # - ARCHIVE_DIR=/archive
       #
-      # Strata engine (optional, NVIDIA only) - see docs/en/STRATA.md.
-      # Easiest build path: Settings -> Docker Images -> build Strata from the
-      # repository, on this node. Or build it yourself in a clone of
+      # Strata engine (optional, NVIDIA or AMD/ROCm) - see docs/en/STRATA.md.
+      # NVIDIA: Settings -> Docker Images -> build Strata from the repository,
+      # on this node. Or build it yourself in a clone of
       # github.com/Niko1221/Strata: docker build -t strata .
+      # AMD: pull the published image for the card (gfx120x = RX 9000 / R9700,
+      # gfx110x = RX 7000, gfx1151 = Strix Halo).
       # - STRATA_ENABLED=true
       # - STRATA_IMAGE=strata:latest
+      # - STRATA_IMAGE=ghcr.io/niko1221/strata:latest-rocm-gfx120x
       # Build source for the UI build: owner/name and ref (branch or commit;
       # pin a commit for reproducibility) downloaded into STRATA_SRC_DIR.
       # - STRATA_REPO=Niko1221/Strata

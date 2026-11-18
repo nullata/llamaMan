@@ -255,12 +255,18 @@ class EnginesEndpointTests(unittest.TestCase):
         self.assertEqual(by["strata"]["capabilities"]["max_concurrency"], 1)
         self.assertEqual(len(by["strata"]["models"]), 12)
         self.assertIn("docker build", by["strata"]["build_command"])
+        self.assertTrue(by["strata"]["build_supported"])
         self.assertNotIn("models", by["llamacpp"])
 
-    def test_rocm_node_reports_reason(self):
+    def test_rocm_node_offers_strata_without_build(self):
         by = {e["name"]: e for e in self._get("rocm")["engines"]}
+        self.assertTrue(by["strata"]["available"])
+        self.assertFalse(by["strata"]["build_supported"])
+
+    def test_intel_node_reports_reason(self):
+        by = {e["name"]: e for e in self._get("intel")["engines"]}
         self.assertFalse(by["strata"]["available"])
-        self.assertIn("NVIDIA", by["strata"]["reason"])
+        self.assertIn("NVIDIA or AMD", by["strata"]["reason"])
 
     def test_cluster_snapshot_carries_engines(self):
         import api.cluster as cluster_api

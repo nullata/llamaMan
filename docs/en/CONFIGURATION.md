@@ -159,7 +159,7 @@ Optional; see [Strata](STRATA.md).
 
 | Variable | Default | Description |
 |---|---|---|
-| `STRATA_ENABLED` | `false` | Offer Strata models on this node. Also needs an NVIDIA GPU (`GPU_TYPE=cuda` or detected) |
+| `STRATA_ENABLED` | `false` | Offer Strata models on this node. Also needs an NVIDIA GPU or an AMD GPU in ROCm mode (`GPU_TYPE=cuda` / `rocm`, or detected) |
 | `STRATA_IMAGE` | `strata:latest` | Preferred Strata image for launches. When it isn't on the node, the built image, then a pulled one, is used |
 | `STRATA_BUILD_IMAGE` | `strata:latest` | Tag *Pull repo & build latest* builds |
 | `STRATA_DATA_VOLUME` | `llamaman-strata-data` | Named Docker volume mounted at `/data` in every Strata container (model files, packs, MTP layer, per-model setup; 70-120 GB per model). Created by Docker on first use |

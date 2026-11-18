@@ -857,6 +857,12 @@ function renderEngineImages(engineImages) {
     : (img.present ? 'outside llamaMan' : '-'));
   const del = document.getElementById('btn-strata-build-delete');
   if (del) del.hidden = !(img.present || repo.present);
+  // The repository builds a CUDA image only: AMD nodes pull one instead. Older
+  // nodes don't send build_supported (counts as supported).
+  const buildBtn = document.getElementById('btn-strata-build');
+  if (buildBtn) buildBtn.hidden = img.build_supported === false;
+  const card = document.querySelector('.strata-image-card');
+  if (card) card.hidden = img.build_supported === false && !(img.present || repo.present);
   const auto = document.getElementById('s-strata-auto-update');
   if (auto) auto.checked = !!img.auto_update_enabled;
   const interval = document.getElementById('s-strata-update-interval');

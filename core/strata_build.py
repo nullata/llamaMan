@@ -3,9 +3,11 @@
 """Strata image from its repository: Settings -> Docker Images -> Manage
 Strata images.
 
-Strata publishes no image, so this node downloads the repository (a GitHub
-tarball of STRATA_REPO at STRATA_REPO_REF, no git needed) into STRATA_SRC_DIR
-and builds STRATA_BUILD_IMAGE from it through the Docker socket. The image lands in
+The node downloads the repository (a GitHub tarball of STRATA_REPO at
+STRATA_REPO_REF, no git needed) into STRATA_SRC_DIR and builds
+STRATA_BUILD_IMAGE from it through the Docker socket. The repository's
+Dockerfile builds the CUDA engine only, so AMD (and other non-NVIDIA) nodes
+don't build: they pull a published image for their card (build_supported). The image lands in
 the host's Docker, where Strata instances are launched from.
 
 The build goes through the Engine API with BuildKit (``/build?version=2``):
@@ -288,6 +290,16 @@ def _record_build(sha: str | None, image_id: str, archs: str) -> None:
     _write_docker_images(di)
 
 
+def build_supported(vendor: str | None = None) -> bool:
+    """Whether building from the repository makes a usable image here: it
+    compiles the CUDA engine, so not on an AMD / Intel / Vulkan node. An
+    undetected vendor still builds (pynvml can be unreadable on a CUDA node)."""
+    if vendor is None:
+        from core.gpu import get_vendor
+        vendor = get_vendor()
+    return vendor not in ("rocm", "intel", "vulkan")
+
+
 def _image_present() -> bool:
     from api.images import _get_image_local_info
     from config import STRATA_BUILD_IMAGE
@@ -372,7 +384,7 @@ def check_and_update_if_needed() -> bool:
         return False
     pulled = tracked_images("strata")
     started = bool(pulled) and _trigger_pulls(pulled, "strata")
-    if source_info()["present"]:
+    if source_info()["present"] and build_supported():
         started = start("auto") or started
     if not started:
         return False

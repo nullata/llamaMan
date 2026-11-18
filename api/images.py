@@ -286,6 +286,7 @@ def _engine_images() -> list[dict]:
         "build_command": f"docker build -t {STRATA_BUILD_IMAGE} .",
         "repo": strata_build.source_info(),
         "build": strata_build.get_state(),
+        "build_supported": strata_build.build_supported(),
         "built_sha": rec.get("built_sha"),
         "built_at": rec.get("built_at"),
         "built_archs": rec.get("built_archs"),
@@ -301,6 +302,9 @@ def strata_build_start():
     if not STRATA_ENABLED:
         return jsonify({"error": "Strata is not enabled on this node (STRATA_ENABLED)"}), 400
     from core import strata_build
+    if not strata_build.build_supported():
+        return jsonify({"error": "the Strata repository builds a CUDA image only: "
+                                 "pull a Strata image for this node's GPU instead"}), 400
     if not strata_build.start("manual"):
         return jsonify({"error": "a Strata update is already running"}), 409
     return jsonify({"ok": True})
