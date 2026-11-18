@@ -299,6 +299,7 @@ class SurfaceTests(_Case):
         ("/v1/chat/completions", OPENAI),
         ("/v1/completions", {"model": "chat-pool", "prompt": "hi"}),
         ("/v1/embeddings", {"model": "chat-pool", "input": "hi"}),
+        ("/v1/rerank", {"model": "chat-pool", "query": "q", "documents": ["a"]}),
     )
 
     def setUp(self):
