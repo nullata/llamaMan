@@ -166,9 +166,9 @@ HOST_MODELS_DIR = os.environ.get("HOST_MODELS_DIR", MODELS_DIR)
 HOST_LOGS_DIR = os.environ.get("HOST_LOGS_DIR", LOGS_DIR)
 
 # Strata (core/engines/strata.py): a second inference engine for the
-# Qwen3.8-Flash-Next family on NVIDIA GPUs. Off unless STRATA_ENABLED is set.
-# Its image is built on the node from the repository (STRATA_BUILD_IMAGE) or
-# pulled by name in Settings -> Docker Images. STRATA_IMAGE is the preferred
+# Qwen3.8-Flash-Next family on NVIDIA or AMD (ROCm) GPUs. Off unless STRATA_ENABLED is set.
+# Its image is built on the node from the repository (STRATA_BUILD_IMAGE, NVIDIA
+# only) or pulled by name in Settings -> Docker Images. STRATA_IMAGE is the preferred
 # image for launches; when it isn't on the node, the built image, then a
 # pulled one, is used instead (core/engines/strata.resolve_image).
 STRATA_ENABLED = os.environ.get("STRATA_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")

@@ -2881,6 +2881,9 @@ body.login-page {
 .strata-image-card .form-actions {
   margin-top: 8px;
 }
+.strata-image-card[hidden] {
+  display: none;
+}
 
 /* ---- Model archive (static/js/archive.js) ---- */
 .model-item .btn-archive-model,

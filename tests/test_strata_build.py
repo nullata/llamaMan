@@ -212,6 +212,16 @@ class AutoUpdateGateTests(_SrcDirCase):
         start.assert_called_once_with("auto")
         self.assertGreater(data["strata"]["last_auto_check_at"], time.time() - 60)
 
+    def test_amd_node_repulls_but_never_builds(self):
+        self._make_source()
+        with patch("core.gpu.get_vendor", return_value="rocm"):
+            started, start, _ = self._check({"auto_update_enabled": True},
+                                            [{"name": "ghcr.io/niko1221/strata:latest-rocm-gfx120x",
+                                              "engine": "strata"}])
+        self.assertTrue(started)
+        self.pulls.assert_called_once_with(["ghcr.io/niko1221/strata:latest-rocm-gfx120x"], "strata")
+        start.assert_not_called()
+
     def test_not_due(self):
         self._make_source()
         started, start, _ = self._check({"auto_update_enabled": True, "auto_update_interval_hours": 24,
@@ -282,6 +292,29 @@ class RunTests(_SrcDirCase):
             strata_build._run("manual")
         st = strata_build.get_state()
         self.assertEqual((st["status"], st["message"]), ("error", "nvcc failed"))
+
+
+class BuildRouteGateTests(unittest.TestCase):
+
+    def _post(self, vendor):
+        app = Flask(__name__)
+        app.register_blueprint(images_api.bp)
+        with patch("config.STRATA_ENABLED", True), \
+             patch("core.gpu.get_vendor", return_value=vendor), \
+             patch("core.strata_build.start", return_value=True) as start:
+            resp = app.test_client().post("/api/images/strata/build")
+        return resp, start
+
+    def test_refused_on_amd(self):
+        resp, start = self._post("rocm")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("CUDA", resp.get_json()["error"])
+        start.assert_not_called()
+
+    def test_allowed_on_nvidia(self):
+        resp, start = self._post("cuda")
+        self.assertEqual(resp.status_code, 200)
+        start.assert_called_once_with("manual")
 
 
 class DeleteBuildTests(_SrcDirCase):

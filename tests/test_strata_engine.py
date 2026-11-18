@@ -4,7 +4,7 @@
 
 Strata is configured only through env vars read by its image's entrypoint,
 serves one request at a time, needs memlock unlimited, and runs on NVIDIA
-only. These tests pin: the catalogue and model-path parsing, the container
+or AMD (ROCm). These tests pin: the catalogue and model-path parsing, the container
 spec (env / mounts / ulimits / GPU), REINSTALL fingerprinting, capability
 enforcement (gate forced to 1, llama.cpp-only fields rejected by the API),
 vendor gating, and load-stage parsing of its first-start log.
@@ -181,14 +181,31 @@ class StrataContainerSpecTests(_TmpDirs):
         (ul,) = self._spec()["ulimits"]
         self.assertEqual((ul["Name"], ul["Soft"], ul["Hard"]), ("memlock", -1, -1))
 
-    def test_nvidia_device_requests_even_off_vendor(self):
-        # Availability refuses non-NVIDIA nodes at the API; the spec itself
-        # never takes the ROCm / Intel / Vulkan device branches.
-        for vendor in ("cuda", "rocm", None):
+    def test_gpu_attached_by_vendor(self):
+        self.assertEqual(STRATA.gpu_attachment({}, "rocm"), "vendor")
+        for vendor in ("cuda", None):
             kw = self._spec(vendor=vendor)
             self.assertIn("device_requests", kw)
             self.assertNotIn("devices", kw)
             self.assertNotIn("group_add", kw)
+
+    def test_rocm_devices_and_groups(self):
+        with patch("core.gpu.resolve_render_gids", return_value=[44, 992]):
+            kw = self._spec(vendor="rocm")
+        self.assertNotIn("device_requests", kw)
+        self.assertEqual(kw["devices"], ["/dev/kfd:/dev/kfd", "/dev/dri:/dev/dri"])
+        self.assertEqual(kw["group_add"], ["44", "992"])
+        self.assertNotIn("ROCR_VISIBLE_DEVICES", kw["environment"])  # all GPUs
+        (ul,) = kw["ulimits"]
+        self.assertEqual(ul["Name"], "memlock")
+
+    def test_rocm_pinning_renumbers_inside_container(self):
+        kw = self._spec({"gpu_devices": "1,3"}, vendor="rocm")
+        self.assertEqual(kw["environment"]["ROCR_VISIBLE_DEVICES"], "1,3")
+        self.assertEqual(kw["environment"]["GPUS"], "0,1")
+        kw = self._spec({"gpu_devices": "2"}, vendor="rocm")
+        self.assertEqual(kw["environment"]["ROCR_VISIBLE_DEVICES"], "2")
+        self.assertEqual(kw["environment"]["GPU"], "0")
 
     def test_gpu_pinning_renumbers_inside_container(self):
         kw = self._spec({"gpu_devices": "2"})
@@ -310,13 +327,28 @@ class AvailabilityTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("STRATA_ENABLED", reason)
 
-    def test_nvidia_only(self):
+    def test_nvidia_and_amd(self):
         with patch("config.STRATA_ENABLED", True):
             self.assertEqual(STRATA.availability("cuda"), (True, ""))
-            for vendor in ("rocm", "intel", "vulkan", None):
+            self.assertEqual(STRATA.availability("rocm"), (True, ""))
+            for vendor in ("intel", "vulkan", None):
                 ok, reason = STRATA.availability(vendor)
                 self.assertFalse(ok, vendor)
-                self.assertIn("NVIDIA", reason)
+                self.assertIn("NVIDIA or AMD", reason)
+            # Vulkan on an AMD box lacks /dev/kfd: point at ROCm mode.
+            self.assertIn("GPU_TYPE=rocm", STRATA.availability("vulkan")[1])
+
+    def test_no_nvidia_only_capability(self):
+        self.assertNotIn("nvidia_only", STRATA.capabilities)
+
+    def test_build_supported_only_off_amd_intel_vulkan(self):
+        from core.strata_build import build_supported
+        with patch("config.STRATA_ENABLED", True):
+            self.assertTrue(STRATA.describe("cuda")["build_supported"])
+            self.assertFalse(STRATA.describe("rocm")["build_supported"])
+        for vendor, ok in (("cuda", True), (None, True), ("rocm", False),
+                           ("intel", False), ("vulkan", False)):
+            self.assertEqual(build_supported(vendor), ok, vendor)
 
     def test_load_timeout(self):
         with patch("config.STRATA_LOAD_TIMEOUT", 4321):
@@ -377,8 +409,9 @@ class ValidateLaunchTests(unittest.TestCase):
             self.assertIn(field, err)
 
     def test_vendor_gating(self):
-        err = validate_launch({"ctx_size": 32768}, QWEN, "rocm")[2]
-        self.assertIn("NVIDIA", err)
+        err = validate_launch({"ctx_size": 32768}, QWEN, "intel")[2]
+        self.assertIn("NVIDIA or AMD", err)
+        self.assertIsNone(validate_launch({"ctx_size": 32768}, QWEN, "rocm")[2])
 
     def test_bad_options(self):
         for body in ({"strata_vision": "maybe"}, {"strata_kv": "q8"}, {"strata_low_ram": "x"}):
@@ -548,9 +581,9 @@ class StrataRoutesTests(_Instances):
         self.assertIn("n_gpu_layers", resp.get_json()["error"])
         launch_mock.assert_not_called()
 
-    @patch("api.instances.get_vendor", return_value="rocm")
+    @patch("api.instances.get_vendor", return_value="intel")
     @patch("api.instances.launch_instance")
-    def test_create_route_refuses_non_nvidia_node(self, launch_mock, _v):
+    def test_create_route_refuses_unsupported_node(self, launch_mock, _v):
         resp = self.client.post("/api/instances", json={
             "model_path": QWEN, "port": 8001, "ctx_size": 32768,
         })

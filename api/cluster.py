@@ -125,7 +125,7 @@ def build_local_snapshot() -> dict:
         kb_info = {"enabled": False, "mcp": False}
 
     # Engine availability, so a peer's UI only offers e.g. Strata on nodes
-    # with an NVIDIA GPU and STRATA_ENABLED. Published under "system" (it is
+    # with an NVIDIA or ROCm GPU and STRATA_ENABLED. Published under "system" (it is
     # a node capability, like the GPU list) rather than as a new top-level
     # key; consumers treat unknown keys as opaque, so older peers ignore it.
     try:

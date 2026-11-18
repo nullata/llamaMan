@@ -1,6 +1,6 @@
 # Strata engine
 
-*(opt-in, NVIDIA only)* [Strata](https://github.com/Niko1221/Strata) runs the Qwen3.8-Flash-Next mixture-of-experts family (and its Coder, Swift 1.5 and Unsloth variants) and Qwen3.6-35B-A3B on consumer NVIDIA GPUs plus system RAM. llamaMan can launch, monitor, proxy, sleep/wake and stop Strata instances next to llama.cpp ones. llama.cpp behaviour does not change: the engine layer (`core/engines/`) keeps the llama.cpp launch byte-for-byte identical (snapshot-tested).
+*(opt-in, NVIDIA or AMD)* [Strata](https://github.com/Niko1221/Strata) runs the Qwen3.8-Flash-Next mixture-of-experts family (and its Coder, Swift 1.5 and Unsloth variants) and Qwen3.6-35B-A3B on consumer NVIDIA or AMD (ROCm) GPUs plus system RAM. llamaMan can launch, monitor, proxy, sleep/wake and stop Strata instances next to llama.cpp ones. llama.cpp behaviour does not change: the engine layer (`core/engines/`) keeps the llama.cpp launch byte-for-byte identical (snapshot-tested).
 
 ## Contents
 
@@ -8,13 +8,29 @@
 
 ## Getting started
 
-**1. Get an image** (upstream publishes none; the host needs NVIDIA driver **580+**, i.e. CUDA 13, and the NVIDIA Container Toolkit). After enabling Strata (step 2), either pull one you trust by name in **Settings → Docker Images** (engine *Strata* in the pull row), or use **Manage Strata images → Pull repo & build latest**, which downloads the repository into `STRATA_SRC_DIR` and builds `STRATA_BUILD_IMAGE` through the Docker socket for the node's GPU generations (read from the driver; all supported ones if that fails), or build it by hand:
+**1. Get an image.** On AMD, see [AMD (ROCm)](#amd-rocm) below. On NVIDIA (the host needs driver **580+**, i.e. CUDA 13, and the NVIDIA Container Toolkit), after enabling Strata (step 2), either pull one you trust by name in **Settings → Docker Images** (engine *Strata* in the pull row), or use **Manage Strata images → Pull repo & build latest**, which downloads the repository into `STRATA_SRC_DIR` and builds `STRATA_BUILD_IMAGE` through the Docker socket for the node's GPU generations (read from the driver; all supported ones if that fails), or build it by hand:
 
 ```bash
 git clone https://github.com/Niko1221/Strata && cd Strata
 docker build -t strata .                                        # all supported GPU generations
 docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (faster build)
 ```
+
+### AMD (ROCm)
+
+Upstream publishes one ROCm image per GPU family. Pull the one for your card in **Settings → Docker Images** (engine *Strata*), or set it as `STRATA_IMAGE`:
+
+| Card | Image |
+|---|---|
+| RX 9000 series, Radeon AI PRO R9700 (RDNA 4) | `ghcr.io/niko1221/strata:latest-rocm-gfx120x` |
+| RX 7000 series (RDNA 3) | `ghcr.io/niko1221/strata:latest-rocm-gfx110x` |
+| Ryzen AI Max "Strix Halo" (Radeon 8060S) | `ghcr.io/niko1221/strata:latest-rocm-gfx1151` |
+
+- The node must run in ROCm mode: detected from an AMD card, or `GPU_TYPE=rocm`. With `GPU_TYPE=vulkan` Strata is refused, because Vulkan mode doesn't pass `/dev/kfd`. Set `GPU_TYPE=rocm` too when an Intel iGPU sits next to the AMD card.
+- *Pull repo & build latest* is hidden on AMD nodes: the repository's Dockerfile builds the CUDA engine only.
+- One image holds one GPU family, so a node with cards from two families (e.g. RX 7900 XTX + RX 9070) needs **GPU Devices** pinned to one family.
+- RX 6000 (RDNA 2) and the 780M have no published image and aren't supported.
+- Not yet verified on AMD hardware; please report what works.
 
 **2. Enable it** on the llamaMan node: `STRATA_ENABLED=true` (see [Strata variables](CONFIGURATION.md#strata)). Settings → Docker Images then shows *Manage Strata images*: the pulled Strata images, the built one (downloaded and built commits, the build button) and their auto-update. The launch form offers Strata once one of them is on the node.
 
@@ -53,7 +69,7 @@ Qwen3.6-35B-A3B has its own engine path in Strata and is a single GGUF file, wit
 - **Settings are baked into Strata's setup.** Context / image input / KV / Low-RAM / GPU pinning are recorded per model on the data volume. llamaMan remembers the settings each model last came up healthy with and passes `REINSTALL=1` only when they change (the files are reused).
 - **Idle timeout** works (sleep stops the container; the next request wakes it), but a cold start takes minutes and the waking request waits for it (`STRATA_LOAD_TIMEOUT`).
 - **One instance per Strata model per node** (instances of one model share its setup on the volume).
-- **NVIDIA only.** The option is unavailable, with the reason, on ROCm / Intel / Vulkan / CPU nodes and when `STRATA_ENABLED` is off. In a cluster each node advertises its engines, so only capable nodes offer Strata models.
+- **NVIDIA or AMD (ROCm) only.** The option is unavailable, with the reason, on Intel / Vulkan / CPU nodes and when `STRATA_ENABLED` is off. In a cluster each node advertises its engines, so only capable nodes offer Strata models.
 - Bare-metal llamaMan reaches Strata the same way as llama-server (published port on `LLAMA_HOST_ADDR`).
 
 ---
@@ -95,7 +111,7 @@ core/engines/
   | command | none (the script reads env vars only) |
   | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `GGUF_DIR=/models`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `STRATA_ALLOWED_HOSTS`, `SERVE_PORT=8081`, `RELAY_SCRIPT`, `REINSTALL=1`?, `PARALLEL`? (own-path families only; requests at once) |
   | ulimits | `memlock=-1` |
-  | GPU | NVIDIA `device_requests` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
+  | GPU | NVIDIA `device_requests`, or on AMD `/dev/kfd` + `/dev/dri`, the host render/video GIDs and `ROCR_VISIBLE_DEVICES` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
   | mounts | data volume → `/data`; logs; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/models` (rw, for setup's `.done` marks), when llamaMan holds complete shards; renamed copies are mounted file by file under the published names, and so is a single-file model launched from the library, whatever its name |
   | mem_limit | from System Memory Limit (forces `LOW_RAM=on`) |
   | network / ports / labels | as for llama-server (`llamaman-net`, `8080 → host port`, `llamaman.*`) |
@@ -121,7 +137,7 @@ core/engines/
    key, so it binds `127.0.0.1:8081` and a small TCP relay (`RELAY_SCRIPT`) carries `0.0.0.0:8080` to it. Its Host
    check still applies through `STRATA_ALLOWED_HOSTS`. `LAYER_SPLIT` is written into the config's `layer_split` at every
    start. On a 0.1.x image (no `/opt/strata/terminal`) it runs that image's `docker-entrypoint.sh`, which reads the
-   same variables. GPU pinning uses container numbering: the NVIDIA runtime
+   same variables. GPU pinning uses container numbering: the NVIDIA runtime (or `ROCR_VISIBLE_DEVICES` on AMD)
    renumbers the host GPUs llamaMan attaches, so host `1,3` becomes `GPUS=0,1`. llamaMan doesn't set `API_KEY`, which
    matches how it runs llama-server (no key); its own proxy and auth sit in front.
 3. **Reusing GGUFs on disk.** llamaMan mounts its completed download of the shards at `/models` and sets
@@ -157,7 +173,7 @@ on the next start.
 - **A launch is refused while llamaMan is still downloading that model**, so the container doesn't download it a
   second time into its volume.
 - **Pre-downloaded shards skip update-check provenance.** A pinned file must not be "updated" to the repo's `main`.
-- **Virtual models are listed only where they can run** (`STRATA_ENABLED` plus NVIDIA): in `/api/models`,
+- **Virtual models are listed only where they can run** (`STRATA_ENABLED` plus an NVIDIA or ROCm GPU): in `/api/models`,
   `/api/tags`, `/v1/models` and name resolution. Update scans and the cluster model snapshot stay files-only. Peers
   learn engine availability from `snapshot.system.engines` (nested under `system`, so older peers ignore it).
 - **Load stage** comes from the last 64 KB of the container log: setup's `=== Step N ===` headers, the download's
@@ -178,7 +194,7 @@ on the next start.
 
 ## Known limitations
 
-- NVIDIA only. Strata's AMD (HIP) path is an experimental manual build upstream and isn't offered.
+- AMD: the image is chosen by hand (no gfx arch detection yet), nothing checks that it matches the card before setup, and a run config made by another image flavor on a shared data volume isn't detected.
 - The vision encoder (mmproj) is always downloaded by Strata itself, into the volume.
 - Strata's own web UI (`/`, `/settings`, `/load`, `/unload`) is reachable through the instance port, but llamaMan
   doesn't use or manage it. Its idle-unload feature is unused; llamaMan's sleep stops the container instead.

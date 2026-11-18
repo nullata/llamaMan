@@ -1,7 +1,8 @@
 # Copyright (c) llamaMan. Licensed under the Elastic License 2.0 - see LICENSE.
 
 """Strata - https://github.com/Niko1221/Strata - runs the Qwen3.8-Flash-Next
-mixture-of-experts family on one or more consumer NVIDIA GPUs plus system RAM.
+mixture-of-experts family on one or more consumer NVIDIA or AMD (ROCm) GPUs
+plus system RAM.
 
 What llamaman relies on (upstream file references are to the Strata repo):
 
@@ -863,7 +864,6 @@ class StrataEngine(Engine):
         # Instances of one model share its pack and run config on /data;
         # two at once would run setup over the same files.
         "single_instance_per_model": True,
-        "nvidia_only": True,
     }
     option_keys = ("strata_vision", "strata_kv", "strata_low_ram", "strata_layer_split",
                    "strata_watchdog_s", "strata_watchdog_io_s", "strata_parallel")
@@ -1022,7 +1022,8 @@ class StrataEngine(Engine):
 
     def image_missing_message(self, image_name: str) -> str:
         return (f"Docker image '{image_name}' not found: build or pull a Strata image in "
-                f"Settings → Docker Images (NVIDIA driver 580+ needed to run it)")
+                f"Settings → Docker Images (NVIDIA: driver 580+; AMD: an image for the card, "
+                f"e.g. ghcr.io/niko1221/strata:latest-rocm-gfx120x)")
 
     # ------------------------------------------------------------- options
     def parse_options(self, body: dict, model_path: str) -> tuple[dict, str | None]:
@@ -1103,9 +1104,10 @@ class StrataEngine(Engine):
     def _gpu_env(self, config: dict) -> dict:
         """GPU / GPUS for setup.py, in the CONTAINER's numbering.
 
-        device_requests already limits the container to the chosen host GPUs,
-        and the NVIDIA runtime renumbers them from 0 inside it - so a pin to
-        host GPUs "1,3" is GPUS=0,1 here. Pinning even a single card keeps a
+        The container sees only the chosen host GPUs, renumbered from 0:
+        device_requests on NVIDIA, ROCR_VISIBLE_DEVICES on AMD (setup.py's
+        --gpu / --gpus use HIP numbering). So a pin to host GPUs "1,3" is
+        GPUS=0,1 here. Pinning even a single card keeps a
         volume set up on another host from being 'offered to the pair'
         (docker-entrypoint.sh comment on offer_together)."""
         from config import LLAMA_GPU_DEVICES
@@ -1278,7 +1280,9 @@ class StrataEngine(Engine):
         return [docker.types.Ulimit(name="memlock", soft=-1, hard=-1)]
 
     def gpu_attachment(self, config: dict, vendor: str | None) -> str:
-        return "nvidia"
+        # device_requests on NVIDIA; /dev/kfd + /dev/dri, the host render/video
+        # GIDs and ROCR_VISIBLE_DEVICES on AMD. Never "none": no CPU mode.
+        return "vendor"
 
     # ------------------------------------------------- setup fingerprinting
     def _setups_file(self) -> str:
@@ -1343,12 +1347,12 @@ class StrataEngine(Engine):
         from config import STRATA_ENABLED
         if not STRATA_ENABLED:
             return False, "Strata is disabled on this node (set STRATA_ENABLED=true)"
-        if vendor != "cuda":
-            found = {"rocm": "an AMD GPU", "intel": "an Intel GPU",
-                     "vulkan": "a Vulkan GPU"}.get(vendor or "", "no GPU")
-            return False, (f"Strata needs an NVIDIA GPU (driver 580+); this node has {found}. "
-                           "Strata's AMD support is an experimental manual build upstream.")
-        return True, ""
+        if vendor in ("cuda", "rocm"):
+            return True, ""
+        # Vulkan mode attaches /dev/dri only (no /dev/kfd), which the HIP engine can't use.
+        found = {"intel": "an Intel GPU",
+                 "vulkan": "a Vulkan GPU (set GPU_TYPE=rocm on an AMD node)"}.get(vendor or "", "no GPU")
+        return False, f"Strata needs an NVIDIA or AMD (ROCm) GPU; this node has {found}."
 
     def describe(self, vendor: str | None) -> dict:
         d = super().describe(vendor)
@@ -1361,4 +1365,6 @@ class StrataEngine(Engine):
         d["catalogue"] = catalogue_source()
         # The launch form offers Strata only once an image is on the node.
         d["image_built"] = bool(d["catalogue"].get("image_id"))
+        from core.strata_build import build_supported
+        d["build_supported"] = build_supported(vendor)
         return d
