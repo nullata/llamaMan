@@ -283,6 +283,7 @@ class SurfaceTests(unittest.TestCase):
         ("/v1/chat/completions", OPENAI),
         ("/v1/completions", {"model": "m", "prompt": "hi"}),
         ("/v1/embeddings", {"model": "m", "input": "hi"}),
+        ("/v1/rerank", {"model": "m", "query": "q", "documents": ["a"]}),
     )
 
     def _post(self, path, body, err, dispatched=False):

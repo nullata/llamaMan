@@ -311,6 +311,8 @@ _GATED_PATHS = frozenset({
     "/completion", "/chat/completions",
     # Anthropic Messages, OpenAI Responses, and decision models (System One)
     "/v1/messages", "/v1/responses", "/v1/systemone",
+    # Rerank (llama-server --reranking registers all three)
+    "/v1/rerank", "/v1/reranking", "/rerank",
 })
 
 

@@ -2084,12 +2084,37 @@ def llamaman_completion():
 
 @bp.route("/v1/embeddings", methods=["POST"])
 def llamaman_v1_embeddings():
+    def embedding_only(inst, model_name):
+        if not inst.get("config", {}).get("embedding_model"):
+            return jsonify({"error": {"message": f"model '{model_name}' is not configured as an embedding model"}}), 422
+        return None
+
+    return _proxy_json_to_model("/v1/embeddings", "openai_embed", check=embedding_only)
+
+
+@bp.route("/v1/rerank", methods=["POST"])
+@bp.route("/v1/reranking", methods=["POST"])
+@bp.route("/rerank", methods=["POST"])
+def llamaman_rerank():
+    """Rerank (Cohere / Jina style: model, query, documents, top_n), as
+    llama-server serves it when started with --reranking. All three paths
+    llama-server registers go to its /v1/rerank. No llamaman-side check that
+    the instance is a reranker: llama-server answers 501 with its own message
+    when it isn't, and that is passed through."""
+    return _proxy_json_to_model("/v1/rerank", "rerank")
+
+
+def _proxy_json_to_model(upstream_path: str, endpoint: str, check=None):
+    """A non-streaming JSON request routed by its `model` field: cluster
+    dispatch, auto-start (with eviction as on the other OpenAI routes), wait
+    until healthy, forward to the instance's `upstream_path`, request log.
+    `check(inst, model_name)` may refuse the instance by returning a response."""
     body = request.get_json(force=True)
-    model_name = body.get("model", "").strip()
+    model_name = (body.get("model") or "").strip() if isinstance(body, dict) else ""
     if not model_name:
         return jsonify({"error": {"message": "model is required"}}), 400
 
-    # Cluster: an embedding group routes like any other.
+    # Cluster: an embedding / rerank group routes like any other.
     from api.cluster import dispatch_inference
     forwarded = dispatch_inference(model_name)
     if forwarded is not None:
@@ -2102,8 +2127,10 @@ def llamaman_v1_embeddings():
     if err:
         return _openai_model_error(err)
 
-    if not inst.get("config", {}).get("embedding_model"):
-        return jsonify({"error": {"message": f"model '{model_name}' is not configured as an embedding model"}}), 422
+    if check is not None:
+        refused = check(inst, model_name)
+        if refused is not None:
+            return refused
 
     server_host = inst.get("_server_host", "localhost")
     server_port = inst.get("_server_port") or inst.get("_internal_port") or inst["port"]
@@ -2118,7 +2145,7 @@ def llamaman_v1_embeddings():
 
     handle = record_request(
         body,
-        endpoint="openai_embed",
+        endpoint=endpoint,
         path=request.path,
         inst_id=inst_id,
         model=model_name,
@@ -2127,7 +2154,7 @@ def llamaman_v1_embeddings():
     try:
         try:
             resp = request_local_worker(
-                f"http://{server_host}:{server_port}/v1/embeddings",
+                f"http://{server_host}:{server_port}{upstream_path}",
                 json=body,
             )
         except Exception as e:
@@ -2136,10 +2163,19 @@ def llamaman_v1_embeddings():
             return jsonify({"error": {"message": str(e)}}), 502
 
         _touch_instance(inst_id)
-        data = resp.json()
+        try:
+            data = resp.json()
+        except ValueError:
+            # Not JSON (e.g. an older llama-server's plain 404): pass it through as an error.
+            text = resp.text or f"upstream returned {resp.status_code}"
+            status = resp.status_code if resp.status_code >= 400 else 502
+            if handle:
+                handle.set_error(status, text[:500])
+            return jsonify({"error": {"message": text}}), status
         if handle:
+            # A TEI-style rerank ("texts" in the request) answers with a bare list.
             handle.set_response(text=json.dumps(data, separators=(",", ":")),
-                                usage=data.get("usage"),
+                                usage=data.get("usage") if isinstance(data, dict) else None,
                                 status_code=resp.status_code)
         return jsonify(data), resp.status_code
     finally:
