@@ -166,6 +166,8 @@ open-webui:
 
 Models are listed by GGUF filename stem; set a per-model **Display Name** to have OpenWebUI show/accept a friendly name instead. In a cluster, live shared-queue group aliases on nodes that can receive traffic are advertised as selectable models too, so a client can send the alias and have it routed to the least-loaded awake member. Group context length is reported as the **min across those live members**, and any node answers `/api/show` / `/v1/models` for a group even when it has no local member of it - so OpenWebUI sees the truthful runtime ctx instead of falling back to its built-in default.
 
+**Reranker for hybrid search:** launch a reranker GGUF (e.g. `bge-reranker-v2-m3`) with `--reranking` in Extra Args, then set OpenWebUI's external reranker URL to `http://llamaman:42069/v1/rerank` with the same API key. Requests are routed by `model` and auto-start the instance, like embeddings (`/rerank` and `/v1/reranking` work too).
+
 ## Persistent State
 
 **JSON (default):** zero-config, stored in `/data`. Fine for single-node.
