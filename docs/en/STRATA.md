@@ -65,7 +65,9 @@ Qwen3.6-35B-A3B has its own engine path in Strata and is a single GGUF file, wit
 ## Limits and behaviour
 
 - **One request at a time** (except [Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes)). Max Concurrent is forced to 1; further requests queue in llamaMan's gate (Max Queue Depth, then 429).
-- **RAM.** Strata loads 32-62 GB into RAM (`--ulimit memlock=-1` is always set). A **System Memory Limit** forces Low-RAM mode on, because Strata's setup reads the host's RAM and cannot see a container limit; the UI warns below ~64 GB.
+- **RAM.** Strata loads 32-62 GB into RAM (`--ulimit memlock=-1` is always set). A **System Memory Limit** forces Low-RAM mode on (0.2.x setup sees the container's limit, but older images read only the host's RAM); the UI warns below ~64 GB. From 0.2.17, setup leaves 17 GB free instead of 24 for the Unsloth UD-Q4_K_XL / UD-IQ4_XS RAM budget, and llamaMan moves budgets set up under 0.2.16 to the new rule once at the next start.
+- **Skip Rarely Used Experts** (`STRATA_ROUTE_TAIL_SKIP`) is Off by default from Strata 0.2.17. Picking a rank (7 is Strata's "On") decodes faster but the answers differ slightly from the full model. It's written into the model's run config at every start, so changing it needs no setup. Not offered for Qwen3.6-35B-A3B.
+- **Coder re-pin (0.2.17).** Strata now pins a new IQ1_M shard 1 for the Coder model, the same size as the old one. A Coder download llamaMan made earlier keeps working, but setup reports it as "not the published file" and serves the old weights. To move to the new build, delete that model's folder under `MODELS_DIR/strata/`, download it again and relaunch.
 - **Settings are baked into Strata's setup.** Context / image input / KV / Low-RAM / GPU pinning are recorded per model on the data volume. llamaMan remembers the settings each model last came up healthy with and passes `REINSTALL=1` only when they change (the files are reused).
 - **Idle timeout** works (sleep stops the container; the next request wakes it), but a cold start takes minutes and the waking request waits for it (`STRATA_LOAD_TIMEOUT`).
 - **One instance per Strata model per node** (instances of one model share its setup on the volume).
@@ -109,7 +111,7 @@ core/engines/
   | image | `STRATA_IMAGE` (else the built, then a pulled Strata image) |
   | entrypoint | `sh -c ENTRY_SCRIPT` (`core/engines/strata.py`), under Docker's init; not the image's own (see 2.) |
   | command | none (the script reads env vars only) |
-  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `GGUF_DIR=/models`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `STRATA_ALLOWED_HOSTS`, `SERVE_PORT=8081`, `RELAY_SCRIPT`, `REINSTALL=1`?, `PARALLEL`? (own-path families only; requests at once) |
+  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `GGUF_DIR=/models`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `ROUTE_TAIL_SKIP` (Flash-Next families; written into the run config's `env` as `STRATA_ROUTE_TAIL_SKIP`), `STRATA_ALLOWED_HOSTS`, `SERVE_PORT=8081`, `RELAY_SCRIPT`, `REINSTALL=1`?, `PARALLEL`? (own-path families only; requests at once) |
   | ulimits | `memlock=-1` |
   | GPU | NVIDIA `device_requests`, or on AMD `/dev/kfd` + `/dev/dri`, the host render/video GIDs and `ROCR_VISIBLE_DEVICES` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
   | mounts | data volume → `/data`; logs; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/models` (rw, for setup's `.done` marks), when llamaMan holds complete shards; renamed copies are mounted file by file under the published names, and so is a single-file model launched from the library, whatever its name |
@@ -147,7 +149,8 @@ core/engines/
    downloads the model again.
    Shards are fetched from the Hugging Face revisions Strata pins (`setup.py:65-70`, mirrored in
    `core/engines/strata.py`). The MTP layer (~5 GB) and the pack are still prepared inside the container.
-4. **Memory limit / memlock.** Setup reads RAM from `/proc/meminfo`, which is the host's total, so a capped container
+4. **Memory limit / memlock.** 0.2.x setup takes the smaller of `/proc/meminfo` and the container's cgroup limit
+   (`setup.py` `ram_gb`). Older images read only `/proc/meminfo`, which is the host's total, so there a capped container
    must ask for `LOW_RAM=on` (Dockerfile comment at `:31`, `docs/INSTALL.md:116-118`). Without it, setup picks the
    in-RAM mode and the container is likely to be OOM-killed. llamaMan forces `LOW_RAM=on` whenever a memory limit is
    set, and the UI warns below 64 GB. `memlock=-1` matters because the engine page-locks part of its arena for GPU DMA,

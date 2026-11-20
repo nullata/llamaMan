@@ -392,6 +392,7 @@ class ParallelTests(unittest.TestCase):
     def test_the_environment(self):
         self.assertEqual(ENGINE.environment(QWEN36, {"strata_parallel": 4})["PARALLEL"], "4")
         self.assertEqual(ENGINE.environment(QWEN36, {})["PARALLEL"], "1")
+        self.assertNotIn("ROUTE_TAIL_SKIP", ENGINE.environment(QWEN36, {"strata_route_tail_skip": "7"}))
         self.assertNotIn("PARALLEL", ENGINE.environment("/strata/qwen-IQ2_XS", {}))
 
     def _patch_config(self, start, parallel):

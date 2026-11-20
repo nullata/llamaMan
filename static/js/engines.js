@@ -247,7 +247,7 @@ async function refreshStrataSection() {
       dl.appendChild(opt);
     });
   }
-  ['f-strata-kv', 'f-strata-low-ram', 'f-strata-layer-split'].forEach(id => {
+  ['f-strata-kv', 'f-strata-low-ram', 'f-strata-layer-split', 'f-strata-route-tail-skip'].forEach(id => {
     const group = document.getElementById(id)?.closest('.form-group');
     if (group) group.style.display = own ? 'none' : '';
   });
@@ -279,7 +279,7 @@ function updateStrataWarnings() {
   show('strata-memory-warning', !memText ? ''
     : (memGb != null && memGb < 64)
       ? `Below ~64 GB: Strata loads 32-62 GB and may be OOM-killed. A memory limit also forces Low-RAM mode on.`
-      : 'A memory limit forces Strata\'s Low-RAM mode on (its setup cannot see container limits).');
+      : 'A memory limit forces Strata\'s Low-RAM mode on (images before 0.2 cannot see container limits).');
   const idle = parseInt(document.getElementById('f-idle-timeout')?.value, 10) || 0;
   show('strata-idle-warning', idle > 0
     ? 'A cold start loads 32-62 GB and takes minutes; the request that wakes it waits that long.' : '');
@@ -297,6 +297,8 @@ function applyStrataPresetToLaunchForm(p) {
   if (ls) ls.value = p.strata_layer_split || '';
   const par = document.getElementById('f-strata-parallel');
   if (par) par.value = p.strata_parallel || 1;
+  const rts = document.getElementById('f-strata-route-tail-skip');
+  if (rts) rts.value = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].includes(String(p.strata_route_tail_skip ?? '')) ? String(p.strata_route_tail_skip) : '0';
   for (const [id, key] of [['f-strata-watchdog-s', 'strata_watchdog_s'], ['f-strata-watchdog-io-s', 'strata_watchdog_io_s']]) {
     const el = document.getElementById(id);
     if (el) el.value = p[key] ?? '';
@@ -349,6 +351,7 @@ function readStrataLaunchForm() {
     strata_layer_split: val('f-strata-layer-split')?.value.trim() || '',
     strata_watchdog_s: val('f-strata-watchdog-s')?.value.trim() || '',
     strata_watchdog_io_s: val('f-strata-watchdog-io-s')?.value.trim() || '',
+    strata_route_tail_skip: launchEngineModel?.own_path ? '' : (val('f-strata-route-tail-skip')?.value || '0'),
     strata_parallel: parallel,
     pdf_input_enabled: val('f-pdf-input-enabled')?.checked || false,
     pdf_extract_text_first: val('f-pdf-extract-text-first')?.checked || false,

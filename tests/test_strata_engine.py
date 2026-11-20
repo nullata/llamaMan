@@ -312,6 +312,15 @@ class ReinstallFingerprintTests(_TmpDirs):
         self.assertNotIn("STRATA_WATCHDOG_S", env)              # Strata's default
         self.assertNotIn("STRATA_WATCHDOG_IO_S", env)
 
+    def test_route_tail_skip_env_without_reinstall(self):
+        cfg = self._cfg()
+        STRATA.on_ready({"model_path": QWEN, "config": cfg})
+        env = STRATA.environment(QWEN, {**cfg, "strata_route_tail_skip": "7"})
+        self.assertNotIn("REINSTALL", env)
+        self.assertEqual(env["ROUTE_TAIL_SKIP"], "7")
+        # Always sent, so going back to off undoes a rank left in the run config.
+        self.assertEqual(STRATA.environment(QWEN, cfg)["ROUTE_TAIL_SKIP"], "0")
+
     def test_fingerprint_is_per_model_and_per_volume(self):
         STRATA.on_ready({"model_path": QWEN, "config": self._cfg()})
         self.assertEqual(STRATA.environment("/strata/qwen-Q2_0", self._cfg()).get("REINSTALL"), "1")
@@ -370,8 +379,17 @@ class ValidateLaunchTests(unittest.TestCase):
         self.assertIsNone(err)
         self.assertEqual(name, "strata")
         self.assertEqual(opts, {"strata_vision": "no", "strata_kv": "", "strata_low_ram": "auto",
-                                "strata_layer_split": "", "strata_watchdog_s": "",
-                                "strata_watchdog_io_s": ""})
+                                "strata_layer_split": "", "strata_route_tail_skip": "0",
+                                "strata_watchdog_s": "", "strata_watchdog_io_s": ""})
+
+    def test_route_tail_skip_validated(self):
+        for raw, want in (("", "0"), (None, "0"), ("0", "0"), (" 7 ", "7"), (9, "9")):
+            opts, err = STRATA.parse_options({"strata_route_tail_skip": raw}, QWEN)
+            self.assertIsNone(err, raw)
+            self.assertEqual(opts["strata_route_tail_skip"], want, raw)
+        for raw in ("10", "-1", "on", "7.0"):
+            err = STRATA.parse_options({"strata_route_tail_skip": raw}, QWEN)[1]
+            self.assertIn("strata_route_tail_skip", err, raw)
 
     def test_watchdog_validated(self):
         for raw, want in (("", ""), (None, ""), ("300", "300"), (" 0 ", "0"), (120, "120"), ("007", "7")):

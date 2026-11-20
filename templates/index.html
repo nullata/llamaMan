@@ -299,7 +299,7 @@
                     <div class="form-group" data-engine-only="strata" hidden>
                       <span class="label-row">
                         <label for="f-strata-low-ram">Low-RAM Mode</label>
-                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Low-RAM Mode help" data-tip="Strata LOW_RAM. Auto = Strata decides from the host&#39;s RAM. On = the experts are mapped from the prepared pack instead of held in RAM (slower, far less RAM). Off = held in RAM (32-62 GB). Forced On when System Memory Limit is set: Strata&#39;s setup reads the host&#39;s RAM and cannot see a container limit."><i class="fa-solid fa-circle-info"></i></span>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Low-RAM Mode help" data-tip="Strata LOW_RAM. Auto = Strata decides from the host&#39;s RAM. On = the experts are mapped from the prepared pack instead of held in RAM (slower, far less RAM). Off = held in RAM (32-62 GB). Forced On when System Memory Limit is set (Strata images before 0.2 read only the host&#39;s RAM and cannot see a container limit)."><i class="fa-solid fa-circle-info"></i></span>
                       </span>
                       <select id="f-strata-low-ram">
                         <option value="auto" selected>Auto</option>
@@ -327,6 +327,24 @@
                         <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Slow-Storage Allowance help" data-tip="Strata STRATA_WATCHDOG_IO_S. How long in all a stalled step may take while the engine is waiting on slow storage or low RAM (e.g. a model read from an HDD or a network share). Empty = 10 x the Hang Watchdog. 0 = no allowance. Needs a recent Strata image (#1407)."><i class="fa-solid fa-circle-info"></i></span>
                       </span>
                       <input id="f-strata-watchdog-io-s" type="number" min="0" step="1" placeholder="10 x watchdog" />
+                    </div>
+                    <div class="form-group" data-engine-only="strata" hidden>
+                      <span class="label-row">
+                        <label for="f-strata-route-tail-skip">Skip Rarely Used Experts</label>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Skip Rarely Used Experts help" data-tip="Strata STRATA_ROUTE_TAIL_SKIP. Skips experts that every token in a step picks only at this rank or lower: faster decode (about +29% on an RTX 5090), but answers differ slightly from the full model. Off = Strata&#39;s default since 0.2.17. Rank 7 = Strata&#39;s On. Applied at every start."><i class="fa-solid fa-circle-info"></i></span>
+                      </span>
+                      <select id="f-strata-route-tail-skip">
+                        <option value="0" selected>Off</option>
+                        <option value="1">Rank 1</option>
+                        <option value="2">Rank 2</option>
+                        <option value="3">Rank 3</option>
+                        <option value="4">Rank 4</option>
+                        <option value="5">Rank 5</option>
+                        <option value="6">Rank 6</option>
+                        <option value="7">Rank 7 (Strata&#39;s suggestion)</option>
+                        <option value="8">Rank 8</option>
+                        <option value="9">Rank 9</option>
+                      </select>
                     </div>
                   </div>
                 </div>

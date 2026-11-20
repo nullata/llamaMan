@@ -35,9 +35,11 @@ What llamaman relies on (upstream file references are to the Strata repo):
   * One request at a time (serve/server.py v1_status: concurrency.serving=1),
     except an own-path family asked for several (strata_parallel, 1-8).
   * It loads 32-62 GB into RAM and page-locks part of it for GPU DMA, so the
-    container runs with memlock unlimited. Its setup reads RAM from
-    /proc/meminfo (the host's, not a cgroup limit), so a memory-capped
-    container must ask for LOW_RAM=on itself (setup.py --low-ram).
+    container runs with memlock unlimited. 0.2.x setup takes the smaller of
+    /proc/meminfo and the container's cgroup limit (setup.py ram_gb); older
+    images read only /proc/meminfo (the host's RAM). llamaman still sends
+    LOW_RAM=on whenever it sets a memory limit (setup.py --low-ram), which
+    keeps a capped container off the in-RAM mode on any image.
   * Shards llamaman downloaded (MODELS_DIR/strata/<tag>/) are mounted at
     /models and passed as GGUF_DIR (setup.py --gguf-dir): setup then never
     downloads the model, and the server runs with STRATA_NO_ACQUIRE=1.
@@ -73,7 +75,7 @@ ID_PREFIX = "strata/"
 HF_REVISIONS = {
     "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF": "ed59f92082b1e93c0e96d60a8b11aab089b52f09",
     "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF": "b22d729eae29b5796f76fb70f91aef549b9fc52c",
-    "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF": "5348543e0147355ac9cbcb031184a3546350988e",
+    "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF": "bba88856f8c3c0c9e40e45f82d05e228b814ac43",
     "unsloth/Qwen3.8-Flash-Next-GGUF": "38bb39ee97821de2c9009abb7e93950eec396e66",
     "unsloth/Qwen3.6-35B-A3B-MTP-GGUF": "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d",
 }
@@ -439,6 +441,10 @@ def refresh_catalogue_from_image() -> None:
 
 
 DEFAULT_CONTEXT = 32768
+# STRATA_ROUTE_TAIL_SKIP: "" or "0" = off (Strata's default from 0.2.17), 1-9 = skip
+# experts every token routes at that rank or lower (7 = upstream's "On").
+ROUTE_TAIL_SKIP_CHOICES = ("", *(str(i) for i in range(10)))
+
 CONTEXT_CHOICES = (8192, 32768, 65536, 131072, 262144, 393216, 524288)
 VISION_CHOICES = ("no", "yes", "cpu")
 KV_CHOICES = ("", "int8", "q4_0", "k8v4")
@@ -806,6 +812,11 @@ tag=$(printf '%s%s' "$prefix" "$MODEL" | tr 'A-Z' 'a-z')
 cfg="$INSTALL/strata-$tag.json"
 export STRATA_CONTROL_INSTALL=1 STRATA_INSTALL_DIR="$INSTALL" PYTHONNOUSERSITE=1 PYTHONPATH="$T"
 cd "$T"
+# 0.2.17 moves the RAM budget setup wrote under the 0.2.16 rule (RAM less 24 GB)
+# to its new one (RAM less 17 GB) once per folder, from Control's first command
+# (strata_cli/ram_budget_move.py), which this entrypoint never runs. Same call
+# here; it leaves a mark so it looks only once, and older images lack the module.
+"$PY" -c 'import sys; from strata_cli import ram_budget_move; ram_budget_move.run([sys.argv[1]])' "$INSTALL" 2>&1 || true
 if [ "${REINSTALL:-0}" = "1" ] || [ ! -f "$cfg" ]; then
   # An own-path family's pack is only the tokenizer read from its GGUF, and setup
   # keeps one that exists: without this a different fine-tune of that size would
@@ -838,6 +849,15 @@ if [ -n "${PARALLEL:-}" ]; then
   "$PY" -c 'import json, sys; p = sys.argv[1]; n = int(sys.argv[2]); c = json.load(open(p)); c.pop("parallel", None); c.update({"parallel": n} if n > 1 else {}); json.dump(c, open(p, "w"), indent=1)' \
     "$cfg" "$PARALLEL"
 fi
+# Skipping rarely used experts (STRATA_ROUTE_TAIL_SKIP: 0 = off, 1-9 = the rank).
+# Written into the config's "env", because that wins over the container's own
+# environment (serve/server.py child_env) and setup writes 0 there for Unsloth's
+# files. Read at every start, so changing it needs no setup.
+if [ -n "${ROUTE_TAIL_SKIP:-}" ]; then
+  "$PY" -c 'import json, sys; p, v = sys.argv[1], sys.argv[2]; c = json.load(open(p)); e = c.get("env") if isinstance(c.get("env"), dict) else {}
+if e.get("STRATA_ROUTE_TAIL_SKIP") != v: e["STRATA_ROUTE_TAIL_SKIP"] = v; c["env"] = e; json.dump(c, open(p, "w"), indent=1)' \
+    "$cfg" "$ROUTE_TAIL_SKIP"
+fi
 export STRATA_NO_ACQUIRE=1
 "$PY" -c "$RELAY_SCRIPT" &
 exec "$PY" serve/server.py --engine strata --config "$cfg" --host 127.0.0.1 --port "$SERVE_PORT"
@@ -866,7 +886,8 @@ class StrataEngine(Engine):
         "single_instance_per_model": True,
     }
     option_keys = ("strata_vision", "strata_kv", "strata_low_ram", "strata_layer_split",
-                   "strata_watchdog_s", "strata_watchdog_io_s", "strata_parallel")
+                   "strata_watchdog_s", "strata_watchdog_io_s", "strata_parallel",
+                   "strata_route_tail_skip")
     launch_fields = frozenset({
         "ctx_size", "memory_limit", "gpu_devices", "image",
         "idle_timeout_min", "max_concurrent", "max_queue_depth",
@@ -881,6 +902,7 @@ class StrataEngine(Engine):
         "pdf_input_enabled", "pdf_extract_text_first", "pdf_dpi", "pdf_max_pages",
         "strata_vision", "strata_kv", "strata_low_ram", "strata_layer_split",
         "strata_watchdog_s", "strata_watchdog_io_s", "strata_parallel",
+        "strata_route_tail_skip",
     })
 
     def max_concurrency_for(self, config: dict, model_path: str | None = None) -> int:
@@ -1060,8 +1082,11 @@ class StrataEngine(Engine):
             if raw and not raw.isdigit():
                 return {}, f"{key} must be empty (Strata's default) or whole seconds, 0 = off"
             watchdog[key] = str(int(raw)) if raw else ""
+        skip = str(body.get("strata_route_tail_skip") if body.get("strata_route_tail_skip") is not None else "").strip()
+        if skip not in ROUTE_TAIL_SKIP_CHOICES:
+            return {}, "strata_route_tail_skip must be 0 (off) or a rank from 1 to 9 (7 is Strata's suggestion)"
         return {"strata_vision": vision, "strata_kv": kv, "strata_low_ram": low_ram,
-                "strata_layer_split": split, **watchdog}, None
+                "strata_layer_split": split, "strata_route_tail_skip": skip or "0", **watchdog}, None
 
     def _parse_own_path_options(self, body: dict, family: str, size: str, vision: str,
                                 parallel_raw: str) -> tuple[dict, str | None]:
@@ -1120,8 +1145,9 @@ class StrataEngine(Engine):
         return {"GPUS": ",".join(str(i) for i in range(n))}
 
     def _low_ram(self, config: dict) -> str:
-        # setup.py reads /proc/meminfo, i.e. the HOST's RAM, so it cannot see
-        # a cgroup memory limit: a capped container must ask for low-RAM mode.
+        # A memory limit always asks for low-RAM mode. 0.2.x setup sees the
+        # cgroup limit itself, but older images read only the host's RAM and
+        # would pick the in-RAM mode in a container capped below it.
         if config.get("memory_limit"):
             return "on"
         v = str(config.get("strata_low_ram") or "auto").lower()
@@ -1197,6 +1223,11 @@ class StrataEngine(Engine):
             v = str(config.get(key) if config.get(key) is not None else "").strip()
             if v.isdigit():
                 env[var] = v
+        # Flash-Next families only (own-path families keep Strata's own setting).
+        # Always sent, so going back to 0 undoes an earlier rank in the config.
+        if not is_own_path(s["family"]):
+            skip = str(config.get("strata_route_tail_skip") or "").strip()
+            env["ROUTE_TAIL_SKIP"] = skip if skip in ROUTE_TAIL_SKIP_CHOICES and skip else "0"
         if self._shard_volumes(model_path, config):
             env["GGUF_DIR"] = GGUF_MOUNT
         if self.needs_reinstall(model_path, config):
