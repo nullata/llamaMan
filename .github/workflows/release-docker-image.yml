@@ -1,12 +1,19 @@
 name: Release Docker Image
 
-# Builds and pushes nullata/llamaman to Docker Hub when VERSION changes on main.
-# Equivalent to docker-image-build.sh (tags :latest and :<VERSION>) plus the push.
+# Builds and pushes nullata/llamaman to Docker Hub and ghcr.io when VERSION
+# changes on main. Equivalent to docker-image-build.sh (tags :latest and
+# :<VERSION>) plus the push to both registries.
 on:
   push:
     branches: [main]
     paths:
       - 'VERSION'
+  schedule:
+    # Weekly rebuild+repush of whatever VERSION currently says on main, as a
+    # freshness check on main's HEAD against the registries. GitHub cron is
+    # UTC: 19:00 UTC = 21:00 EET (+02:00). Becomes 21:00 CEST at 18:00 UTC
+    # in summer; shift this if that matters to you.
+    - cron: '0 19 * * 4'
   workflow_dispatch: # Allow manual trigger / re-run
 
 # Two quick VERSION bumps must not race on the :latest tag.
@@ -21,10 +28,26 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read # least privilege: only need to read the repo
+      packages: write # create/update the ghcr.io package with GITHUB_TOKEN
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # Same suite as ci.yml's test job, as a publish gate: a manual
+      # workflow_dispatch from any branch must not skip it. Cheap insurance
+      # before the image lands on Docker Hub and ghcr.io.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12' # matches the python:3.12-slim base in Dockerfile
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Test
+        run: python -m unittest discover tests
 
       - name: Read and validate version
         id: version
@@ -54,6 +77,14 @@ jobs:
           username: nullata
           password: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
 
+      # GITHUB_TOKEN auths ghcr.io for the same account (nullata), no new secret.
+      - name: Log in to the GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -63,5 +94,10 @@ jobs:
           tags: |
             nullata/llamaman:latest
             nullata/llamaman:${{ steps.version.outputs.version }}
+            ghcr.io/nullata/llamaman:latest
+            ghcr.io/nullata/llamaman:${{ steps.version.outputs.version }}
+          # Links the GHCR package to this repo (README + "Connected to repository").
+          labels: org.opencontainers.image.source=https://github.com/nullata/llamaman
+          annotations: index:org.opencontainers.image.source=https://github.com/nullata/llamaman
           cache-from: type=gha
           cache-to: type=gha,mode=max

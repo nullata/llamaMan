@@ -65,6 +65,8 @@ docker run -d \
   nullata/llamaman:latest
 ```
 
+The same image is also published to GitHub's registry as `ghcr.io/nullata/llamaman:latest` (and `:<version>`), for hosts where Docker Hub's pull rate limits are a problem. Substitute it wherever `nullata/llamaman` appears below.
+
 `LLAMAMAN_NODE_NAME` is **required** - the container refuses to start without it. Pick it once and keep it (changing later orphans stored state). See the full env-var list below.
 
 For native NVIDIA VRAM monitoring (via `nvidia-ml-py`), also add:
