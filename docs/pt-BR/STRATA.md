@@ -70,7 +70,9 @@ O Qwen3.6-35B-A3B tem seu próprio caminho de motor no Strata e é um único arq
 ## Limites e comportamento
 
 - **Uma requisição por vez** (exceto [Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes)). Max Concurrent é forçado a 1; requisições seguintes enfileiram no gate do llamaMan (Max Queue Depth, depois 429).
-- **RAM.** O Strata carrega 32-62 GB na RAM (`--ulimit memlock=-1` é sempre definido). Um **System Memory Limit** força o modo Low-RAM para ligado, porque o setup do Strata lê a RAM do host e não consegue ver um limite de container; a UI avisa abaixo de ~64 GB.
+- **RAM.** O Strata carrega 32-62 GB na RAM (`--ulimit memlock=-1` é sempre definido). Um **System Memory Limit** força o modo Low-RAM para ligado (o setup do 0.2.x vê o limite do container, mas imagens mais antigas leem só a RAM do host); a UI avisa abaixo de ~64 GB. A partir do 0.2.17, o setup deixa 17 GB livres em vez de 24 para o orçamento de RAM do Unsloth UD-Q4_K_XL / UD-IQ4_XS, e o llamaMan move uma vez, na próxima inicialização, os orçamentos configurados no 0.2.16 para a nova regra.
+- **Skip Rarely Used Experts** (`STRATA_ROUTE_TAIL_SKIP`) fica desligado por padrão a partir do Strata 0.2.17. Escolher um rank (7 é o "On" do Strata) decodifica mais rápido, mas as respostas diferem levemente do modelo completo. O valor é gravado na run config do modelo a cada inicialização, então mudá-lo não exige novo setup. Não é oferecido para o Qwen3.6-35B-A3B.
+- **Novo pin do Coder (0.2.17).** O Strata agora fixa um novo shard 1 IQ1_M para o modelo Coder, do mesmo tamanho do antigo. Um Coder baixado antes pelo llamaMan continua funcionando, mas o setup o reporta como "not the published file" e serve os pesos antigos. Para passar ao novo build, apague a pasta do modelo em `MODELS_DIR/strata/`, baixe-o de novo e reinicie.
 - **As configurações ficam fixadas no setup do Strata.** Context / image input / KV / Low-RAM / GPU pinning são registrados por modelo no volume de dados. O llamaMan lembra as configurações com que cada modelo ficou healthy por último e passa `REINSTALL=1` só quando elas mudam (os arquivos são reutilizados).
 - **Idle timeout** funciona (o sono para o container; a próxima requisição o acorda), mas um cold start leva minutos e a requisição que desperta espera por ele (`STRATA_LOAD_TIMEOUT`).
 - **Uma instância por modelo Strata por node** (instâncias de um modelo compartilham seu setup no volume).
@@ -115,7 +117,7 @@ core/engines/
   |---|---|
   | image | `STRATA_IMAGE` (senão a imagem Strata construída, depois uma baixada) |
   | command | nenhuma (o entrypoint só lê variáveis de ambiente) |
-  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`? (só famílias com caminho próprio; requisições simultâneas) |
+  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `ROUTE_TAIL_SKIP` (famílias Flash-Next; gravado no `env` da run config como `STRATA_ROUTE_TAIL_SKIP`), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`? (só famílias com caminho próprio; requisições simultâneas) |
   | ulimits | `memlock=-1` |
   | GPU | NVIDIA `device_requests`, ou na AMD `/dev/kfd` + `/dev/dri`, os GIDs render/video do host e `ROCR_VISIBLE_DEVICES` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
   | mounts | volume de dados → `/data`; logs; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>` (`<family>-<SIZE>` para não-qwen; a pasta de shards sensível a caixa do setup.py) (rw), quando o llamaMan tem shards completos, e também um modelo de arquivo único lançado da biblioteca, seja qual for o nome |
@@ -142,7 +144,8 @@ core/engines/
    sua cópia lá (leitura-escrita, para as marcas `.done`), e só depois que seu próprio download desses shards concluiu.
    Os shards são buscados das revisões do Hugging Face que o Strata fixa (`setup.py:65-70`, espelhadas em
    `core/engines/strata.py`). A camada MTP (~5 GB) e o pack ainda são preparados dentro do container.
-4. **Limite de memória / memlock.** O setup lê a RAM de `/proc/meminfo`, que é o total do host, então um container com teto
+4. **Limite de memória / memlock.** O setup do 0.2.x usa o menor entre `/proc/meminfo` e o limite cgroup do container
+   (`setup.py` `ram_gb`). Imagens mais antigas leem só `/proc/meminfo`, que é o total do host, então nelas um container com teto
    precisa pedir `LOW_RAM=on` (comentário do Dockerfile em `:31`, `docs/INSTALL.md:116-118`). Sem ele, o setup escolhe o
    modo in-RAM e o container provavelmente será morto por OOM. O llamaMan força `LOW_RAM=on` sempre que um limite de memória é
    definido, e a UI avisa abaixo de 64 GB. O `memlock=-1` importa porque o motor trava em memória parte de sua arena para DMA de GPU,

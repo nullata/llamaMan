@@ -65,7 +65,7 @@ Wichtige Randfall-Besonderheiten:
 
 Download-Body: `{"repo_id": "...", "filename": "...", "hf_token": "...", "speed_limit_mbps": 0}`. Ein leerer `filename` zieht das gesamte Repository.
 
-Instanzen und Presets akzeptieren ein optionales `engine` (`llamacpp` als Standard oder `strata`; abgeleitet aus einem `/strata/...`-Modellpfad) sowie für Strata zusätzlich `strata_vision` (`no`/`yes`/`cpu`), `strata_kv` (`""`/`int8`/`q4_0`/`k8v4`) und `strata_low_ram` (`auto`/`on`/`off`). Qwen3.6-35B-A3B akzeptiert außerdem `strata_parallel` (`1` bis `8`, Standard `1`), was jede andere Strata-Familie über `1` ablehnt. Strata-Modellpfade sind virtuell: `/strata/<family>-<SIZE>`, z. B. `PUT /api/presets/strata/qwen-IQ2_XS`. Siehe [Strata](STRATA.md).
+Instanzen und Presets akzeptieren ein optionales `engine` (`llamacpp` als Standard oder `strata`; abgeleitet aus einem `/strata/...`-Modellpfad) sowie für Strata zusätzlich `strata_vision` (`no`/`yes`/`cpu`), `strata_kv` (`""`/`int8`/`q4_0`/`k8v4`) `strata_low_ram` (`auto`/`on`/`off`), `strata_layer_split` (leer = auto oder die Schicht, bei der jede weitere GPU beginnt, z. B. `18` oder `16,32`), `strata_watchdog_s` / `strata_watchdog_io_s` (ganze Sekunden; leer = Stratas Standard, `0` = aus) und `strata_route_tail_skip` (`0` = aus, Standard, oder `1`-`9`; nicht für Qwen3.6-35B-A3B). Qwen3.6-35B-A3B akzeptiert außerdem `strata_parallel` (`1` bis `8`, Standard `1`), was jede andere Strata-Familie über `1` ablehnt. Strata-Modellpfade sind virtuell: `/strata/<family>-<SIZE>`, z. B. `PUT /api/presets/strata/qwen-IQ2_XS`. Siehe [Strata](STRATA.md).
 
 <a id="model-errors-on-inference-routes"></a>
 ## Modellfehler auf Inferenz-Routen

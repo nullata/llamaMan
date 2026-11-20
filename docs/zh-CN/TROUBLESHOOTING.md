@@ -20,6 +20,7 @@
 | 未列出 Strata 模型 | 设置 `STRATA_ENABLED=true`；节点必须为 NVIDIA（若检测失败请设置 `GPU_TYPE=cuda`）。`GET /api/engines` 会显示原因 |
 | Strata 实例卡在 **starting** 状态 | 首次启动时需要数分钟属于正常现象（下载 + 打包）。卡片会显示阶段；日志会显示 Strata 的安装设置过程。“setup failed”表示其安装设置中断 —— 查看日志中的 `[X]` 行 |
 | Strata 卡片显示 _"this Strata image can't run ... yet: update it"_ | 镜像的引擎没有该模型系列。请在 Settings → Docker Images 中拉取或构建更新的 Strata 镜像 |
+| Coder 模型的 Strata 日志出现 _"... is not the published file (SHA-256 ..."_ | Strata 0.2.17 为 Coder 重新固定了 IQ1_M 分片 1。旧文件仍可用，但使用的是旧权重。要使用新版本，请删除 `MODELS_DIR/strata/` 下该模型的文件夹，在 llamaMan 中重新下载并重新启动 |
 | Stats 弹窗为空 | 启用 **Settings → App Settings → Request recording**（参见 [Request Recording & Stats](CONFIGURATION.md#request-recording--stats)） |
 | 在没有 GPU 直通的主机上启动因 GPU/CDI 错误而失败 | 若没有连接 GPU 设备且仅使用 CPU，请将 **GPU Layers** 设置为 `0`，或修复 GPU 运行时配置 |
 | 端口冲突 | 表单会自动建议未使用的端口；如有需要可手动调整 |

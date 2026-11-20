@@ -68,7 +68,7 @@ Rarezas de frontera que conviene fijar:
 
 Cuerpo de descarga: `{"repo_id": "...", "filename": "...", "hf_token": "...", "speed_limit_mbps": 0}`. `filename` vacío descarga el repositorio completo.
 
-Las instancias y presets aceptan un `engine` opcional (`llamacpp` por defecto, o `strata`; inferido de una ruta de modelo `/strata/...`) más, para Strata, `strata_vision` (`no`/`yes`/`cpu`), `strata_kv` (`""`/`int8`/`q4_0`/`k8v4`) y `strata_low_ram` (`auto`/`on`/`off`). Qwen3.6-35B-A3B también acepta `strata_parallel` (`1` a `8`, por defecto `1`), que cualquier otra familia de Strata rechaza por encima de `1`. Las rutas de modelos Strata son virtuales: `/strata/<family>-<SIZE>`, p. ej. `PUT /api/presets/strata/qwen-IQ2_XS`. Ver [Strata](STRATA.md).
+Las instancias y presets aceptan un `engine` opcional (`llamacpp` por defecto, o `strata`; inferido de una ruta de modelo `/strata/...`) más, para Strata, `strata_vision` (`no`/`yes`/`cpu`), `strata_kv` (`""`/`int8`/`q4_0`/`k8v4`) `strata_low_ram` (`auto`/`on`/`off`), `strata_layer_split` (vacío = auto, o la capa en la que empieza cada GPU siguiente, p. ej. `18` o `16,32`), `strata_watchdog_s` / `strata_watchdog_io_s` (segundos enteros; vacío = valor por defecto de Strata, `0` = desactivado) y `strata_route_tail_skip` (`0` = desactivado, por defecto, o `1`-`9`; no para Qwen3.6-35B-A3B). Qwen3.6-35B-A3B también acepta `strata_parallel` (`1` a `8`, por defecto `1`), que cualquier otra familia de Strata rechaza por encima de `1`. Las rutas de modelos Strata son virtuales: `/strata/<family>-<SIZE>`, p. ej. `PUT /api/presets/strata/qwen-IQ2_XS`. Ver [Strata](STRATA.md).
 
 <a id="model-errors-on-inference-routes"></a>
 ## Errores de modelos en rutas de inferencia

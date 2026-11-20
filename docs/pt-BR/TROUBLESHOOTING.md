@@ -20,6 +20,7 @@ A tabela completa sintoma → correção. O [README](../../README.md#troubleshoo
 | Modelos Strata não listados | Defina `STRATA_ENABLED=true`; o node precisa ser NVIDIA (`GPU_TYPE=cuda` se a detecção falhar). `GET /api/engines` mostra o motivo |
 | Instância Strata presa em **starting** | Normal por minutos na primeira inicialização (download + pack). O card mostra a etapa; o log mostra o setup do Strata. "setup failed" significa que o setup dele parou - leia a linha `[X]` do log |
 | O card do Strata diz _"this Strata image can't run ... yet: update it"_ | O motor da imagem não tem essa família de modelos. Baixe ou construa uma imagem Strata mais nova em Settings → Docker Images |
+| Log do Strata: _"... is not the published file (SHA-256 ..."_ em um modelo Coder | O Strata 0.2.17 fixou um novo shard 1 IQ1_M para o Coder. O arquivo antigo funciona, mas serve os pesos antigos. Para o novo build, apague a pasta do modelo em `MODELS_DIR/strata/`, baixe-o de novo no llamaMan e reinicie |
 | O modal de estatísticas está vazio | Ative **Settings → App Settings → Request recording** (veja [Gravação de requisições e estatísticas](CONFIGURATION.md#request-recording--stats)) |
 | O lançamento falha com erro de GPU/CDI num host sem passthrough de GPU | Defina **GPU Layers** como `0` para CPU-only sem dispositivo GPU anexado, ou corrija o runtime de GPU |
 | Conflito de porta | O formulário sugere automaticamente uma porta livre; ajuste se necessário |

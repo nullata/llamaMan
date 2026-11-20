@@ -65,7 +65,7 @@
 
 下载请求体：`{"repo_id": "...", "filename": "...", "hf_token": "...", "speed_limit_mbps": 0}`。留空 `filename` 会拉取整个仓库。
 
-实例和预设支持可选的 `engine`（默认 `llamacpp`，或 `strata`；可从 `/strata/...` 模型路径推断），对于 Strata 还支持 `strata_vision`（`no`/`yes`/`cpu`）、`strata_kv`（`""`/`int8`/`q4_0`/`k8v4`）和 `strata_low_ram`（`auto`/`on`/`off`）。Qwen3.6-35B-A3B 还支持 `strata_parallel`（`1` 到 `8`，默认 `1`），其他 Strata 系列会拒绝大于 `1` 的值。Strata 模型路径为虚拟路径：`/strata/<family>-<SIZE>`，例如 `PUT /api/presets/strata/qwen-IQ2_XS`。参见 [Strata](STRATA.md)。
+实例和预设支持可选的 `engine`（默认 `llamacpp`，或 `strata`；可从 `/strata/...` 模型路径推断），对于 Strata 还支持 `strata_vision`（`no`/`yes`/`cpu`）、`strata_kv`（`""`/`int8`/`q4_0`/`k8v4`）、`strata_low_ram`（`auto`/`on`/`off`）、`strata_layer_split`（留空 = auto，或后续每块 GPU 起始的层，例如 `18` 或 `16,32`）、`strata_watchdog_s` / `strata_watchdog_io_s`（整数秒；留空 = Strata 默认值，`0` = 关闭）以及 `strata_route_tail_skip`（`0` = 关闭，默认，或 `1`-`9`；不适用于 Qwen3.6-35B-A3B）。Qwen3.6-35B-A3B 还支持 `strata_parallel`（`1` 到 `8`，默认 `1`），其他 Strata 系列会拒绝大于 `1` 的值。Strata 模型路径为虚拟路径：`/strata/<family>-<SIZE>`，例如 `PUT /api/presets/strata/qwen-IQ2_XS`。参见 [Strata](STRATA.md)。
 
 <a id="model-errors-on-inference-routes"></a>
 ## 推理路由上的模型错误

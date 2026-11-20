@@ -68,7 +68,9 @@ Qwen3.6-35B-A3B 在 Strata 中有独立的引擎路径，是单个 GGUF 文件�
 ## 限制与运行机制
 
 - **一次处理一个请求**（[Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) 除外）。Max Concurrent 强制为 1；超出请求在 llamaMan 的 gate 中排队（达到 Max Queue Depth 后返回 429）。
-- **RAM 需求。** Strata 会向 RAM 加载 32-62 GB 数据（始终设置 `--ulimit memlock=-1`）。配置 **System Memory Limit** 会强制开启 Low-RAM 模式，因为 Strata 的 setup 读取宿主机 RAM，无法感知容器限制；UI 会在内存低于约 64 GB 时发出警告。
+- **RAM 需求。** Strata 会向 RAM 加载 32-62 GB 数据（始终设置 `--ulimit memlock=-1`）。配置 **System Memory Limit** 会强制开启 Low-RAM 模式（0.2.x 的 setup 能感知容器限制，但更早的镜像只读取宿主机 RAM）；UI 会在内存低于约 64 GB 时发出警告。自 0.2.17 起，setup 为 Unsloth UD-Q4_K_XL / UD-IQ4_XS 的 RAM 预算预留 17 GB 空闲内存，而不是 24 GB；llamaMan 会在下次启动时将 0.2.16 下配置的预算一次性迁移到新规则。
+- **Skip Rarely Used Experts**（`STRATA_ROUTE_TAIL_SKIP`）自 Strata 0.2.17 起默认关闭。选择一个等级（7 即 Strata 的“On”）可加快解码，但回答会与完整模型略有不同。该值在每次启动时写入模型的 run config，因此修改它无需重新 setup。Qwen3.6-35B-A3B 不提供此选项。
+- **Coder 重新固定版本（0.2.17）。** Strata 现在为 Coder 模型固定了新的 IQ1_M 分片 1，大小与旧文件相同。llamaMan 之前下载的 Coder 仍可运行，但 setup 会报告其为“not the published file”并使用旧权重。要切换到新版本，请删除 `MODELS_DIR/strata/` 下该模型的文件夹，重新下载并重新启动。
 - **设置已固化至 Strata setup 中。** Context / 图像输入 / KV / Low-RAM / GPU 绑定均按模型记录在数据卷上。llamaMan 会记住每个模型上次健康运行时使用的设置，仅在设置变更时才传入 `REINSTALL=1`（文件会被复用）。
 - **空闲超时正常生效**（休眠会停止容器；下一个请求将其唤醒），但冷启动需要数分钟，唤醒请求需要等待其完成（`STRATA_LOAD_TIMEOUT`）。
 - **每个节点每种 Strata 模型仅限一个实例**（同模型的实例共享卷上的 setup 产物）。
@@ -103,7 +105,7 @@ core/engines/
   |---|---|
   | image | `STRATA_IMAGE`（否则为已构建的镜像，再否则为已拉取的 Strata 镜像） |
   | command | 无（entrypoint 仅读取环境变量） |
-  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`?（挂起看门狗 / 慢速存储宽限期）, `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`?（仅限独立路径系列；同时请求数） |
+  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`?（挂起看门狗 / 慢速存储宽限期）, `ROUTE_TAIL_SKIP`（Flash-Next 系列；以 `STRATA_ROUTE_TAIL_SKIP` 写入 run config 的 `env`）, `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`?（仅限独立路径系列；同时请求数） |
   | ulimits | `memlock=-1` |
   | GPU | NVIDIA `device_requests`，AMD 上为 `/dev/kfd` + `/dev/dri`、宿主机的 render/video GID 和 `ROCR_VISIBLE_DEVICES`（`gpu_devices` / `LLAMA_GPU_DEVICES`） |
   | mounts | 数据卷 → `/data`；日志；当 llamaMan 持有完整分片时，`MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>`（非 qwen 为 `<family>-<SIZE>`；setup.py 区分大小写的分片文件夹）(rw)；从模型库启动的单文件模型也一样，无论其名称如何 |
@@ -115,7 +117,7 @@ core/engines/
 1. **就绪状态。** 在经过 API key 门禁前，`/health` 返回 `{"status": "ok", ..., "service": "strata"}`（`serve/server.py:2172`）。HTTP 端口仅在模型加载完成后才会打开：`serve()` 运行在 `server.py:3008`，位于引擎启动代码 `:2925` 之后。在 Strata 下载或加载期间，连接会被拒绝，因此 llamaMan 现有的健康检查（`status == "ok"`）无需特殊处理。在 lazy 模式下模型未加载时 `/v1/models` 返回空列表（`server.py:2190`），因此不是良好的就绪信号。当设置了 API key 时，`/v1/status` 需要提供该 key。
 2. **设置。** 所有内容均作为环境变量传递并由 `docker-entrypoint.sh` 读取：`HOST`, `PORT`, `API_KEY`, `GPU` / `GPUS` / `LAYER_SPLIT`, `LOW_RAM`, `KV`, `CONTEXT`, `VISION`（`:14-24`）。命令行参数会被忽略，因为 entrypoint 会重新构建 `$@`（`:42`, `:65`）。GPU 绑定使用容器编号：NVIDIA 运行时（AMD 上为 `ROCR_VISIBLE_DEVICES`）会对 llamaMan 挂载的宿主机 GPU 进行重新编号，因此宿主机的 `1,3` 变为 `GPUS=0,1`。llamaMan 不设置 `API_KEY`，这与运行 llama-server（无 key）一致；自身的 proxy 和认证机制前置生效。
 3. **复用磁盘上的 GGUF。** `setup.py` 具有 `--gguf-dir` 参数（`setup.py:2954`），但 entrypoint 从未透传该参数。不过，Setup 确实接受已经位于 `/data/models/<fam tag><SIZE>/<original name>`（例如 `IQ3_S`, `coder-IQ1_M`；区分大小写）的完整分片：它会对照自身的张量目录进行检查并标记为已完成（`setup.py:3389-3405`, "#173"）。因此，llamaMan 会将本地副本挂载到此处（读写模式，以便写入 `.done` 标记），且仅在这些分片完全下载完成后挂载。分片是从 Strata 固定的 Hugging Face revision 获取的（`setup.py:65-70`，镜像在 `core/engines/strata.py` 中）。MTP 层（约 5 GB）和 pack 仍会在容器内部生成。
-4. **内存限制 / memlock。** Setup 从 `/proc/meminfo` 读取 RAM，这是宿主机的总内存，因此受限容器必须要求 `LOW_RAM=on`（Dockerfile 注释在 `:31`，`docs/INSTALL.md:116-118`）。若未设置，setup 会选择内存驻留模式，容器极易因 OOM 被杀。每当设置内存限制时，llamaMan 都会强制开启 `LOW_RAM=on`，且 UI 会在低于 64 GB 时发出警告。`memlock=-1` 至关重要，因为引擎会对其内存池的一部分进行页锁定以用于 GPU DMA，无法锁定的专家将通过较慢的主机内存拷贝传输（`src/prefill/prefill.cpp:110`, `:207-214`）。从源码来看，缺少 memlock 限制更像是变慢而非报错，但**在没有 GPU 的情况下无法对此进行验证**。llamaMan 始终对其进行配置。
+4. **内存限制 / memlock。** 0.2.x 的 setup 取 `/proc/meminfo` 与容器 cgroup 限制中的较小值（`setup.py` `ram_gb`）。更早的镜像只从 `/proc/meminfo` 读取 RAM，这是宿主机的总内存，因此在这些镜像上受限容器必须要求 `LOW_RAM=on`（Dockerfile 注释在 `:31`，`docs/INSTALL.md:116-118`）。若未设置，setup 会选择内存驻留模式，容器极易因 OOM 被杀。每当设置内存限制时，llamaMan 都会强制开启 `LOW_RAM=on`，且 UI 会在低于 64 GB 时发出警告。`memlock=-1` 至关重要，因为引擎会对其内存池的一部分进行页锁定以用于 GPU DMA，无法锁定的专家将通过较慢的主机内存拷贝传输（`src/prefill/prefill.cpp:110`, `:207-214`）。从源码来看，缺少 memlock 限制更像是变慢而非报错，但**在没有 GPU 的情况下无法对此进行验证**。llamaMan 始终对其进行配置。
 
 同样来自源码：在 Flash-Next 路径上，Strata 一次只处理一个请求（`server.py:1323`）。Dockerfile 设置了 `STRATA_EXECV=1`，因此服务端进程为 PID 1，`docker stop` 可以正常发送信号。中途停止下载的容器在下次启动时会从其 `.part` 文件断点续传。
 

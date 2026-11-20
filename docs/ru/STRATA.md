@@ -70,7 +70,9 @@ Upstream публикует по одному ROCm-образу на семей�
 ## Ограничения и поведение
 
 - **Один запрос за раз** (кроме [Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes)). Max Concurrent принудительно 1; дальнейшие запросы встают в гейт llamaMan (Max Queue Depth, затем 429).
-- **RAM.** Strata загружает 32-62 ГБ в RAM (`--ulimit memlock=-1` ставится всегда). **System Memory Limit** принудительно включает Low-RAM режим, потому что setup Strata читает RAM хоста и не видит контейнерный лимит; UI предупреждает ниже ~64 ГБ.
+- **RAM.** Strata загружает 32-62 ГБ в RAM (`--ulimit memlock=-1` ставится всегда). **System Memory Limit** принудительно включает Low-RAM режим (setup 0.2.x видит лимит контейнера, но более старые образы читают только RAM хоста); UI предупреждает ниже ~64 ГБ. Начиная с 0.2.17, setup оставляет свободными 17 ГБ вместо 24 для RAM-бюджета Unsloth UD-Q4_K_XL / UD-IQ4_XS, и llamaMan один раз, при следующем запуске, переводит бюджеты, настроенные под 0.2.16, на новое правило.
+- **Skip Rarely Used Experts** (`STRATA_ROUTE_TAIL_SKIP`) выключен по умолчанию начиная со Strata 0.2.17. Выбранный ранг (7 — это «On» в Strata) ускоряет декодирование, но ответы немного отличаются от полной модели. Значение записывается в run config модели при каждом запуске, поэтому его изменение не требует нового setup. Для Qwen3.6-35B-A3B не предлагается.
+- **Новый пин Coder (0.2.17).** Strata теперь закрепляет для модели Coder новый шард 1 IQ1_M того же размера, что и старый. Скачанный ранее через llamaMan Coder продолжает работать, но setup сообщает «not the published file» и использует старые веса. Чтобы перейти на новую сборку, удалите папку модели в `MODELS_DIR/strata/`, скачайте её заново и перезапустите.
 - **Настройки запекаются в setup Strata.** Context / image input / KV / Low-RAM / закрепление GPU записываются по моделям на томе данных. llamaMan помнит настройки, с которыми каждая модель последний раз стала healthy, и передаёт `REINSTALL=1` только при их изменении (файлы переиспользуются).
 - **Idle timeout** работает (сон останавливает контейнер; следующий запрос будит), но холодный старт занимает минуты, и будящий запрос ждёт (`STRATA_LOAD_TIMEOUT`).
 - **Один инстанс на Strata-модель на узел** (инстансы одной модели делят её setup на томе).
@@ -115,7 +117,7 @@ core/engines/
   |---|---|
   | image | `STRATA_IMAGE` (иначе собранный, затем подтянутый Strata-образ) |
   | command | нет (entrypoint читает только переменные окружения) |
-  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`? (только семейства с собственным путём; запросы одновременно) |
+  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `ROUTE_TAIL_SKIP` (семейства Flash-Next; записывается в `env` run config как `STRATA_ROUTE_TAIL_SKIP`), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`? (только семейства с собственным путём; запросы одновременно) |
   | ulimits | `memlock=-1` |
   | GPU | NVIDIA `device_requests`, а на AMD `/dev/kfd` + `/dev/dri`, render/video GID хоста и `ROCR_VISIBLE_DEVICES` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
   | mounts | том данных → `/data`; логи; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>` (`<family>-<SIZE>` для не-qwen; чувствительная к регистру папка шардов setup.py) (rw), когда llamaMan держит полные шарды, а также однофайловая модель, запущенная из библиотеки, как бы она ни называлась |
@@ -142,7 +144,8 @@ core/engines/
    свою копию туда (чтение-запись, ради меток `.done`), и только когда собственное скачивание тех шардов завершено.
    Шарды тянутся из ревизий Hugging Face, закрепленных Strata (`setup.py:65-70`, продублировано в
    `core/engines/strata.py`). MTP-слой (~5 ГБ) и pack по-прежнему готовятся внутри контейнера.
-4. **Лимит памяти / memlock.** Setup читает RAM из `/proc/meminfo`, а это полный объём хоста, поэтому контейнеру с лимитом
+4. **Лимит памяти / memlock.** Setup 0.2.x берёт меньшее из `/proc/meminfo` и cgroup-лимита контейнера
+   (`setup.py` `ram_gb`). Более старые образы читают только `/proc/meminfo`, а это полный объём хоста, поэтому там контейнеру с лимитом
    нужно просить `LOW_RAM=on` (комментарий в Dockerfile на `:31`, `docs/INSTALL.md:116-118`). Без этого setup выбирает
    in-RAM режим, и контейнер, скорее всего, убьёт OOM. llamaMan принудительно ставит `LOW_RAM=on`, когда задан лимит памяти,
    и UI предупреждает ниже 64 ГБ. `memlock=-1` важен, потому что движок page-lock'ит часть своей арены для GPU DMA,

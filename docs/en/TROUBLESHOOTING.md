@@ -18,6 +18,7 @@ The full symptom → fix table. The [README](../../README.md#troubleshooting) ke
 | Strata models not listed | Set `STRATA_ENABLED=true`; the node must be NVIDIA (`GPU_TYPE=cuda` if detection fails). `GET /api/engines` shows the reason |
 | Strata instance stuck on **starting** | Normal for minutes on a first start (download + pack). The card shows the stage; the log shows Strata's setup. "setup failed" means its setup stopped - read the log's `[X]` line |
 | Strata card says _"this Strata image can't run ... yet: update it"_ | The image's engine doesn't have that model family. Pull or build a newer Strata image in Settings → Docker Images |
+| Strata log: _"... is not the published file (SHA-256 ..."_ on a Coder model | Strata 0.2.17 re-pinned the Coder's IQ1_M shard 1. The old file still works but serves the old weights. To get the new build, delete the model's folder under `MODELS_DIR/strata/`, download it again in llamaMan and relaunch |
 | Stats modal is empty | Enable **Settings → App Settings → Request recording** (see [Request Recording & Stats](CONFIGURATION.md#request-recording--stats)) |
 | Launch fails with GPU/CDI error on a host without GPU passthrough | Set **GPU Layers** to `0` for CPU-only with no GPU device attached, or fix the GPU runtime |
 | Port conflict | The form auto-suggests an unused port; adjust if needed |

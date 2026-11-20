@@ -68,7 +68,7 @@
 
 Тело загрузки: `{"repo_id": "...", "filename": "...", "hf_token": "...", "speed_limit_mbps": 0}`. Пустой `filename` тянет весь репозиторий.
 
-Инстансы и пресеты принимают опциональный `engine` (`llamacpp` по умолчанию, или `strata`; выводится из пути модели `/strata/...`) плюс, для Strata, `strata_vision` (`no`/`yes`/`cpu`), `strata_kv` (`""`/`int8`/`q4_0`/`k8v4`) и `strata_low_ram` (`auto`/`on`/`off`). Qwen3.6-35B-A3B также принимает `strata_parallel` (от `1` до `8`, по умолчанию `1`); любое другое семейство Strata отклоняет значения выше `1`. Пути моделей Strata виртуальные: `/strata/<family>-<SIZE>`, например `PUT /api/presets/strata/qwen-IQ2_XS`. См. [Strata](STRATA.md).
+Инстансы и пресеты принимают опциональный `engine` (`llamacpp` по умолчанию, или `strata`; выводится из пути модели `/strata/...`) плюс, для Strata, `strata_vision` (`no`/`yes`/`cpu`), `strata_kv` (`""`/`int8`/`q4_0`/`k8v4`) `strata_low_ram` (`auto`/`on`/`off`), `strata_layer_split` (пусто = auto или слой, с которого начинается каждая следующая GPU, например `18` или `16,32`), `strata_watchdog_s` / `strata_watchdog_io_s` (целые секунды; пусто = значение Strata по умолчанию, `0` = выкл.) и `strata_route_tail_skip` (`0` = выкл., по умолчанию, или `1`-`9`; не для Qwen3.6-35B-A3B). Qwen3.6-35B-A3B также принимает `strata_parallel` (от `1` до `8`, по умолчанию `1`); любое другое семейство Strata отклоняет значения выше `1`. Пути моделей Strata виртуальные: `/strata/<family>-<SIZE>`, например `PUT /api/presets/strata/qwen-IQ2_XS`. См. [Strata](STRATA.md).
 
 <a id="model-errors-on-inference-routes"></a>
 ## Ошибки моделей на маршрутах инференса

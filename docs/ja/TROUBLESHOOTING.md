@@ -20,6 +20,7 @@
 | Strata モデルが表示されない | `STRATA_ENABLED=true` を設定してください。ノードは NVIDIA である必要があります（検出に失敗する場合は `GPU_TYPE=cuda`）。`GET /api/engines` で理由を確認できます |
 | Strata インスタンスが **starting** のまま停止する | 初回起動時は数分かかるのが正常です（ダウンロード + パック準備）。カードに進捗ステージが表示され、ログに Strata のセットアップが出力されます。「setup failed」はセットアップが停止したことを意味します — ログの `[X]` 行を確認してください |
 | Strata カードに _"this Strata image can't run ... yet: update it"_ と表示される | イメージのエンジンがそのモデルファミリーに対応していません。Settings → Docker Images で新しい Strata イメージをプルまたはビルドしてください |
+| Coder モデルで Strata のログに _"... is not the published file (SHA-256 ..."_ と表示される | Strata 0.2.17 で Coder の IQ1_M シャード 1 が再ピン留めされました。古いファイルは動作しますが、古い重みが使われます。新しいビルドにするには `MODELS_DIR/strata/` 配下のモデルのフォルダーを削除し、llamaMan で再ダウンロードして再起動してください |
 | 統計モーダルが空である | **Settings → App Settings → Request recording** を有効にしてください（[Request Recording & Stats](CONFIGURATION.md#request-recording--stats) を参照） |
 | GPU パススルーのないホストで起動が GPU/CDI エラーで失敗する | GPU デバイスをアタッチせず CPU のみを使用する場合は **GPU Layers** を `0` に設定するか、GPU ランタイムを修復してください |
 | ポートの競合 | フォームは未使用のポートを自動提案します。必要に応じて調整してください |

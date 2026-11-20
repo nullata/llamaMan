@@ -68,7 +68,9 @@ Qwen3.6-35B-A3B は Strata 内に独自のエンジンパスを持つ単一の G
 ## 制限と動作
 
 - **一度に1リクエストのみ**（[Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) を除く）。Max Concurrent は強制的に 1 になります。以降のリクエストは llamaMan のゲートでキューイングされます（Max Queue Depth に達すると 429）。
-- **RAM。** Strata は 32〜62 GB を RAM にロードします（`--ulimit memlock=-1` は常に設定されます）。**System Memory Limit** を設定すると Low-RAM モードが強制的にオンになります。これは、Strata のセットアップがホストの RAM を読み取り、コンテナの制限を認識できないためです。UI は約 64 GB 未満で警告を表示します。
+- **RAM。** Strata は 32〜62 GB を RAM にロードします（`--ulimit memlock=-1` は常に設定されます）。**System Memory Limit** を設定すると Low-RAM モードが強制的にオンになります。0.2.x のセットアップはコンテナの制限を認識しますが、それより古いイメージはホストの RAM しか読み取らないためです。UI は約 64 GB 未満で警告を表示します。0.2.17 以降、セットアップは Unsloth UD-Q4_K_XL / UD-IQ4_XS の RAM バジェットで空けておく RAM を 24 GB から 17 GB に減らしました。llamaMan は 0.2.16 でセットアップされたバジェットを、次回起動時に一度だけ新しいルールに移行します。
+- **Skip Rarely Used Experts**（`STRATA_ROUTE_TAIL_SKIP`）は Strata 0.2.17 からデフォルトでオフです。ランクを選ぶ（7 が Strata の「On」）とデコードが速くなりますが、回答はフルモデルとわずかに異なります。起動のたびにモデルの run config に書き込まれるため、変更してもセットアップのやり直しは不要です。Qwen3.6-35B-A3B では提供されません。
+- **Coder の再ピン留め（0.2.17）。** Strata は Coder モデルの IQ1_M シャード 1 を新しいファイル（旧ファイルと同じサイズ）にピン留めしました。以前 llamaMan でダウンロードした Coder は引き続き動作しますが、セットアップは「not the published file」と報告し、古い重みを使います。新しいビルドに移行するには、`MODELS_DIR/strata/` 配下のモデルのフォルダーを削除し、再ダウンロードして再起動してください。
 - **設定は Strata のセットアップに焼き込まれます。** Context / 画像入力 / KV / Low-RAM / GPU ピニングは、データボリューム上のモデルごとに記録されます。llamaMan は各モデルが最後に正常起動したときの設定を記憶し、それらが変更された場合にのみ `REINSTALL=1` を渡します（ファイルは再利用されます）。
 - **アイドルタイムアウト** は機能します（スリープによりコンテナが停止し、次のリクエストで復帰します）が、コールドスタートには数分かかり、復帰リクエストはその完了を待ちます（`STRATA_LOAD_TIMEOUT`）。
 - **ノードあたり Strata モデルごとに1インスタンス**（同一モデルのインスタンスはボリューム上のセットアップを共有します）。
@@ -103,7 +105,7 @@ core/engines/
   |---|---|
   | image | `STRATA_IMAGE`（それ以外の場合はビルド済み、次いでプルされた Strata イメージ） |
   | command | なし（entrypoint は環境変数のみを読み取ります） |
-  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`?（ハングウォッチドッグ / 低速ストレージ許容時間）, `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`?（独自パスのファミリーのみ。同時リクエスト数） |
+  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`?（ハングウォッチドッグ / 低速ストレージ許容時間）, `ROUTE_TAIL_SKIP`（Flash-Next ファミリー。run config の `env` に `STRATA_ROUTE_TAIL_SKIP` として書き込まれます）, `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`?（独自パスのファミリーのみ。同時リクエスト数） |
   | ulimits | `memlock=-1` |
   | GPU | NVIDIA `device_requests`、AMD では `/dev/kfd` + `/dev/dri`、ホストの render/video GID、`ROCR_VISIBLE_DEVICES`（`gpu_devices` / `LLAMA_GPU_DEVICES`） |
   | mounts | データボリューム → `/data`; ログ; llamaMan が完全なシャードを保持している場合、`MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>`（非 qwen の場合は `<family>-<SIZE>`; setup.py の大文字小文字を区別するシャードフォルダ）(rw)。ライブラリから起動した単一ファイルモデルも、名前に関係なく同様です |
@@ -115,7 +117,7 @@ core/engines/
 1. **準備完了判定。** API キーゲートの前に、`/health` は `{"status": "ok", ..., "service": "strata"}` を返します（`serve/server.py:2172`）。HTTP ポートはモデルがロードされた後にのみ開きます: `server.py:3008` で `serve()` が実行され、その前に `:2925` でエンジンが起動します。Strata がダウンロード中またはロード中の間は接続が拒否されるため、llamaMan の既存のヘルスチェック（`status == "ok"`）に特別なケースは不要です。lazy モードでモデルがアンロードされている間、`/v1/models` は空のリストを返すため（`server.py:2190`）、準備完了のシグナルとしては適していません。API キーが設定されている場合、`/v1/status` にはそのキーが必要です。
 2. **設定。** すべて `docker-entrypoint.sh` によって読み取られる環境変数として渡されます: `HOST`, `PORT`, `API_KEY`, `GPU` / `GPUS` / `LAYER_SPLIT`, `LOW_RAM`, `KV`, `CONTEXT`, `VISION`（`:14-24`）。コマンド引数は無視されます。entrypoint が `$@` を再構築するためです（`:42`, `:65`）。GPU ピニングはコンテナの番号付けを使用します: NVIDIA ランタイム（AMD では `ROCR_VISIBLE_DEVICES`）は llamaMan がアタッチするホスト GPU に番号を振り直すため、ホストの `1,3` は `GPUS=0,1` になります。llamaMan は `API_KEY` を設定しません。これは llama-server の実行方法（キーなし）と一致しており、前面に自身のプロキシと認証が配置されます。
 3. **ディスク上の GGUF の再利用。** `setup.py` には `--gguf-dir` がありますが（`setup.py:2954`）、entrypoint はこれを転送しません。ただし、セットアップは `/data/models/<fam tag><SIZE>/<original name>`（例: `IQ3_S`, `coder-IQ1_M`; 大文字小文字を区別）にすでに存在する完全なシャードを受け入れます: 自身のテンソルディレクトリと照合して完了マークを付けます（`setup.py:3389-3405`, "#173"）。したがって、llamaMan は自身のシャードのダウンロードが完了した後にのみ、ローカルコピーをそこにバインドマウントします（`.done` マークのために読み書き可能）。シャードは Strata が固定している Hugging Face リビジョンから取得されます（`setup.py:65-70`、`core/engines/strata.py` にミラーリング）。MTP レイヤー（約 5 GB）とパックは引き続きコンテナ内で準備されます。
-4. **メモリ制限 / memlock。** セットアップはホストの合計である `/proc/meminfo` から RAM を読み取るため、制限されたコンテナは `LOW_RAM=on` を要求する必要があります（Dockerfile のコメント `:31`、`docs/INSTALL.md:116-118`）。これがないとセットアップは RAM 内モードを選択し、コンテナが OOM キルされる可能性が高くなります。llamaMan はメモリ制限が設定されている場合は常に `LOW_RAM=on` を強制し、UI は 64 GB 未満で警告を表示します。`memlock=-1` は重要です。エンジンが GPU DMA 用にアリーナの一部をページロックし、固定できないエキスパートはより低速なホストコピーを経由するためです（`src/prefill/prefill.cpp:110`, `:207-214`）。ソースコード上、memlock 制限がないと失敗というよりは速度低下のように見えますが、**GPU なしでは検証できませんでした**。llamaMan は常にこれを設定します。
+4. **メモリ制限 / memlock。** 0.2.x のセットアップは `/proc/meminfo` とコンテナの cgroup 制限の小さいほうを使います（`setup.py` `ram_gb`）。それより古いイメージはホストの合計である `/proc/meminfo` からしか RAM を読み取らないため、その場合、制限されたコンテナは `LOW_RAM=on` を要求する必要があります（Dockerfile のコメント `:31`、`docs/INSTALL.md:116-118`）。これがないとセットアップは RAM 内モードを選択し、コンテナが OOM キルされる可能性が高くなります。llamaMan はメモリ制限が設定されている場合は常に `LOW_RAM=on` を強制し、UI は 64 GB 未満で警告を表示します。`memlock=-1` は重要です。エンジンが GPU DMA 用にアリーナの一部をページロックし、固定できないエキスパートはより低速なホストコピーを経由するためです（`src/prefill/prefill.cpp:110`, `:207-214`）。ソースコード上、memlock 制限がないと失敗というよりは速度低下のように見えますが、**GPU なしでは検証できませんでした**。llamaMan は常にこれを設定します。
 
 また、ソースコードより: Flash-Next パスでは、Strata は一度に1つのリクエストを処理します（`server.py:1323`）。Dockerfile は `STRATA_EXECV=1` を設定しているため、サーバーは PID 1 となり `docker stop` が届きます。ダウンロードの途中で停止したコンテナは、次回の起動時に `.part` ファイルから再開します。
 
