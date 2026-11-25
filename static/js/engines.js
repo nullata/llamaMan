@@ -25,7 +25,8 @@ function engineForModel(m) {
 }
 
 // The Inference Engine dropdown: Strata only for a file Strata can run
-// (engine_models.strata, a downloaded recommended model) on a node that can
+// (engine_models.strata: one of its model files, a renamed copy, or a
+// Qwen3.6-35B-A3B fine-tune) on a node that can
 // run Strata and has its image.
 async function updateEngineSelect() {
   updateStrataModelsButton();
@@ -46,7 +47,7 @@ async function updateEngineSelect() {
   // get back to this state.)
   if (!info) reason = 'Strata is unknown on the target node';
   else if (!info.available) reason = info.reason || 'Strata is unavailable on the target node';
-  else if (m && !(m.engine_models && m.engine_models.strata)) reason = 'Strata runs only its recommended models - click the selected model to deselect it, then pick Strata and open its Models list';
+  else if (m && !(m.engine_models && m.engine_models.strata)) reason = 'Strata can\'t run this model (it runs its own model files, renamed copies of them and Qwen3.6-35B-A3B fine-tunes) - click the selected model to deselect it, then pick Strata and open its Models list';
   // Keep the current engine selectable even if it became unavailable, so the
   // form never shows a value it can't hold; the server re-checks on launch.
   opt.disabled = !!reason && launchEngine !== 'strata';
