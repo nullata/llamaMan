@@ -41,6 +41,8 @@ O upstream publica uma imagem ROCm por família de GPU. Baixe a da sua placa em 
 
 O formulário de lançamento esconde os campos exclusivos de llama.cpp (GPU layers, MoE, threads, parallel, KV types, flash attention, spec decoding, mmproj, DRY, extra args) e mostra **Image Input** (no / GPU / CPU), **KV Cache** (padrão do Strata int8, `int8`, `q4_0`, `k8v4`) e **Low-RAM Mode** (auto / on / off). A API rejeita campos exclusivos de llama.cpp definidos para um modelo Strata.
 
+O dropdown **Inference Engine** oferece o Strata para um arquivo que o Strata consegue rodar (um dos arquivos de modelo dele ou um fine-tune do Qwen3.6-35B-A3B, marcado *Strata* na biblioteca) num node que consegue rodá-lo e tem a imagem dele. Sem modelo selecionado ele é oferecido livremente, e o botão **Models** ao lado abre o catálogo pronto para baixar. O Strata fica acinzentado enquanto um modelo que ele não consegue rodar está selecionado - clique de novo nesse modelo para desmarcá-lo (o formulário de lançamento volta ao estado sem modelo) e a opção é liberada.
+
 **Primeira inicialização.** Nas famílias Flash-Next, o Strata baixa ~58-111 GB, prepara seu "pack" e busca sua camada MTP antes de o servidor abrir sua porta ([Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) é menor e pula a camada MTP); inicializações seguintes vão direto ao carregamento (1-3 minutos). O card da instância mostra *setting up → downloading (com %) → preparing pack → loading* parseado do log do container, e o botão Logs transmite o log. Duas formas de baixar:
 
 - **Deixe o Strata baixar** no seu volume `/data` (padrão).

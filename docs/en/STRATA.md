@@ -38,6 +38,8 @@ Upstream publishes one ROCm image per GPU family. Pull the one for your card in 
 
 The launch form hides the llama.cpp-only fields (GPU layers, MoE, threads, parallel, KV types, flash attention, spec decoding, mmproj, DRY, extra args) and shows **Image Input** (no / GPU / CPU), **KV Cache** (Strata default int8, `int8`, `q4_0`, `k8v4`) and **Low-RAM Mode** (auto / on / off). The API rejects llama.cpp-only fields set for a Strata model.
 
+The **Inference Engine** dropdown offers Strata for a file Strata can run (one of its model files or a Qwen3.6-35B-A3B fine-tune, badged *Strata* in the library) on a node that can run it and has its image. With no model selected it is offered freely, and the **Models** button beside it opens the catalogue ready to download. Strata is greyed out while a model it cannot run is selected - click that model again to deselect it (the launch form returns to its no-model state) and the option frees up.
+
 **First start.** On the Flash-Next families, Strata downloads ~58-111 GB, prepares its "pack" and fetches its MTP layer before the server opens its port ([Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) is smaller and skips the MTP layer); later starts go straight to loading (1-3 minutes). The instance card shows *setting up → downloading (with %) → preparing pack → loading* parsed from the container log, and the Logs button streams the log. Two ways to download:
 
 - **Let Strata download** into its `/data` volume (default).

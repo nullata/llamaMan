@@ -40,6 +40,8 @@ docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (f
 
 启动表单会隐藏仅适用于 llama.cpp 的字段（GPU 层数、MoE、线程、并发 slot、KV 类型、flash attention、投机解码、mmproj、DRY、额外参数），并显示 **Image Input**（no / GPU / CPU）、**KV Cache**（Strata 默认 int8、`int8`、`q4_0`、`k8v4`）以及 **Low-RAM Mode**（auto / on / off）。API 会拒绝为 Strata 模型设置仅适用于 llama.cpp 的字段。
 
+**Inference Engine** 下拉菜单仅在以下情况下提供 Strata：所选文件可由 Strata 运行（其自身的模型文件或 Qwen3.6-35B-A3B 微调模型，在模型库中带有 *Strata* 标记），且节点能运行 Strata 并已有其镜像。未选择模型时可自由选择 Strata，旁边的 **Models** 按钮会打开模型目录，可直接下载。当选中了 Strata 无法运行的模型时，Strata 选项呈灰色 —— 再次点击该模型即可取消选择（启动表单回到未选模型的状态），该选项随即可用。
+
 **首次启动。** 对于 Flash-Next 系列，Strata 会下载约 58-111 GB 数据，准备其“pack”并在服务端口打开前拉取其 MTP 层（[Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) 更小，且不需要 MTP 层）；后续启动则直接进入加载流程（1-3 分钟）。实例卡片会显示从容器日志解析出的状态：*setting up → downloading (with %) → preparing pack → loading*，点击 Logs 按钮可流式查看日志。下载有两种方式：
 
 - **让 Strata 自动下载** 到其 `/data` 卷中（默认）。

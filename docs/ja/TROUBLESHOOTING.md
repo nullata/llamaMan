@@ -17,7 +17,8 @@
 | 誤った GPU ベンダーが検出される | `GPU_TYPE=cuda`/`rocm`/`intel` を設定して上書きしてください |
 | ベアメタル実行時にインスタンスが **starting** のまま停止する | コンテナ自体は正常ですが、llamaman が接続できません。ランタイム環境に対する自動検出が誤っている場合は、明示的に `LLAMAMAN_IN_DOCKER=false`/`true` を設定してください |
 | Strata: _"Docker image 'strata:latest' not found"_ | Settings → Docker Images で Strata イメージをプルまたはビルドしてください（または Strata リポジトリのクローン内で `docker build -t strata .` を実行）。[Strata](STRATA.md) を参照 |
-| Strata モデルが表示されない | `STRATA_ENABLED=true` を設定してください。ノードは NVIDIA である必要があります（検出に失敗する場合は `GPU_TYPE=cuda`）。`GET /api/engines` で理由を確認できます |
+| Strata モデルが表示されない | `STRATA_ENABLED=true` を設定してください。ノードは NVIDIA、または ROCm モードの AMD である必要があります（検出に失敗する場合は `GPU_TYPE=cuda` / `GPU_TYPE=rocm`。`GPU_TYPE=vulkan` は拒否されます）。`GET /api/engines` で理由を確認できます |
+| **Strata** エンジンの選択肢がグレーアウトしている | Strata が実行できないモデルがライブラリで選択されています。Strata が実行するのは、自身のモデルファイル、その名前を変えたコピー、Qwen3.6-35B-A3B のファインチューンのみです（[Strata](STRATA.md#qwen36-35b-a3b-とファインチューン) を参照）。選択中のモデルをもう一度クリックして選択を解除し、Strata を選んでその **Models** リストを開き、モデルをダウンロードしてください |
 | Strata インスタンスが **starting** のまま停止する | 初回起動時は数分かかるのが正常です（ダウンロード + パック準備）。カードに進捗ステージが表示され、ログに Strata のセットアップが出力されます。「setup failed」はセットアップが停止したことを意味します — ログの `[X]` 行を確認してください |
 | Strata カードに _"this Strata image can't run ... yet: update it"_ と表示される | イメージのエンジンがそのモデルファミリーに対応していません。Settings → Docker Images で新しい Strata イメージをプルまたはビルドしてください |
 | Coder モデルで Strata のログに _"... is not the published file (SHA-256 ..."_ と表示される | Strata 0.2.17 で Coder の IQ1_M シャード 1 が再ピン留めされました。古いファイルは動作しますが、古い重みが使われます。新しいビルドにするには `MODELS_DIR/strata/` 配下のモデルのフォルダーを削除し、llamaMan で再ダウンロードして再起動してください |

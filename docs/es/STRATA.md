@@ -41,6 +41,8 @@ Upstream publica una imagen ROCm por familia de GPU. Haz pull de la de tu tarjet
 
 El formulario de lanzamiento oculta los campos solo-llama.cpp (GPU layers, MoE, threads, parallel, KV types, flash attention, spec decoding, mmproj, DRY, extra args) y muestra **Image Input** (no / GPU / CPU), **KV Cache** (int8 por defecto de Strata, `int8`, `q4_0`, `k8v4`) y **Low-RAM Mode** (auto / on / off). La API rechaza los campos solo-llama.cpp definidos para un modelo Strata.
 
+El desplegable **Inference Engine** ofrece Strata para un archivo que Strata puede ejecutar (uno de sus archivos de modelo o un fine-tune de Qwen3.6-35B-A3B, marcado *Strata* en la biblioteca) en un node que puede ejecutarlo y tiene su imagen. Sin modelo seleccionado se ofrece libremente, y el botón **Models** a su lado abre el catálogo listo para descargar. Strata aparece en gris mientras esté seleccionado un modelo que no puede ejecutar - haz clic de nuevo en ese modelo para deseleccionarlo (el formulario de lanzamiento vuelve a su estado sin modelo) y la opción queda libre.
+
 **Primer arranque.** En las familias Flash-Next, Strata descarga ~58-111 GB, prepara su "pack" y obtiene su capa MTP antes de que el servidor abra su puerto ([Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) es más pequeño y omite la capa MTP); los arranques posteriores van directo a la carga (1-3 minutos). La tarjeta de instancia muestra *setting up → downloading (con %) → preparing pack → loading* parseado del log del container, y el botón Logs transmite el log. Dos formas de descargar:
 
 - **Deja que Strata descargue** en su volumen `/data` (por defecto).

@@ -41,6 +41,8 @@ Upstream veröffentlicht ein ROCm-Image pro GPU-Familie. Das passende für die K
 
 Das Launch-Formular verbirgt die nur für llama.cpp geltenden Felder (GPU-Layer, MoE, Threads, parallel, KV-Typen, Flash Attention, Spec-Decoding, mmproj, DRY, Extra Args) und zeigt **Image Input** (no / GPU / CPU), **KV Cache** (Strata-Default int8, `int8`, `q4_0`, `k8v4`) und **Low-RAM Mode** (auto / on / off). Die API lehnt nur für llama.cpp geltende Felder ab, die für ein Strata-Modell gesetzt sind.
 
+Das Dropdown **Inference Engine** bietet Strata für eine Datei an, die Strata ausführen kann (eine seiner Modelldateien oder ein Qwen3.6-35B-A3B-Fine-Tune, in der Bibliothek mit *Strata* markiert), auf einem Node, der Strata ausführen kann und dessen Image hat. Ohne ausgewähltes Modell ist es frei wählbar, und der **Models**-Button daneben öffnet den Katalog direkt zum Herunterladen. Strata ist ausgegraut, solange ein Modell ausgewählt ist, das es nicht ausführen kann - dieses Modell erneut anklicken, um die Auswahl aufzuheben (das Launch-Formular kehrt in seinen Zustand ohne Modell zurück), und die Option wird frei.
+
 **Erststart.** Bei den Flash-Next-Familien lädt Strata ~58-111 GB herunter, bereitet seinen „Pack“ vor und holt seinen MTP-Layer, bevor der Server seinen Port öffnet ([Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) ist kleiner und überspringt den MTP-Layer); spätere Starts gehen direkt zum Laden über (1-3 Minuten). Die Instanzkarte zeigt *setting up → downloading (mit %) → preparing pack → loading*, geparst aus dem Container-Log, und der Logs-Button streamt das Log. Zwei Wege zum Herunterladen:
 
 - **Strata herunterladen lassen** in sein `/data`-Volume (Standard).

@@ -40,6 +40,8 @@ docker build -t strata --build-arg CUDA_ARCHITECTURES=89 .      # RTX 40 only (f
 
 起動フォームでは、llama.cpp 専用フィールド（GPU レイヤー、MoE、スレッド、パラレル、KV タイプ、Flash Attention、投機的デコーディング、mmproj、DRY、追加引数）が非表示になり、**Image Input**（no / GPU / CPU）、**KV Cache**（Strata デフォルト int8、`int8`、`q4_0`、`k8v4`）、**Low-RAM Mode**（auto / on / off）が表示されます。API は Strata モデルに対して設定された llama.cpp 専用フィールドを拒否します。
 
+**Inference Engine** ドロップダウンは、Strata が実行できるファイル（Strata 自身のモデルファイルまたは Qwen3.6-35B-A3B のファインチューンで、ライブラリで *Strata* バッジが付いたもの）について、Strata を実行でき、そのイメージを持つノード上でのみ Strata を提示します。モデルが未選択の場合は自由に選択でき、その横の **Models** ボタンでカタログが開き、すぐにダウンロードできます。Strata が実行できないモデルが選択されている間は Strata がグレーアウトします。そのモデルをもう一度クリックして選択を解除すると（起動フォームはモデル未選択の状態に戻ります）、選択できるようになります。
+
 **初回起動。** Flash-Next ファミリーでは、Strata は約 58〜111 GB をダウンロードし、「パック」を準備して、サーバーがポートを開く前に MTP レイヤーを取得します（[Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) はより小さく、MTP レイヤーを取得しません）。以降の起動は直接ロードに進みます（1〜3分）。インスタンスカードには、コンテナログから解析された *setting up → downloading (with %) → preparing pack → loading* が表示され、Logs ボタンでログをストリーミングできます。ダウンロードには2つの方法があります:
 
 - **Strata にダウンロードさせる** `/data` ボリュームに直接ダウンロードします（デフォルト）。
