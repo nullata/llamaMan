@@ -1640,13 +1640,16 @@ select option {
 }
 
 /* ---- Toast ---- */
-/* Sits below the header (~65px tall = 18+28+18+1) so it never covers the
-   nav links on the right. Reported on /logging where the "Dashboard" link
-   is the only way back and a toast blocked it for the whole 4s lifetime;
-   the same overlap exists on every page that includes #toast-container. */
+/* Sits below the header so it never covers the nav links on the right.
+   Reported on /logging where the "Dashboard" link is the only way back and
+   a toast blocked it for the whole 4s lifetime; the same overlap exists on
+   every page that includes #toast-container. --toast-top is set by
+   updateToastTop() in utils.js from the header's measured bottom edge, so
+   it tracks the real nav height (which can grow when it wraps on narrow
+   screens); the 80px fallback covers pages without a header. */
 #toast-container {
   position: fixed;
-  top: 80px;
+  top: var(--toast-top, 80px);
   right: 24px;
   display: flex;
   flex-direction: column;

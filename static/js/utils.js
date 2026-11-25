@@ -211,7 +211,28 @@ function encodePathForUrl(p) {
   return p.split('/').map(encodeURIComponent).join('/');
 }
 
+// Keep the toast container anchored below the nav: --toast-top is the
+// header's measured bottom edge + a small gap, so toasts never cover the
+// nav links even if the header grows (it wraps on narrow screens). Pages
+// without a <header> keep the CSS fallback.
+function updateToastTop() {
+  const header = document.querySelector('header');
+  if (!header) return;
+  const top = Math.round(header.getBoundingClientRect().bottom) + 12;
+  document.documentElement.style.setProperty('--toast-top', `${top}px`);
+}
+if (document.querySelector('header')) {
+  updateToastTop();
+  window.addEventListener('resize', updateToastTop);
+  // The header's own content (nav meta, wrapped links) can change its height
+  // without a window resize.
+  if (typeof ResizeObserver === 'function') {
+    new ResizeObserver(updateToastTop).observe(document.querySelector('header'));
+  }
+}
+
 function toast(msg, type = 'info') {
+  updateToastTop();  // the header may have changed since the last toast
   const el = document.createElement('div');
   el.className = `toast toast-${type}`;
   el.textContent = msg;
