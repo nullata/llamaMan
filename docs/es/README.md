@@ -8,9 +8,9 @@
 
 > **Nota:** esta es una traducción y puede ir por detrás de la [versión en inglés](../../README.md), que es la de referencia.
 
-**Qué es.** Una UI de navegador + API front-end para ejecutar múltiples instancias de servidor [llama.cpp](https://github.com/ggml-org/llama.cpp), en una máquina o un pequeño cluster de ellas. Incluye un proxy compatible con Ollama para integrarse directamente con [Open WebUI](https://github.com/open-webui/open-webui).
+llamaMan es un motor de orquestación para servidores de inferencia locales. Lanza, pone a dormir, despierta y desaloja containers de [llama.cpp](https://github.com/ggml-org/llama.cpp) y [Strata](STRATA.md) en una o varias máquinas, y los pone todos detrás de un único endpoint compatible con Ollama y OpenAI — manejado desde una UI de navegador y una API REST.
 
-**Qué lo diferencia.** llamaMan mismo **no tiene código de llama.cpp ni dependencia de GPU** - spawnea containers `ghcr.io/ggml-org/llama.cpp:server-*` como hermanos a través del socket de Docker. Actualiza llama.cpp sin tocar llamaMan: `docker pull` de una imagen `server-*` más reciente. La misma maquinaria de spawn-and-proxy es agnóstica del motor: instancias [Strata](STRATA.md) corren junto a las de llama.cpp, lanzadas, monitorizadas, proxyadas y dormidas exactamente igual.
+No tiene código de inferencia ni dependencia de GPU propios: los motores corren como containers hermanos a través del socket de Docker, así que actualizar llama.cpp significa hacer pull de una imagen `server` más reciente. Las peticiones a un modelo que no está corriendo lo arrancan o lo despiertan bajo demanda, y cuando alcanzas tu límite de modelos cargados a la vez, se desaloja el que lleva más tiempo inactivo para hacer sitio. Con el clustering activado, los nodes comparten estado mediante una base de datos común y heartbeats, y una petición para un grupo de cola va al miembro despierto menos cargado de cualquier node — si su cola local se satura, pasa a un peer con capacidad libre.
 
 > La semántica de flags de llama-server es la fuente de verdad del lado de llama.cpp: **[referencia CLI del servidor](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)**.
 

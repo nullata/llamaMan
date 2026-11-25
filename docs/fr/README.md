@@ -8,9 +8,9 @@
 
 > **Remarque :** ceci est une traduction et peut être en retard sur la [version anglaise](../../README.md), qui fait foi.
 
-**Ce que c'est.** Une UI navigateur + une API front-end pour faire tourner plusieurs instances serveur [llama.cpp](https://github.com/ggml-org/llama.cpp), sur une machine ou un petit cluster de machines. Livré avec un proxy compatible Ollama pour s'intégrer directement à [Open WebUI](https://github.com/open-webui/open-webui).
+llamaMan est un moteur d'orchestration pour serveurs d'inférence locaux. Il lance, endort, réveille et évince des conteneurs [llama.cpp](https://github.com/ggml-org/llama.cpp) et [Strata](STRATA.md) sur une ou plusieurs machines, et les place tous derrière un unique endpoint compatible Ollama et OpenAI — piloté depuis une UI navigateur et une API REST.
 
-**Ce qui est différent.** llamaMan lui-même n'a **aucun code llama.cpp et aucune dépendance GPU** - il lance des conteneurs `ghcr.io/ggml-org/llama.cpp:server-*` en frères via le socket Docker. Mettez à jour llama.cpp sans toucher llamaMan : `docker pull` d'une image `server-*` plus récente. La même machinerie de spawn-et-proxy est agnostique du moteur : des instances [Strata](STRATA.md) tournent à côté de celles de llama.cpp, lancées, surveillées, proxyisées et endormies exactement de la même façon.
+Il n'a ni code d'inférence ni dépendance GPU propres : les moteurs tournent en conteneurs frères via le socket Docker, donc mettre à jour llama.cpp revient à tirer une image `server` plus récente. Une requête pour un modèle qui ne tourne pas le démarre ou le réveille à la demande, et quand vous atteignez votre limite de modèles chargés simultanément, celui qui est inactif depuis le plus longtemps est évincé pour faire de la place. Avec le clustering activé, les nodes partagent leur état via une base de données commune et des heartbeats, et une requête pour un groupe de files va au membre éveillé le moins chargé, sur n'importe quel node — si sa file locale s'engorge, elle passe à un pair qui a de la capacité libre.
 
 > La sémantique des flags llama-server fait foi du côté de llama.cpp : **[référence CLI du serveur](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)**.
 

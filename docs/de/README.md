@@ -8,9 +8,9 @@
 
 > **Hinweis:** Dies ist eine Übersetzung und kann hinter der [englischen Fassung](../../README.md) zurückliegen; maßgeblich ist die englische Fassung.
 
-**Was es ist.** Ein Browser-UI + API-Frontend zum Betreiben mehrerer [llama.cpp](https://github.com/ggml-org/llama.cpp)-Server-Instanzen, auf einem Rechner oder einem kleinen Cluster aus mehreren. Bringt einen Ollama-kompatiblen Proxy mit, sodass es sich direkt in [Open WebUI](https://github.com/open-webui/open-webui) einbinden lässt.
+llamaMan ist eine Orchestrierungs-Engine für lokale Inferenz-Server. Es startet [llama.cpp](https://github.com/ggml-org/llama.cpp)- und [Strata](STRATA.md)-Container auf einem oder mehreren Rechnern, legt sie schlafen, weckt und verdrängt sie und stellt sie alle hinter einen einzigen Ollama- und OpenAI-kompatiblen Endpunkt — gesteuert über ein Browser-UI und eine REST-API.
 
-**Was anders ist.** llamaMan selbst enthält **keinen llama.cpp-Code und hat keine GPU-Abhängigkeit** - es spawnt `ghcr.io/ggml-org/llama.cpp:server-*`-Container als Geschwister über den Docker-Socket. llama.cpp aktualisieren, ohne llamaMan anzufassen: `docker pull` eines neueren `server-*`-Images. Dieselbe Spawn-und-Proxy-Maschinerie ist engine-agnostisch: [Strata](STRATA.md)-Instanzen laufen neben llama.cpp-Instanzen, gestartet, überwacht, proxyt und schlafen gelegt, auf exakt dieselbe Weise.
+Es enthält selbst keinen Inferenz-Code und hat keine GPU-Abhängigkeit: Engines laufen als Geschwister-Container über den Docker-Socket, ein llama.cpp-Upgrade heißt also nur, ein neueres `server`-Image zu pullen. Anfragen an ein Modell, das nicht läuft, starten oder wecken es bei Bedarf, und ist das Limit gleichzeitig geladener Modelle erreicht, wird das am längsten untätige verdrängt, um Platz zu schaffen. Mit aktiviertem Clustering teilen Nodes ihren Zustand über eine gemeinsame Datenbank und Heartbeats, und eine Anfrage an eine Queue-Gruppe geht an das am wenigsten ausgelastete wache Mitglied auf einem beliebigen Node — staut sich dessen lokale Queue, wandert sie zu einem Peer mit freier Kapazität.
 
 > Die Flag-Semantik von llama-server ist die maßgebliche Quelle auf llama.cpp-Seite: **[server CLI reference](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)**.
 

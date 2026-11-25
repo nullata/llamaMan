@@ -6,9 +6,9 @@
 
 **English** · [简体中文](docs/zh-CN/README.md) · [日本語](docs/ja/README.md) · [Deutsch](docs/de/README.md) · [Français](docs/fr/README.md) · [Español](docs/es/README.md) · [Português](docs/pt-BR/README.md) · [Русский](docs/ru/README.md) · [Български](docs/bg/README.md)
 
-**What it is.** A browser UI + API front-end for running multiple [llama.cpp](https://github.com/ggml-org/llama.cpp) server instances, across one machine or a small cluster of them. Ships an Ollama-compatible proxy so it drops in for [Open WebUI](https://github.com/open-webui/open-webui).
+llamaMan is an orchestration engine for local inference servers. It launches, sleeps, wakes and evicts [llama.cpp](https://github.com/ggml-org/llama.cpp) and [Strata](docs/en/STRATA.md) containers on one machine or several, and puts them all behind one Ollama- and OpenAI-compatible endpoint — driven from a browser UI and a REST API.
 
-**What's different.** llamaMan itself has **no llama.cpp code and no GPU dependency** - it spawns `ghcr.io/ggml-org/llama.cpp:server-*` containers as siblings over the Docker socket. Update llama.cpp without touching llamaMan: `docker pull` a newer `server-*` image. The same spawn-and-proxy machinery is engine-agnostic: [Strata](docs/en/STRATA.md) instances run alongside llama.cpp ones, launched, monitored, proxied, and slept the same way.
+It has no inference code and no GPU dependency of its own: engines run as sibling containers over the Docker socket, so upgrading llama.cpp means pulling a newer `server` image. Requests for a model that isn't running start or wake it on demand, and when you hit your limit on concurrently loaded models, the one idle longest is evicted to make room. With clustering turned on, nodes share state through a common database and heartbeats, and a request for a queue group goes to the least-loaded awake member on any node — if its local queue backs up, it moves to a peer with free capacity.
 
 > llama-server flag semantics are the source of truth on llama.cpp's side: **[server CLI reference](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)**.
 

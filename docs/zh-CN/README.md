@@ -8,9 +8,9 @@
 
 > **注意：** 本文为译文，可能落后于[英文版](../../README.md)；以英文版为准。
 
-**这是什么。** 一个用于在单台机器或小型集群上运行多个 [llama.cpp](https://github.com/ggml-org/llama.cpp) server 实例的浏览器 UI + API 前端。内置 Ollama 兼容 proxy，可无缝接入 [Open WebUI](https://github.com/open-webui/open-webui)。
+llamaMan 是一个面向本地推理服务器的编排引擎。它在单台或多台机器上启动、休眠、唤醒和逐出 [llama.cpp](https://github.com/ggml-org/llama.cpp) 与 [Strata](STRATA.md) 容器，并将它们统一置于一个兼容 Ollama 和 OpenAI 的端点之后 —— 通过浏览器 UI 和 REST API 进行操控。
 
-**有何不同。** llamaMan 本身**不包含 llama.cpp 代码，且无 GPU 依赖** —— 它通过 Docker socket 将 `ghcr.io/ggml-org/llama.cpp:server-*` 容器作为同级（sibling）容器拉起。无需触碰 llamaMan 即可更新 llama.cpp：执行 `docker pull` 拉取更新的 `server-*` 镜像即可。相同的容器生成与 proxy 机制完全独立于引擎：[Strata](STRATA.md) 实例与 llama.cpp 实例并存运行，以完全相同的方式启动、监控、proxy 转发与休眠。
+它本身不包含推理代码，也没有 GPU 依赖：各引擎通过 Docker socket 作为同级（sibling）容器运行，因此升级 llama.cpp 只需拉取更新的 `server` 镜像。对未运行模型的请求会按需启动或唤醒该模型；当同时加载的模型数量达到上限时，闲置最久的模型会被逐出以腾出空间。启用集群后，各节点通过共享数据库和心跳共享状态，发往队列分组的请求会被路由到任意节点上负载最低的已唤醒成员 —— 若其本地队列积压，请求会转移到有空闲容量的对等节点。
 
 > llama-server 命令行标志的语义以 llama.cpp 官方为准：**[server CLI reference](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)**。
 

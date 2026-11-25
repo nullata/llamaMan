@@ -8,9 +8,9 @@
 
 > **注:** これは翻訳であり、[英語版](../../README.md)より内容が古い場合があります。英語版が正式な内容です。
 
-**概要:** 単一のマシンまたは小規模なクラスタ全体で、複数の [llama.cpp](https://github.com/ggml-org/llama.cpp) サーバーインスタンスを実行するためのブラウザ UI + API フロントエンド。[Open WebUI](https://github.com/open-webui/open-webui) にそのまま組み込める Ollama 互換プロキシを同梱しています。
+llamaMan はローカル推論サーバーのためのオーケストレーションエンジンです。1 台または複数台のマシン上で [llama.cpp](https://github.com/ggml-org/llama.cpp) と [Strata](STRATA.md) のコンテナを起動・スリープ・ウェイク・エビクションし、それらすべてを Ollama および OpenAI 互換の単一エンドポイントの背後にまとめます。操作はブラウザ UI と REST API から行います。
 
-**特徴・相違点:** llamaMan 自体には **llama.cpp のコードも GPU への依存関係も一切ありません** - Docker ソケット経由で `ghcr.io/ggml-org/llama.cpp:server-*` コンテナを兄弟コンテナとして起動します。llamaMan に手を加えることなく llama.cpp を更新可能: より新しい `server-*` イメージを `docker pull` するだけです。このコンテナ生成とプロキシの仕組みはエンジンに依存しません。[Strata](STRATA.md) インスタンスは llama.cpp インスタンスと並んで実行され、まったく同じ方法で起動、監視、プロキシ転送、スリープが行われます。
+llamaMan 自体には推論コードも GPU への依存関係もありません。エンジンは Docker ソケット経由で兄弟コンテナとして実行されるため、llama.cpp のアップグレードはより新しい `server` イメージを pull するだけです。実行されていないモデルへのリクエストは、そのモデルをオンデマンドで起動またはウェイクします。同時にロードできるモデル数の上限に達すると、最も長くアイドル状態のモデルがエビクションされて空きが作られます。クラスタリングを有効にすると、ノードは共通データベースとハートビートを通じて状態を共有し、キューグループへのリクエストはいずれかのノード上で最も負荷の低い起動中のメンバーに送られます。そのローカルキューが詰まった場合は、空き容量のあるピアへ移されます。
 
 > llama-server フラグのセマンティクスは llama.cpp 側が一次情報源です: **[server CLI reference](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)**
 
