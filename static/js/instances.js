@@ -961,6 +961,10 @@ async function submitLaunchForm(btn, status) {
 
   try {
     let body;
+    if (!document.getElementById('f-model-path')?.value.trim()) {
+      toast('Select a model first', 'error');
+      return { invalidForm: true };
+    }
     try {
       body = readLaunchForm();
     } catch (e) {

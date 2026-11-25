@@ -40,12 +40,13 @@ async function updateEngineSelect() {
   opt.hidden = !strataReady(info) && launchEngine !== 'strata';
   const m = launchSelectedModel;
   let reason = '';
-  if (!m) reason = 'Select a model first';
-  else if (!(m.engine_models && m.engine_models.strata)) reason = 'Strata runs only its recommended models (download one from the Strata settings)';
-  else {
-    if (!info) reason = 'Strata is unknown on the target node';
-    else if (!info.available) reason = info.reason || 'Strata is unavailable on the target node';
-  }
+  // With no model selected Strata stays selectable: the catalogue's Models
+  // button then opens freely, so you can browse and download Strata models
+  // without one already in the library. (Click the selected model again to
+  // get back to this state.)
+  if (!info) reason = 'Strata is unknown on the target node';
+  else if (!info.available) reason = info.reason || 'Strata is unavailable on the target node';
+  else if (m && !(m.engine_models && m.engine_models.strata)) reason = 'Strata runs only its recommended models - click the selected model to deselect it, then pick Strata and open its Models list';
   // Keep the current engine selectable even if it became unavailable, so the
   // form never shows a value it can't hold; the server re-checks on launch.
   opt.disabled = !!reason && launchEngine !== 'strata';

@@ -319,6 +319,7 @@ function renderModels() {
   filtered.forEach(m => {
     const el = document.createElement('div');
     el.className = 'model-item' + (m.path === selectedModelPath ? ' selected' : '');
+    if (m.path === selectedModelPath && !m.archived) el.title = 'Click again to deselect';
     const quantBadge = m.quant ? `<span class="badge badge-quant">${escHtml(m.quant)}</span>` : '';
     const fav = isModelFavorited(m.path);
     const starClass = fav ? 'btn-star active' : 'btn-star';
@@ -377,9 +378,19 @@ function renderModels() {
       e.stopPropagation();
       restoreModel(m);
     });
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (e) => {
       if (m.archived) {
         toast('This model is archived - restore it to launch', 'info');
+        return;
+      }
+      if (e.detail > 1) return;  // a double-click must not select then deselect
+      // Deselect only when this item is the live selection: the sidebar
+      // highlight, the cached path and the form's model-path field all agree.
+      // (f-model-path is free text, so a manual edit means the click should
+      // re-select and restore instead of wiping the form.)
+      const fieldPath = document.getElementById('f-model-path')?.value.trim();
+      if (selectedModelPath === m.path && fieldPath === m.path && el.classList.contains('selected')) {
+        deselectModel();
         return;
       }
       selectModel(m, el);
@@ -606,7 +617,10 @@ function applyPresetToLaunchForm(p) {
   if (typeof updateModelSettingsState === 'function') updateModelSettingsState();
 }
 
+let _selectSeq = 0;  // guards selectModel's awaits against a newer select/deselect
+
 async function selectModel(model, el) {
+  const seq = ++_selectSeq;
   document.querySelectorAll('.model-item').forEach(x => x.classList.remove('selected'));
   el.classList.add('selected');
   selectedModelPath = model.path;
@@ -621,9 +635,13 @@ async function selectModel(model, el) {
   updatePortSuggestion();
   if (ctxField) ctxField.value = '';
   // llama.cpp until the model's preset says otherwise; the Inference Engine
-  // dropdown offers the engines this file can run on.
+  // dropdown offers the engines this file can run on. Exception: the user
+  // deliberately picked Strata (e.g. from the catalogue flow with nothing
+  // selected) and this file can run on it - keep Strata instead of flipping.
   if (typeof applyEngineToLaunchForm === 'function') {
-    applyEngineToLaunchForm('llamacpp', model);
+    const keepStrata = currentLaunchEngine() === 'strata'
+      && !!(model.engine_models && model.engine_models.strata);
+    applyEngineToLaunchForm(keepStrata ? 'strata' : 'llamacpp', model);
     if (typeof applyStrataPresetToLaunchForm === 'function') applyStrataPresetToLaunchForm({});
   }
   // Load preset if one exists
@@ -631,6 +649,7 @@ async function selectModel(model, el) {
   _loadedPresetPath = null;
   try {
     const res = await apiFetch(`/api/presets${encodePathForUrl(model.path)}`);
+    if (seq !== _selectSeq) return;  // a newer select/deselect superseded this one
     if (res.ok) {
       const p = await res.json();
       _loadedPreset = p;
@@ -644,10 +663,23 @@ async function selectModel(model, el) {
       toast('Preset loaded', 'info');
     }
   } catch (e) { /* no preset, use defaults */ }
+  if (seq !== _selectSeq) return;  // a newer select/deselect superseded this one
   if (typeof refreshStrataSection === 'function') refreshStrataSection();
   if (typeof updateQuickLaunchVisibility === 'function') updateQuickLaunchVisibility();
   // Detect layer count for model
   await updateGpuLayersTotal(model.path);
+}
+
+// Clicking the already-selected model clears the selection: the sidebar
+// highlight goes away and the launch form returns to its no-model state
+// (resetLaunchForm is the same path used when the Target node changes).
+// With nothing selected the Inference Engine picker is free again - e.g.
+// pick Strata and open its Models catalogue without first having a Strata
+// model in the library.
+function deselectModel() {
+  _selectSeq++;  // supersede any in-flight selectModel fetch for this model
+  document.querySelectorAll('.model-item').forEach(x => x.classList.remove('selected'));
+  resetLaunchForm();
 }
 
 // Suggestions for the drafter field (MTP or DFlash): the GGUFs on the target node.
