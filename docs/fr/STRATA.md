@@ -2,11 +2,11 @@
 
 > **Remarque :** ceci est une traduction et peut être en retard sur la [version anglaise](../en/STRATA.md), qui fait foi.
 
-*(opt-in, NVIDIA ou AMD)* [Strata](https://github.com/Niko1221/Strata) fait tourner la famille mixture-of-experts Qwen3.8-Flash-Next (et ses variantes Coder, Swift 1.5 et Unsloth) et Qwen3.6-35B-A3B sur des GPUs NVIDIA ou AMD (ROCm) grand public plus la RAM système. llamaMan peut lancer, surveiller, proxyser, endormir/réveiller et stopper des instances Strata à côté de celles de llama.cpp. Le comportement de llama.cpp ne change pas : la couche moteur (`core/engines/`) garde le lancement llama.cpp identique octet pour octet (testé par snapshots).
+*(opt-in, NVIDIA ou AMD)* [Strata](https://github.com/Niko1221/Strata) fait tourner la famille mixture-of-experts Qwen3.8-Flash-Next (et ses variantes Coder, Swift 1.5 et Unsloth), Qwen3.6-35B-A3B et Inkling-2-Mini sur des GPUs NVIDIA ou AMD (ROCm) grand public plus la RAM système. llamaMan peut lancer, surveiller, proxyser, endormir/réveiller et stopper des instances Strata à côté de celles de llama.cpp. Le comportement de llama.cpp ne change pas : la couche moteur (`core/engines/`) garde le lancement llama.cpp identique octet pour octet (testé par snapshots).
 
 ## Sommaire
 
-- [Premiers pas](#getting-started) · [Qwen3.6-35B-A3B et fine-tunes](#qwen36-35b-a3b-and-fine-tunes) · [Limites et comportement](#limits-and-behaviour) · [Notes de conception et vérification](#design-notes-and-verification)
+- [Premiers pas](#getting-started) · [Qwen3.6-35B-A3B et fine-tunes](#qwen36-35b-a3b-and-fine-tunes) · [Inkling-2-Mini](#inkling-2-mini) · [Limites et comportement](#limits-and-behaviour) · [Notes de conception et vérification](#design-notes-and-verification)
 
 <a id="getting-started"></a>
 ## Premiers pas
@@ -41,7 +41,7 @@ Upstream publie une image ROCm par famille de GPU. Tirez celle de votre carte da
 
 Le formulaire de lancement masque les champs propres à llama.cpp (GPU layers, MoE, threads, parallel, types KV, flash attention, spec decoding, mmproj, DRY, extra args) et montre **Image Input** (no / GPU / CPU), **KV Cache** (défaut Strata int8, `int8`, `q4_0`, `k8v4`) et **Low-RAM Mode** (auto / on / off). L'API rejette les champs propres à llama.cpp définis pour un modèle Strata.
 
-La liste déroulante **Inference Engine** propose Strata pour un fichier que Strata peut exécuter (l'un de ses fichiers de modèle ou un fine-tune de Qwen3.6-35B-A3B, marqué *Strata* dans la bibliothèque) sur un node qui peut l'exécuter et dispose de son image. Sans modèle sélectionné, il est proposé librement, et le bouton **Models** à côté ouvre le catalogue, prêt à télécharger. Strata est grisé tant qu'un modèle qu'il ne peut pas exécuter est sélectionné - cliquez à nouveau sur ce modèle pour le désélectionner (le formulaire de lancement revient à son état sans modèle) et l'option se libère.
+La liste déroulante **Inference Engine** propose Strata pour un fichier que Strata peut exécuter (l'un de ses fichiers de modèle ou un fine-tune de Qwen3.6-35B-A3B, marqué *Strata* dans la bibliothèque) sur un node qui peut l'exécuter et dispose de son image. Sans modèle sélectionné, il est proposé librement, et le bouton **Models** à côté ouvre le catalogue, prêt à télécharger. Strata est grisé tant qu'un modèle qu'il ne peut pas exécuter est sélectionné - cliquez à nouveau sur ce modèle pour le désélectionner (le formulaire de lancement revient à son état sans modèle) et l'option se libère. Un fichier `.strata` d'Inkling-2-Mini apparaît aussi dans la bibliothèque, et Strata est son seul moteur : le sélectionner choisit Strata et grise llama.cpp.
 
 **Premier démarrage.** Sur les familles Flash-Next, Strata télécharge ~58-111 GB, prépare son « pack » et récupère sa couche MTP avant que le serveur n'ouvre son port ([Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) est plus petit et saute la couche MTP) ; les démarrages suivants vont directement au chargement (1-3 minutes). La carte d'instance affiche *setting up → downloading (avec %) → preparing pack → loading* parsé depuis le log du conteneur, et le bouton Logs streame le log. Deux façons de télécharger :
 
@@ -69,9 +69,26 @@ Qwen3.6-35B-A3B possède son propre chemin de moteur dans Strata et se compose d
 - **Images plus anciennes.** Si le moteur de l'image ne possède pas cette famille, le setup s'arrête et la carte d'instance invite à mettre à jour l'image.
 
 <a id="limits-and-behaviour"></a>
+## Inkling-2-Mini
+
+Strata exécute Inkling-2-Mini de Thinking Machines (26.4B-A3.4B) avec un moteur à lui (`strata-inkling`, dans `shapes/inkling2` de l'image). Chaque taille est un fichier, monté sous son nom publié comme Qwen3.6-35B-A3B. llamaMan liste les tailles que liste le `setup.py` de l'image (`INKLING_FAMILIES`) :
+
+| Tailles | Source | Téléchargement |
+|---|---|---|
+| `SQ-20`, `SQ-15`, `SQ-10` | Les builds `.strata` propres à Strata (`strata-engine/Inkling-2-Mini-Strata`), avec le drafter DSpark intégré | 10.5-19.3 GB |
+| `UD-Q8_K_XL` ... `UD-IQ1_S` | Les GGUF d'Unsloth (`unsloth/Inkling-2-Mini-GGUF`, au commit que Strata épingle) | 7.8-22.9 GB |
+
+Téléchargez une taille depuis le catalogue **Models**, puis lancez-la depuis la bibliothèque de modèles. Les fichiers `.strata` y apparaissent avec un badge *STRATA* et ne tournent que sur Strata. Les clients l'adressent comme `strata/inkling-2-mini-<size>` ou `inkling-2-mini-<size>`.
+
+- **Requêtes à la fois :** de 1 à 64. Le setup place les experts avec de la place pour autant de slots, donc le changer relance le setup.
+- **Contexte :** jusqu'à 1M tokens (menu du setup : 8K-256K).
+- **Images :** le setup télécharge le lecteur `Inkling-2-Mini-Vision.strata` (0.64 GB) dans le volume de données la première fois que les images sont activées. Les fichiers `mmproj` d'Unsloth sont des projecteurs llama.cpp, que le moteur de Strata ne sait pas lire.
+- **Le drafting est désactivé sur les tailles GGUF.** llamaMan ne télécharge que le fichier du modèle, et le setup ne fait du drafting que si un fichier de drafter DSpark se trouve à côté. Les builds `.strata` portent leur drafter dans le fichier.
+- KV Cache, Low-RAM Mode, Layer Split et Skip Rarely Used Experts ne s'appliquent pas et sont masqués. Hy4-Flash, l'autre moteur propre à Strata, n'est pas listé : chacun de ses builds a aussi besoin d'un fichier Engram partagé.
+
 ## Limites et comportement
 
-- **Une requête à la fois** (sauf [Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes)). Max Concurrent est forcé à 1 ; les requêtes suivantes patientent dans la gate de llamaMan (Max Queue Depth, puis 429).
+- **Une requête à la fois** (sauf [Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) et [Inkling-2-Mini](#inkling-2-mini)). Max Concurrent est forcé à 1 ; les requêtes suivantes patientent dans la gate de llamaMan (Max Queue Depth, puis 429).
 - **RAM.** Strata charge 32-62 GB en RAM (`--ulimit memlock=-1` est toujours défini). Une **System Memory Limit** force le mode Low-RAM (le setup de 0.2.x voit la limite du conteneur, mais les images plus anciennes ne lisent que la RAM de l'hôte) ; l'UI avertit sous ~64 GB. Depuis 0.2.17, le setup laisse 17 GB libres au lieu de 24 pour le budget RAM d'Unsloth UD-Q4_K_XL / UD-IQ4_XS, et llamaMan déplace une fois, au démarrage suivant, les budgets configurés sous 0.2.16 vers la nouvelle règle.
 - **Skip Rarely Used Experts** (`STRATA_ROUTE_TAIL_SKIP`) est désactivé par défaut depuis Strata 0.2.17. Choisir un rang (7 correspond au « On » de Strata) décode plus vite, mais les réponses diffèrent légèrement du modèle complet. La valeur est écrite dans la run config du modèle à chaque démarrage, donc la changer ne demande pas de nouveau setup. Non proposé pour Qwen3.6-35B-A3B.
 - **Nouveau pin du Coder (0.2.17).** Strata épingle désormais un nouveau shard 1 IQ1_M pour le modèle Coder, de même taille que l'ancien. Un Coder téléchargé plus tôt par llamaMan continue de fonctionner, mais setup le signale comme « not the published file » et sert les anciens poids. Pour passer au nouveau build, supprimez le dossier du modèle sous `MODELS_DIR/strata/`, téléchargez-le à nouveau et relancez.
@@ -118,7 +135,7 @@ core/engines/
   |---|---|
   | image | `STRATA_IMAGE` (sinon l'image construite, puis une image Strata tirée) |
   | command | aucune (l'entrypoint ne lit que des variables d'environnement) |
-  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `ROUTE_TAIL_SKIP` (familles Flash-Next ; écrit dans le `env` de la run config sous `STRATA_ROUTE_TAIL_SKIP`), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`? (familles avec chemin propre uniquement ; requêtes à la fois) |
+  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `ROUTE_TAIL_SKIP` (familles Flash-Next ; écrit dans le `env` de la run config sous `STRATA_ROUTE_TAIL_SKIP`), `STRATA_ALLOWED_HOSTS`, `REINSTALL=1`?, `PARALLEL`? (familles avec chemin propre uniquement ; requêtes à la fois ; le setup d'Inkling-2-Mini le reçoit aussi en `--parallel`) |
   | ulimits | `memlock=-1` |
   | GPU | `device_requests` NVIDIA, ou sur AMD `/dev/kfd` + `/dev/dri`, les GID render/video de l'hôte et `ROCR_VISIBLE_DEVICES` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
   | mounts | volume de données → `/data` ; logs ; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/data/models/<SIZE>` (`<family>-<SIZE>` pour non-qwen ; le dossier de shards sensible à la casse de setup.py) (rw), quand llamaMan détient des shards complets, et il en va de même pour un modèle à fichier unique lancé depuis la bibliothèque, quel que soit son nom |
@@ -167,6 +184,7 @@ donc le serveur est PID 1 et `docker stop` l'atteint. Un conteneur stoppé en pl
   (premier lancement via llamaMan, ou un volume configuré à la main) réinstalle aussi. Cela coûte une passe de setup qui réutilise les fichiers.
   L'empreinte d'une famille avec chemin propre contient également le chemin, la taille et l'heure de modification du fichier source, et son setup
   reconstruit le tokenizer, de sorte qu'un fine-tune différent de même taille ne soit pas servi avec celui du précédent.
+- **Inkling-2-Mini garde aussi `strata_parallel` dans son fingerprint**, car son setup place les experts avec de la place pour chaque slot.
 - **Une instance active par modèle Strata par node.** Deux instances d'un même modèle exécuteraient le setup sur les mêmes fichiers.
 - **Un lancement est refusé pendant que llamaMan télécharge encore ce modèle**, pour que le conteneur ne le télécharge pas une
   deuxième fois dans son volume.

@@ -18,7 +18,7 @@
 | 裸机运行时实例卡在 **starting** 状态 | 容器本身健康，但 llamaman 无法连接到该容器。如果自动检测对你的运行环境有误，请显式设置 `LLAMAMAN_IN_DOCKER=false`/`true` |
 | Strata：_"Docker image 'strata:latest' not found"_ | 在 Settings → Docker Images 中拉取或构建 Strata 镜像（或在克隆的 Strata 仓库中执行 `docker build -t strata .`）。参见 [Strata](STRATA.md) |
 | 未列出 Strata 模型 | 设置 `STRATA_ENABLED=true`；节点必须为 NVIDIA，或处于 ROCm 模式的 AMD（若检测失败请设置 `GPU_TYPE=cuda` / `GPU_TYPE=rocm`；`GPU_TYPE=vulkan` 会被拒绝）。`GET /api/engines` 会显示原因 |
-| **Strata** 引擎选项呈灰色 | 模型库中选中了 Strata 无法运行的模型。Strata 只运行其自身的模型文件、这些文件的重命名副本以及 Qwen3.6-35B-A3B 微调模型（参见 [Strata](STRATA.md#qwen36-35b-a3b-与微调模型)）。再次点击所选模型以取消选择，然后选择 Strata 并打开其 **Models** 列表下载一个模型 |
+| **Strata** 引擎选项呈灰色 | 模型库中选中了 Strata 无法运行的模型。Strata 只运行其自身的模型文件（包括 Inkling-2-Mini 的 `.strata` 和 GGUF 文件）、这些文件的重命名副本以及 Qwen3.6-35B-A3B 微调模型（参见 [Strata](STRATA.md#qwen36-35b-a3b-与微调模型)）。再次点击所选模型以取消选择，然后选择 Strata 并打开其 **Models** 列表下载一个模型 |
 | Strata 实例卡在 **starting** 状态 | 首次启动时需要数分钟属于正常现象（下载 + 打包）。卡片会显示阶段；日志会显示 Strata 的安装设置过程。“setup failed”表示其安装设置中断 —— 查看日志中的 `[X]` 行 |
 | Strata 卡片显示 _"this Strata image can't run ... yet: update it"_ | 镜像的引擎没有该模型系列。请在 Settings → Docker Images 中拉取或构建更新的 Strata 镜像 |
 | Coder 模型的 Strata 日志出现 _"... is not the published file (SHA-256 ..."_ | Strata 0.2.17 为 Coder 重新固定了 IQ1_M 分片 1。旧文件仍可用，但使用的是旧权重。要使用新版本，请删除 `MODELS_DIR/strata/` 下该模型的文件夹，在 llamaMan 中重新下载并重新启动 |

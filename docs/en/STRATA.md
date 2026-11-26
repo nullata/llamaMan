@@ -1,10 +1,10 @@
 # Strata engine
 
-*(opt-in, NVIDIA or AMD)* [Strata](https://github.com/Niko1221/Strata) runs the Qwen3.8-Flash-Next mixture-of-experts family (and its Coder, Swift 1.5 and Unsloth variants) and Qwen3.6-35B-A3B on consumer NVIDIA or AMD (ROCm) GPUs plus system RAM. llamaMan can launch, monitor, proxy, sleep/wake and stop Strata instances next to llama.cpp ones. llama.cpp behaviour does not change: the engine layer (`core/engines/`) keeps the llama.cpp launch byte-for-byte identical (snapshot-tested).
+*(opt-in, NVIDIA or AMD)* [Strata](https://github.com/Niko1221/Strata) runs the Qwen3.8-Flash-Next mixture-of-experts family (and its Coder, Swift 1.5 and Unsloth variants), Qwen3.6-35B-A3B and Inkling-2-Mini on consumer NVIDIA or AMD (ROCm) GPUs plus system RAM. llamaMan can launch, monitor, proxy, sleep/wake and stop Strata instances next to llama.cpp ones. llama.cpp behaviour does not change: the engine layer (`core/engines/`) keeps the llama.cpp launch byte-for-byte identical (snapshot-tested).
 
 ## Contents
 
-- [Getting started](#getting-started) · [Qwen3.6-35B-A3B and fine-tunes](#qwen36-35b-a3b-and-fine-tunes) · [Limits and behaviour](#limits-and-behaviour) · [Design notes and verification](#design-notes-and-verification)
+- [Getting started](#getting-started) · [Qwen3.6-35B-A3B and fine-tunes](#qwen36-35b-a3b-and-fine-tunes) · [Inkling-2-Mini](#inkling-2-mini) · [Limits and behaviour](#limits-and-behaviour) · [Design notes and verification](#design-notes-and-verification)
 
 ## Getting started
 
@@ -38,7 +38,7 @@ Upstream publishes one ROCm image per GPU family. Pull the one for your card in 
 
 The launch form hides the llama.cpp-only fields (GPU layers, MoE, threads, parallel, KV types, flash attention, spec decoding, mmproj, DRY, extra args) and shows **Image Input** (no / GPU / CPU), **KV Cache** (Strata default int8, `int8`, `q4_0`, `k8v4`) and **Low-RAM Mode** (auto / on / off). The API rejects llama.cpp-only fields set for a Strata model.
 
-The **Inference Engine** dropdown offers Strata for a file Strata can run (one of its model files or a Qwen3.6-35B-A3B fine-tune, badged *Strata* in the library) on a node that can run it and has its image. With no model selected it is offered freely, and the **Models** button beside it opens the catalogue ready to download. Strata is greyed out while a model it cannot run is selected - click that model again to deselect it (the launch form returns to its no-model state) and the option frees up.
+The **Inference Engine** dropdown offers Strata for a file Strata can run (one of its model files or a Qwen3.6-35B-A3B fine-tune, badged *Strata* in the library). An Inkling-2-Mini `.strata` file is listed in the library too, and Strata is its only engine: selecting one picks Strata and greys out llama.cpp on a node that can run it and has its image. With no model selected it is offered freely, and the **Models** button beside it opens the catalogue ready to download. Strata is greyed out while a model it cannot run is selected - click that model again to deselect it (the launch form returns to its no-model state) and the option frees up.
 
 **First start.** On the Flash-Next families, Strata downloads ~58-111 GB, prepares its "pack" and fetches its MTP layer before the server opens its port ([Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) is smaller and skips the MTP layer); later starts go straight to loading (1-3 minutes). The instance card shows *setting up → downloading (with %) → preparing pack → loading* parsed from the container log, and the Logs button streams the log. Two ways to download:
 
@@ -64,9 +64,26 @@ Qwen3.6-35B-A3B has its own engine path in Strata and is a single GGUF file, wit
 - **Switching files sets up again.** Two files of the same size share one model id, one run config and one tokenizer on the volume. Launching a different file runs setup and rebuilds the tokenizer, and they can't run side by side on one node.
 - **Older images.** If the image's engine doesn't have this family, setup stops and the instance card says to update the image.
 
+## Inkling-2-Mini
+
+Strata runs Thinking Machines' Inkling-2-Mini (26.4B-A3.4B) on an engine of its own (`strata-inkling`, in the image's `shapes/inkling2`). Each size is one file, mounted under its published name like Qwen3.6-35B-A3B. llamaMan lists the sizes the image's `setup.py` lists (`INKLING_FAMILIES`):
+
+| Sizes | From | Download |
+|---|---|---|
+| `SQ-20`, `SQ-15`, `SQ-10` | Strata's own `.strata` builds (`strata-engine/Inkling-2-Mini-Strata`), with the DSpark drafter built in | 10.5-19.3 GB |
+| `UD-Q8_K_XL` ... `UD-IQ1_S` | Unsloth's GGUFs (`unsloth/Inkling-2-Mini-GGUF`, at the commit Strata pins) | 7.8-22.9 GB |
+
+Download a size from the **Models** catalogue, then launch it from the model library. The `.strata` files show there with a *STRATA* badge and run on Strata only. Clients address it as `strata/inkling-2-mini-<size>` or `inkling-2-mini-<size>`.
+
+- **Requests at once:** 1 to 64. Setup sizes the expert placement for that many slots, so changing it runs setup again.
+- **Context:** up to 1M tokens (setup's menu: 8K-256K).
+- **Images:** setup downloads the 0.64 GB `Inkling-2-Mini-Vision.strata` reader into the data volume the first time images are on. Unsloth's `mmproj` files are llama.cpp projectors, which Strata's engine can't read.
+- **Drafting on the GGUF sizes is off.** llamaMan downloads only the model file, and setup drafts only when a DSpark drafter file is next to it. The `.strata` builds carry their drafter inside the file.
+- KV Cache, Low-RAM Mode, Layer Split and Skip Rarely Used Experts don't apply and are hidden. Hy4-Flash, Strata's other engine of its own, isn't listed: each of its builds needs a shared Engram file as well.
+
 ## Limits and behaviour
 
-- **One request at a time** (except [Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes)). Max Concurrent is forced to 1; further requests queue in llamaMan's gate (Max Queue Depth, then 429).
+- **One request at a time** (except [Qwen3.6-35B-A3B](#qwen36-35b-a3b-and-fine-tunes) and [Inkling-2-Mini](#inkling-2-mini)). Max Concurrent is forced to 1; further requests queue in llamaMan's gate (Max Queue Depth, then 429).
 - **RAM.** Strata loads 32-62 GB into RAM (`--ulimit memlock=-1` is always set). A **System Memory Limit** forces Low-RAM mode on (0.2.x setup sees the container's limit, but older images read only the host's RAM); the UI warns below ~64 GB. From 0.2.17, setup leaves 17 GB free instead of 24 for the Unsloth UD-Q4_K_XL / UD-IQ4_XS RAM budget, and llamaMan moves budgets set up under 0.2.16 to the new rule once at the next start.
 - **Skip Rarely Used Experts** (`STRATA_ROUTE_TAIL_SKIP`) is Off by default from Strata 0.2.17. Picking a rank (7 is Strata's "On") decodes faster but the answers differ slightly from the full model. It's written into the model's run config at every start, so changing it needs no setup. Not offered for Qwen3.6-35B-A3B.
 - **Coder re-pin (0.2.17).** Strata now pins a new IQ1_M shard 1 for the Coder model, the same size as the old one. A Coder download llamaMan made earlier keeps working, but setup reports it as "not the published file" and serves the old weights. To move to the new build, delete that model's folder under `MODELS_DIR/strata/`, download it again and relaunch.
@@ -113,7 +130,7 @@ core/engines/
   | image | `STRATA_IMAGE` (else the built, then a pulled Strata image) |
   | entrypoint | `sh -c ENTRY_SCRIPT` (`core/engines/strata.py`), under Docker's init; not the image's own (see 2.) |
   | command | none (the script reads env vars only) |
-  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `GGUF_DIR=/models`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `ROUTE_TAIL_SKIP` (Flash-Next families; written into the run config's `env` as `STRATA_ROUTE_TAIL_SKIP`), `STRATA_ALLOWED_HOSTS`, `SERVE_PORT=8081`, `RELAY_SCRIPT`, `REINSTALL=1`?, `PARALLEL`? (own-path families only; requests at once) |
+  | env | `FAMILY`, `MODEL`, `CONTEXT`, `VISION`, `HOST=0.0.0.0`, `PORT=8080`, `LOW_RAM`, `KV`?, `GPU`/`GPUS`?, `LAYER_SPLIT`?, `GGUF_DIR=/models`?, `STRATA_WATCHDOG_S`? / `STRATA_WATCHDOG_IO_S`? (Hang Watchdog / Slow-Storage Allowance), `ROUTE_TAIL_SKIP` (Flash-Next families; written into the run config's `env` as `STRATA_ROUTE_TAIL_SKIP`), `STRATA_ALLOWED_HOSTS`, `SERVE_PORT=8081`, `RELAY_SCRIPT`, `REINSTALL=1`?, `PARALLEL`? (own-path families only; requests at once. Inkling-2-Mini's setup also gets it as `--parallel`) |
   | ulimits | `memlock=-1` |
   | GPU | NVIDIA `device_requests`, or on AMD `/dev/kfd` + `/dev/dri`, the host render/video GIDs and `ROCR_VISIBLE_DEVICES` (`gpu_devices` / `LLAMA_GPU_DEVICES`) |
   | mounts | data volume → `/data`; logs; `MODELS_DIR/strata/<tag>[/<SIZE>]` → `/models` (rw, for setup's `.done` marks), when llamaMan holds complete shards; renamed copies are mounted file by file under the published names, and so is a single-file model launched from the library, whatever its name |
@@ -174,6 +191,8 @@ on the next start.
   launch through llamaMan, or a volume set up by hand) also reinstalls. That costs one setup pass that reuses the files.
   An own-path family's fingerprint also holds the source file's path, size and modification time, and its setup
   rebuilds the tokenizer, so a different fine-tune of the same size isn't served with the last one's.
+  Inkling-2-Mini's fingerprint also holds `strata_parallel`, because its setup places the experts with room for
+  every slot.
 - **One live instance per Strata model per node.** Two instances of one model would run setup over the same files.
 - **A launch is refused while llamaMan is still downloading that model**, so the container doesn't download it a
   second time into its volume.

@@ -65,7 +65,7 @@
 
 ダウンロードボディ: `{"repo_id": "...", "filename": "...", "hf_token": "...", "speed_limit_mbps": 0}`。`filename` を空にするとリポジトリ全体をプルします。
 
-インスタンスとプリセットは、オプションの `engine`（デフォルトは `llamacpp`、または `strata`。`/strata/...` モデルパスから推測）、および Strata の場合は `strata_vision`（`no`/`yes`/`cpu`）、`strata_kv`（`""`/`int8`/`q4_0`/`k8v4`）、`strata_low_ram`（`auto`/`on`/`off`）、`strata_layer_split`（空 = auto、または 2 枚目以降の各 GPU が開始するレイヤー。例: `18` や `16,32`）、`strata_watchdog_s` / `strata_watchdog_io_s`（整数の秒数。空 = Strata のデフォルト、`0` = オフ）、`strata_route_tail_skip`（`0` = オフ（デフォルト）、または `1`〜`9`。Qwen3.6-35B-A3B では不可）を受け入れます。Qwen3.6-35B-A3B はさらに `strata_parallel`（`1` 〜 `8`、デフォルト `1`）も受け入れ、他の Strata ファミリーは `1` を超える値を拒否します。Strata のモデルパスは仮想パスです: `/strata/<family>-<SIZE>`（例: `PUT /api/presets/strata/qwen-IQ2_XS`）。[Strata](STRATA.md) を参照してください。
+インスタンスとプリセットは、オプションの `engine`（デフォルトは `llamacpp`、または `strata`。`/strata/...` モデルパスから推測）、および Strata の場合は `strata_vision`（`no`/`yes`/`cpu`）、`strata_kv`（`""`/`int8`/`q4_0`/`k8v4`）、`strata_low_ram`（`auto`/`on`/`off`）、`strata_layer_split`（空 = auto、または 2 枚目以降の各 GPU が開始するレイヤー。例: `18` や `16,32`）、`strata_watchdog_s` / `strata_watchdog_io_s`（整数の秒数。空 = Strata のデフォルト、`0` = オフ）、`strata_route_tail_skip`（`0` = オフ（デフォルト）、または `1`〜`9`。Qwen3.6-35B-A3B では不可）を受け入れます。Qwen3.6-35B-A3B はさらに `strata_parallel`（`1` 〜 `8`、デフォルト `1`）も受け入れ、Inkling-2-Mini は `1` 〜 `64` を受け入れます。他の Strata ファミリーは `1` を超える値を拒否します。Inkling-2-Mini の `.strata` ファイルからの起動はデフォルトで `strata` になり、`llamacpp` は拒否されます。Strata のモデルパスは仮想パスです: `/strata/<family>-<SIZE>`（例: `PUT /api/presets/strata/qwen-IQ2_XS`）。[Strata](STRATA.md) を参照してください。
 
 <a id="model-errors-on-inference-routes"></a>
 ## 推論ルートのモデルエラー
