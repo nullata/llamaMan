@@ -78,7 +78,16 @@ HF_REVISIONS = {
     "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF": "bba88856f8c3c0c9e40e45f82d05e228b814ac43",
     "unsloth/Qwen3.8-Flash-Next-GGUF": "38bb39ee97821de2c9009abb7e93950eec396e66",
     "unsloth/Qwen3.6-35B-A3B-MTP-GGUF": "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d",
+    # Inkling-2-Mini (data/inkling-sources.json): Strata's own .strata builds are
+    # fetched from main and checked by size + SHA-256 (inkling_family.FILES), the
+    # Unsloth GGUFs from the commit that table describes.
+    "strata-engine/Inkling-2-Mini-Strata": "main",
+    "unsloth/Inkling-2-Mini-GGUF": "800c946d7b9c830c86290df49afbbe91db8455f5",
 }
+
+INKLING_FAMILY = "inkling-2-mini"
+INKLING_STRATA_REPO = "strata-engine/Inkling-2-Mini-Strata"
+INKLING_GGUF_REPO = "unsloth/Inkling-2-Mini-GGUF"
 
 # setup.py FAMILIES. `served` is the model name Strata's own /v1/models
 # reports (setup.py: model_name = f"{fam['name']}-{model.lower()}").
@@ -123,6 +132,31 @@ FAMILIES = {
             "Q8_0": {"download_gb": 37.8, "ram_gb": 52},
         },
     },
+    # setup.py INKLING_FAMILIES: an engine program of its own (strata-inkling, the
+    # image's shapes/inkling2), one file per size, its own installer
+    # (install_inkling2). Run the way an own-path family is (one file mounted
+    # under its published name, --gguf-dir), with per-size files and repos:
+    # Strata's .strata builds and Unsloth's GGUFs. The key has dashes: it is
+    # setup.py's --family, and the run config's tag is "inkling-2-mini-<size>".
+    # ram_gb is setup's footprint (VRAM + RAM), rounded up.
+    INKLING_FAMILY: {
+        "title": "Inkling-2-Mini", "served": INKLING_FAMILY,
+        "repo": INKLING_STRATA_REPO, "subdir": False,
+        "file": "", "shards": 1,                         # each size names its file
+        "vision": True, "experimental": False, "own_path": True, "inkling": True,
+        "arch": "inkling2_loop", "max_context": 1048576, "parallel_max": 64,
+        "models": {
+            **{q: {"download_gb": gb, "ram_gb": ram, "file": f"Inkling-2-Mini-{q}.strata"}
+               for q, gb, ram in (("SQ-20", 19.3, 20), ("SQ-15", 14.3, 15), ("SQ-10", 10.5, 11))},
+            **{q: {"download_gb": gb, "ram_gb": ram, "file": f"Inkling-2-Mini-{q}.gguf",
+                   "repo": INKLING_GGUF_REPO}
+               for q, gb, ram in (("UD-Q8_K_XL", 22.9, 23), ("UD-Q4_K_XL", 17.6, 18),
+                                  ("UD-Q4_K_M", 16.6, 17), ("UD-IQ4_XS", 15.7, 16),
+                                  ("UD-Q3_K_XL", 13.6, 14), ("UD-IQ3_XXS", 11.7, 12),
+                                  ("UD-Q2_K_XL", 9.1, 10), ("UD-IQ2_XXS", 8.5, 9),
+                                  ("UD-IQ1_M", 8.0, 9), ("UD-IQ1_S", 7.8, 8))},
+        },
+    },
 }
 
 # setup.py MODELS: which families ship each size, and what it costs. A size
@@ -142,6 +176,9 @@ SIZES = {
 }
 
 _MODEL_OVERRIDES = ("vision", "experimental", "file", "shards")
+# Read through model_attr() too, but only own-path families' sizes carry them
+# (Inkling-2-Mini: the GGUF sizes come from another repo than the .strata ones).
+_OWN_MODEL_OVERRIDES = ("file", "repo")
 
 
 # setup.py: "the model's trained length; no rope scaling on this path yet", and
@@ -176,6 +213,21 @@ def is_own_path(family: str) -> bool:
     return bool(FAMILIES.get(family, {}).get("own_path"))
 
 
+def is_inkling(family: str) -> bool:
+    return bool(FAMILIES.get(family, {}).get("inkling"))
+
+
+def family_max_context(family: str) -> int:
+    """The most context an own-path family takes (Inkling-2-Mini: 1M)."""
+    return int(FAMILIES.get(family, {}).get("max_context") or OWN_PATH_MAX_CONTEXT)
+
+
+def family_parallel_max(family: str) -> int:
+    """The most requests at once an own-path family's engine serves
+    (Inkling-2-Mini: inkling_fit.MAX_PARALLEL, 64)."""
+    return int(FAMILIES.get(family, {}).get("parallel_max") or PARALLEL_MAX)
+
+
 def family_sizes(family: str) -> dict:
     """{size: its entry} for one family. An own-path family keeps its own, whose
     names may collide with SIZES'."""
@@ -186,7 +238,8 @@ def family_sizes(family: str) -> dict:
 
 
 def model_attr(family: str, size: str, key: str):
-    """A size's own value for `key` (one of _MODEL_OVERRIDES), else its family's."""
+    """A size's own value for `key` (_MODEL_OVERRIDES, or _OWN_MODEL_OVERRIDES
+    for an own-path family), else its family's."""
     v = family_sizes(family).get(size, {}).get(key)
     return FAMILIES[family][key] if v is None else v
 
@@ -213,6 +266,11 @@ _catalogue_state = {"image": None, "image_id": None, "source": "built-in", "erro
 # packs ("ready", no hf/file: NVFP4) and single-file models (no {i}: Gyro).
 # The exception is OWN_PATH_FAMILIES (PREVIEW_FAMILIES before): a single file too,
 # but one setup takes from --gguf-dir. Their sizes come from their own sha256 table.
+# INKLING_FAMILIES (Inkling-2-Mini, setup.py from late 2026) is a table of its own:
+# per size the file and its bytes (inkling_family), and where setup downloads each
+# kind of file from (inkling_family.sources / gguf_sources, Hugging Face URLs with
+# the revision in them). HY4_FAMILIES (Hy4-Flash: a build plus a shared Engram
+# shard, files llamaman can't mount as one model) stays out.
 _DUMP_SCRIPT = r"""
 import json, os, sys
 sys.path.insert(0, os.getcwd())
@@ -237,7 +295,19 @@ for k, f in (getattr(s, "OWN_PATH_FAMILIES", None) or getattr(s, "PREVIEW_FAMILI
                   "arch": f.get("arch"),
                   "models": {q: {"ram_gb": m.get("ram_gb"), "bytes": f["sha256"][file.format(q=q)][0]}
                              for q, m in f["models"].items()}}
-print(json.dumps({"families": fam, "models": mod, "own_path": own, "revisions": s.HF_REVISIONS}))
+ink = {}
+if getattr(s, "INKLING_FAMILIES", None):
+    from strata_control import inkling_family as IF, inkling_fit as IFIT
+    bases = lambda srcs: [x.get("base") for x in srcs if x.get("base")]
+    for k, f in s.INKLING_FAMILIES.items():
+        ink[k] = {"title": f.get("title"), "name": f.get("name"), "arch": f.get("arch"), "tag": f.get("tag"),
+                  "vision": bool(f.get("vision", True)), "max_context": getattr(IFIT, "MAX_CONTEXT", None),
+                  "parallel_max": getattr(IF, "MAX_PARALLEL", None),
+                  "sources": bases(IF.sources()), "gguf_sources": bases(IF.gguf_sources()),
+                  "models": {b: {"ram_gb": m.get("ram_gb"), "file": IF.build_file(b), "bytes": IF.size_of(IF.build_file(b)),
+                                 "format": m.get("format") or ("gguf" if IF.is_gguf_build(b) else "strata")}
+                             for b, m in f["models"].items()}}
+print(json.dumps({"families": fam, "models": mod, "own_path": own, "inkling": ink, "revisions": s.HF_REVISIONS}))
 """
 
 
@@ -287,6 +357,10 @@ def catalogue_from_dump(dump: dict) -> tuple[dict, dict, dict]:
             own = _own_path_family(key, f, revisions)
             if own:
                 families[str(key)] = own
+        for key, f in (dump.get("inkling") or {}).items():
+            ink = _inkling_family(key, f, revisions)
+            if ink:
+                families[str(key)] = ink
     except (KeyError, TypeError, AttributeError) as e:
         raise ValueError(f"unexpected table shape ({type(e).__name__}: {e})") from e
     if not families or not sizes:
@@ -318,6 +392,61 @@ def _own_path_family(key: str, f: dict, revisions: dict) -> dict | None:
     }
 
 
+_HF_RESOLVE_RE = re.compile(r"^https://huggingface\.co/([^/]+/[^/]+)/resolve/([^/]+)/?$")
+
+
+def _hf_source(bases) -> tuple[str, str] | None:
+    """(repo, revision) of the first Hugging Face download folder in `bases`
+    (inkling_family's source list). None when none is one: llamaman downloads
+    from Hugging Face only."""
+    for base in bases or ():
+        m = _HF_RESOLVE_RE.match(str(base or "").strip())
+        if m:
+            return m.group(1), m.group(2)
+    return None
+
+
+def _inkling_family(key: str, f: dict, revisions: dict) -> dict | None:
+    """One _DUMP_SCRIPT inkling entry -> a FAMILIES entry, adding the repos it
+    downloads from to `revisions`. None (logged) when it doesn't fit."""
+    from config import logger
+    strata_src = _hf_source(f.get("sources"))
+    gguf_src = _hf_source(f.get("gguf_sources"))
+    models = {}
+    try:
+        for q, m in f["models"].items():
+            file = str(m["file"])
+            src = gguf_src if str(m.get("format")) == "gguf" else strata_src
+            if not src or not file or "/" in file:
+                continue                                  # no source llamaman can fetch from
+            models[str(q)] = {"download_gb": round(int(m["bytes"]) / 1e9, 1),
+                              "ram_gb": int(m["ram_gb"]), "file": file, "repo": src[0]}
+    except (KeyError, TypeError, ValueError, AttributeError):
+        models = {}
+    if not models:
+        logger.warning("strata: leaving out the %s family: unexpected entry", key)
+        return None
+    for src in (strata_src, gguf_src):
+        if src:
+            revisions.setdefault(src[0], src[1])
+    repo = next(iter(models.values()))["repo"]
+    for m in models.values():                             # the family's own repo: no override
+        if m["repo"] == repo:
+            del m["repo"]
+    out = {
+        "title": str(f.get("title") or key), "served": str(f.get("name") or key),
+        "repo": repo, "subdir": False, "file": "", "shards": 1,
+        "vision": bool(f.get("vision", True)), "experimental": False, "own_path": True, "inkling": True,
+        "arch": str(f.get("arch") or ""), "models": models,
+    }
+    for k, default in (("max_context", OWN_PATH_MAX_CONTEXT), ("parallel_max", PARALLEL_MAX)):
+        try:
+            out[k] = int(f.get(k) or default)
+        except (TypeError, ValueError):
+            out[k] = default
+    return out
+
+
 def _apply_catalogue(families: dict, sizes: dict, revisions: dict) -> None:
     with _CATALOGUE_LOCK:
         FAMILIES.clear()
@@ -340,8 +469,9 @@ def catalogue_source() -> dict:
 
 # Bumped when _DUMP_SCRIPT prints more, so a cached dump of the same image is
 # read again (2: per-model vision / experimental / file / shards; 3: 0.2.x
-# images, packs and single-file families left out; 4: own-path families).
-_DUMP_VERSION = 4
+# images, packs and single-file families left out; 4: own-path families;
+# 5: Inkling-2-Mini).
+_DUMP_VERSION = 5
 
 
 def _cache_key(image_id: str) -> str:
@@ -472,13 +602,15 @@ def model_for_file(path: str | None) -> tuple[str, str] | None:
     shard count from the name and runs only its own quants
     (SUPPORTED_GGUFS), so a different split or quant is not offered. Sizes
     two families share (IQ2_XS, IQ3_XXS) are Swift's when the name says so."""
-    if not isinstance(path, str) or not path.lower().endswith(".gguf"):
+    if not isinstance(path, str):
         return None
     name = os.path.basename(path)
     for family in FAMILIES:
         for size in family_sizes(family):
             if name in shard_files(family, size):
                 return family, size
+    if not name.lower().endswith(".gguf"):
+        return None
     m = _SHARD_RE.match(name)
     if not m:
         return _own_path_model_for_file(path, name)
@@ -560,8 +692,8 @@ def shards_dir_for_file(path: str | None) -> str | None:
 def parse_model_path(model_path: str | None) -> tuple[str, str] | None:
     """'/strata/qwen-IQ2_XS' (or the id 'strata/qwen-IQ2_XS', or a downloaded
     shard file of it) -> ('qwen', 'IQ2_XS'). None when it isn't a Strata
-    model in the catalogue. Family names have no '-', sizes may
-    ('UD-Q4_K_XL'), so split once."""
+    model in the catalogue. Sizes may have '-' ('UD-Q4_K_XL') and so may a
+    family ('inkling-2-mini'), so the longest family key that prefixes it wins."""
     if not isinstance(model_path, str):
         return None
     p = model_path.strip()
@@ -571,12 +703,11 @@ def parse_model_path(model_path: str | None) -> tuple[str, str] | None:
         rest = p[len(ID_PREFIX):]
     else:
         return model_for_file(p)
-    family, sep, size = rest.partition("-")
-    if not sep:
+    lowered = rest.lower()
+    family = max((f for f in FAMILIES if lowered.startswith(f.lower() + "-")), key=len, default=None)
+    if family is None:
         return None
-    family = family.lower()
-    if family not in FAMILIES:
-        return None
+    size = rest[len(family) + 1:]
     size_key = next((s for s in family_sizes(family) if s.lower() == size.lower()), None)
     return (family, size_key) if size_key else None
 
@@ -827,6 +958,8 @@ if [ "${REINSTALL:-0}" = "1" ] || [ ! -f "$cfg" ]; then
   if [ -n "${KV:-}" ]; then set -- "$@" --kv "$KV"; fi
   if [ -n "${GPUS:-}" ]; then set -- "$@" --gpus "$GPUS"; fi
   if [ -n "${GPU:-}" ]; then set -- "$@" --gpu "$GPU"; fi
+  # Inkling-2-Mini plans its memory for this many slots (setup.py --parallel)
+  if [ -n "${PARALLEL:-}" ] && [ "$FAMILY" = "inkling-2-mini" ]; then set -- "$@" --parallel "$PARALLEL"; fi
   if [ -n "${GGUF_DIR:-}" ]; then
     set -- "$@" --gguf-dir "$GGUF_DIR"
     echo "Setting up $tag from the GGUF files in $GGUF_DIR"
@@ -910,13 +1043,14 @@ class StrataEngine(Engine):
         # slots. The gate follows the slots, so there is one source of truth.
         parsed = parse_model_path(model_path)
         if parsed and is_own_path(parsed[0]):
-            return self._parallel(config)
+            return self._parallel(config, parsed[0])
         return 1
 
     @staticmethod
-    def _parallel(config: dict) -> int:
+    def _parallel(config: dict, family: str | None = None) -> int:
+        cap = family_parallel_max(family) if family else PARALLEL_MAX
         try:
-            return min(PARALLEL_MAX, max(1, int(config.get("strata_parallel") or 1)))
+            return min(cap, max(1, int(config.get("strata_parallel") or 1)))
         except (TypeError, ValueError):
             return 1
 
@@ -953,7 +1087,8 @@ class StrataEngine(Engine):
                 "vision": m["vision"],
                 "experimental": m["experimental"],
                 "own_path": m["own_path"],
-                "max_context": OWN_PATH_MAX_CONTEXT if m["own_path"] else None,
+                "max_context": family_max_context(m["family"]) if m["own_path"] else None,
+                "parallel_max": family_parallel_max(m["family"]) if m["own_path"] else 1,
                 "local_shards": local_shard_dir(m["family"], m["size"]) is not None,
                 "download": self._download_summary(m["family"], m["size"]),
             })
@@ -973,7 +1108,7 @@ class StrataEngine(Engine):
         if not parsed:
             return None
         family, size = parsed
-        repo = FAMILIES[family]["repo"]
+        repo = model_attr(family, size, "repo")
         return {
             "repo_id": repo,
             # Shard 1: the downloader expands a split GGUF to all its shards.
@@ -1001,7 +1136,8 @@ class StrataEngine(Engine):
             if missing:
                 return (f"not every shard of {model_id_for(*parsed)} is next to "
                         f"{os.path.basename(model_path)} (missing {', '.join(missing)})")
-            if is_own_path(parsed[0]):
+            # Inkling-2-Mini's engine reads its own GGUF quant mix (NVFP4, IQ*...).
+            if is_own_path(parsed[0]) and not is_inkling(parsed[0]):
                 bad = unsupported_expert_types(model_path)
                 if bad:
                     found = sorted({t for types in bad.values() for t in types})
@@ -1094,17 +1230,18 @@ class StrataEngine(Engine):
         Flash-Next settings (setup warns and ignores them): kept at their defaults
         so a value left in a form can't cost a pointless setup pass."""
         title = FAMILIES[family]["title"]
-        if not parallel_raw.isdigit() or not 1 <= int(parallel_raw or 0) <= PARALLEL_MAX:
+        par_max, ctx_max = family_parallel_max(family), family_max_context(family)
+        if not parallel_raw.isdigit() or not 1 <= int(parallel_raw or 0) <= par_max:
             if parallel_raw:
-                return {}, f"strata_parallel must be a whole number from 1 to {PARALLEL_MAX}"
+                return {}, f"strata_parallel must be a whole number from 1 to {par_max}"
             parallel_raw = "1"
         try:
             context = int(body.get("ctx_size") or 0)
         except (TypeError, ValueError):
             context = 0
-        if context > OWN_PATH_MAX_CONTEXT:
-            return {}, (f"{title} is trained for up to {OWN_PATH_MAX_CONTEXT} tokens of context and "
-                        "has no rope scaling yet")
+        if context > ctx_max:
+            return {}, (f"{title} takes up to {ctx_max} tokens of context" if is_inkling(family) else
+                        f"{title} is trained for up to {ctx_max} tokens of context and has no rope scaling yet")
         watchdog = {}
         for key in ("strata_watchdog_s", "strata_watchdog_io_s"):
             raw = str(body.get(key) if body.get(key) is not None else "").strip()
@@ -1174,6 +1311,11 @@ class StrataEngine(Engine):
         # for these families, or an upgrade would re-set-up every Flash-Next install.
         if is_own_path(family):
             settings["source"] = self._source_identity(family, size, config)
+        # Inkling-2-Mini's setup places the experts with room for every slot
+        # (install_inkling2: inkling_fit.place(parallel=...)), so the slot count
+        # is part of its setup; the run config's "parallel" follows it anyway.
+        if is_inkling(family):
+            settings["parallel"] = self._parallel(config, family)
         return settings
 
     @staticmethod
@@ -1208,7 +1350,7 @@ class StrataEngine(Engine):
         # Runtime only, like LAYER_SPLIT: its presence also marks an own-path
         # family for ENTRY_SCRIPT.
         if is_own_path(s["family"]):
-            env["PARALLEL"] = str(self._parallel(config))
+            env["PARALLEL"] = str(self._parallel(config, s["family"]))
         # Where each later card's layers start; only means something across
         # several cards. The entrypoint passes it at every start, so it is not
         # part of the setup fingerprint (no REINSTALL to change it).

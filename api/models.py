@@ -28,6 +28,15 @@ def detect_quant(name: str) -> str:
     return m.group(1).upper() if m else ""
 
 
+_STRATA_BUILD_RE = re.compile(r"(?i)\bSQ-\d+$")
+
+
+def _strata_build(stem: str) -> str:
+    """A .strata build's size ("Inkling-2-Mini-SQ-20" -> "SQ-20"), else ""."""
+    m = _STRATA_BUILD_RE.search(stem)
+    return m.group(0).upper() if m else ""
+
+
 def _dir_size(path: Path) -> int:
     total = 0
     try:
@@ -66,6 +75,25 @@ def discover_models(models_dir: str) -> list[dict]:
             "quant": detect_quant(gguf_file.stem),
             "size_bytes": size,
             "size_display": format_size(size),
+        })
+
+    # Model files only another engine reads (Strata's .strata builds of
+    # Inkling-2-Mini): listed only when an engine claims the file, so its
+    # other files (the Vision shard) and unknown .strata files stay out.
+    from core.engines import file_only_engine
+    for strata_file in base.rglob("*.strata"):
+        engine = file_only_engine(str(strata_file))
+        if not engine:
+            continue
+        size = strata_file.stat().st_size
+        found.append({
+            "name": strata_file.stem,
+            "path": str(strata_file),
+            "type": "strata",
+            "quant": detect_quant(strata_file.stem) or _strata_build(strata_file.stem),
+            "size_bytes": size,
+            "size_display": format_size(size),
+            "engine_only": engine,
         })
 
     seen = set()

@@ -90,6 +90,16 @@ def file_engine_models(path: str) -> dict:
     return out
 
 
+def file_only_engine(path: str | None) -> str | None:
+    """The engine that must run this local file because llama.cpp can't read
+    it: a file that is neither a GGUF nor a model folder (Strata's .strata
+    builds) and that exactly one engine claims. None otherwise."""
+    if not path or path.lower().endswith(".gguf") or path.startswith("/strata/"):
+        return None
+    claimed = file_engine_models(path)
+    return next(iter(claimed)) if len(claimed) == 1 else None
+
+
 def parse_engine(body: dict | None, model_path: str | None = None) -> tuple[str, str | None]:
     """Validate an API body's `engine` field. Returns (engine_name, error).
 
@@ -97,7 +107,8 @@ def parse_engine(body: dict | None, model_path: str | None = None) -> tuple[str,
     else llama.cpp (every client written before engines existed). An unknown
     name is an error rather than a silent fallback, so a typo can't launch the
     wrong backend; so is an engine that contradicts the model path."""
-    owner = engine_for_path(model_path)
+    # A file only one engine reads is that engine's, like a virtual model.
+    owner = engine_for_path(model_path) or file_only_engine(model_path)
     raw = (body or {}).get("engine")
     if raw in (None, ""):
         return owner or DEFAULT_ENGINE, None

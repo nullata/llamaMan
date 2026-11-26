@@ -310,7 +310,7 @@
                     <div class="form-group" data-engine-only="strata" hidden style="display:none">
                       <span class="label-row">
                         <label for="f-strata-parallel">Requests at Once</label>
-                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Requests at Once help" data-tip="Strata &quot;parallel&quot;, Qwen3.6 only. Requests decoded together, 1 to 8. Each extra slot takes about 1.5 GB of VRAM at 32K context out of the experts&#39; room, and on 12 or 16 GB cards in hybrid mode more slots make every request slower. Applied at every start."><i class="fa-solid fa-circle-info"></i></span>
+                        <span class="info-tip info-tip-wide" tabindex="0" role="button" aria-label="Requests at Once help" data-tip="Strata &quot;parallel&quot;, Qwen3.6 and Inkling-2-Mini only. Requests decoded together: 1 to 8 on Qwen3.6, 1 to 64 on Inkling-2-Mini. Each extra slot takes VRAM out of the experts&#39; room (Qwen3.6: about 1.5 GB of VRAM at 32K context), and on 12 or 16 GB cards in hybrid mode more slots make every request slower. Qwen3.6 applies it at every start; Inkling-2-Mini sets up again to plan for it."><i class="fa-solid fa-circle-info"></i></span>
                       </span>
                       <input id="f-strata-parallel" type="number" min="1" max="8" step="1" value="1" />
                     </div>

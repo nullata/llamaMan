@@ -26,8 +26,18 @@ import core.engines.strata as S
 def dump_of_builtin():
     """What _DUMP_SCRIPT prints for the setup.py the built-in copy came from."""
     families, sizes, revisions = copy.deepcopy(S._BUILTIN_CATALOGUE)
-    fam, own = {}, {}
+    fam, own, ink = {}, {}, {}
     for key, f in families.items():
+        if f.get("inkling"):
+            base = lambda repo: f"https://huggingface.co/{repo}/resolve/{revisions[repo]}"
+            gguf_repo = next(m["repo"] for m in f["models"].values() if m.get("repo"))
+            ink[key] = {"title": f["title"], "name": f["served"], "arch": f["arch"], "tag": f"{key}-",
+                        "vision": f["vision"], "max_context": f["max_context"], "parallel_max": f["parallel_max"],
+                        "sources": [base(f["repo"])], "gguf_sources": [base(gguf_repo)],
+                        "models": {q: {"ram_gb": m["ram_gb"], "file": m["file"], "bytes": int(m["download_gb"] * 1e9),
+                                       "format": "gguf" if m["file"].endswith(".gguf") else "strata"}
+                                   for q, m in f["models"].items()}}
+            continue
         if f.get("own_path"):
             hf = f"https://huggingface.co/{f['repo']}/resolve/{revisions[f['repo']]}/"
             own[key] = {"title": f["title"], "name": f["served"], "hf": hf, "file": f["file"], "arch": f["arch"],
@@ -40,7 +50,8 @@ def dump_of_builtin():
     mod = {k: {"download_gb": m["download_gb"], "ram_gb": m["ram_gb"], "families": list(m["families"]),
                **{o: m[o] for o in S._MODEL_OVERRIDES if o in m}}
            for k, m in sizes.items()}
-    return {"families": fam, "models": mod, "own_path": own, "revisions": revisions}
+    revisions = {r: v for r, v in revisions.items() if "Inkling" not in r}   # setup.py's HF_REVISIONS lacks them
+    return {"families": fam, "models": mod, "own_path": own, "inkling": ink, "revisions": revisions}
 
 
 def dump_with_new_size():

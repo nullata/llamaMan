@@ -71,6 +71,9 @@ class CatalogueTests(unittest.TestCase):
             "strata/coder-IQ1_M",
             "strata/unsloth-UD-Q4_K_XL", "strata/unsloth-UD-IQ4_XS",
             "strata/qwen36-UD-Q4_K_XL", "strata/qwen36-UD-Q6_K_XL", "strata/qwen36-Q8_0",
+            *(f"strata/inkling-2-mini-{q}" for q in (
+                "SQ-20", "SQ-15", "SQ-10", "UD-Q8_K_XL", "UD-Q4_K_XL", "UD-Q4_K_M", "UD-IQ4_XS",
+                "UD-Q3_K_XL", "UD-IQ3_XXS", "UD-Q2_K_XL", "UD-IQ2_XXS", "UD-IQ1_M", "UD-IQ1_S")),
         })
 
     def test_served_name_matches_setup_py(self):

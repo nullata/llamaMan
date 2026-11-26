@@ -641,7 +641,8 @@ async function selectModel(model, el) {
   if (typeof applyEngineToLaunchForm === 'function') {
     const keepStrata = currentLaunchEngine() === 'strata'
       && !!(model.engine_models && model.engine_models.strata);
-    applyEngineToLaunchForm(keepStrata ? 'strata' : 'llamacpp', model);
+    // A file llama.cpp can't read (a .strata build) has one engine only.
+    applyEngineToLaunchForm(model.engine_only || (keepStrata ? 'strata' : 'llamacpp'), model);
     if (typeof applyStrataPresetToLaunchForm === 'function') applyStrataPresetToLaunchForm({});
   }
   // Load preset if one exists
@@ -655,7 +656,7 @@ async function selectModel(model, el) {
       _loadedPreset = p;
       _loadedPresetPath = model.path;
       // The preset remembers the engine: show its fields before filling them.
-      const presetEngine = p.engine || 'llamacpp';
+      const presetEngine = model.engine_only || p.engine || 'llamacpp';
       if (typeof applyEngineToLaunchForm === 'function' && presetEngine !== currentLaunchEngine()) {
         applyEngineToLaunchForm(presetEngine, model);
       }

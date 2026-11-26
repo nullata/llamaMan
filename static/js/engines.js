@@ -32,6 +32,13 @@ async function updateEngineSelect() {
   const sel = document.getElementById('f-engine');
   if (!sel) return;
   sel.value = launchEngine;
+  // A file only another engine reads (a .strata build): llama.cpp is not an option.
+  const llamaOpt = sel.querySelector('option[value="llamacpp"]');
+  const only = launchSelectedModel && launchSelectedModel.engine_only;
+  if (llamaOpt) {
+    llamaOpt.disabled = !!only && launchEngine !== 'llamacpp';
+    llamaOpt.title = only ? 'llama.cpp can\'t read this file; it runs on Strata only' : '';
+  }
   const opt = sel.querySelector('option[value="strata"]');
   if (!opt) return;
   // Not offered at all until the target node has the Strata image (an older
@@ -236,7 +243,7 @@ async function refreshStrataSection() {
     summary.textContent = parts.join(' · ');
   }
 
-  // An own-path family (Qwen3.6): its own context limit and requests at once;
+  // An own-path family (Qwen3.6, Inkling-2-Mini): its own context limit and requests at once;
   // KV, low-RAM and the layer split are Flash-Next settings it doesn't use.
   const own = !!m.own_path;
   const dl = document.getElementById('strata-context-options');
@@ -252,8 +259,11 @@ async function refreshStrataSection() {
     const group = document.getElementById(id)?.closest('.form-group');
     if (group) group.style.display = own ? 'none' : '';
   });
-  const parallelGroup = document.getElementById('f-strata-parallel')?.closest('.form-group');
+  const parallelInput = document.getElementById('f-strata-parallel');
+  const parallelGroup = parallelInput?.closest('.form-group');
   if (parallelGroup) parallelGroup.style.display = own ? '' : 'none';
+  // Qwen3.6: up to 8 requests at once; Inkling-2-Mini: up to 64.
+  if (parallelInput) parallelInput.max = String(m.parallel_max || 8);
   const ctx = document.getElementById('f-ctx-size');
   if (ctx && !ctx.value) ctx.value = 32768;
 

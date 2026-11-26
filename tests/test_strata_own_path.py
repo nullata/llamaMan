@@ -98,7 +98,7 @@ class CatalogueTests(unittest.TestCase):
 
     def test_a_cached_dump_from_before_own_path_is_read_again(self):
         # Same image id, older script: the cached tables have no own_path.
-        self.assertEqual(S._cache_key("sha256:aaa"), "sha256:aaa#v4")
+        self.assertEqual(S._cache_key("sha256:aaa"), "sha256:aaa#v5")
 
     def test_same_named_sizes_dont_collide(self):
         self.assertEqual(S.family_sizes("qwen36")["UD-Q4_K_XL"]["download_gb"], 22.9)
