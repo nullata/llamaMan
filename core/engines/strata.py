@@ -1506,6 +1506,24 @@ class StrataEngine(Engine):
             except OSError:
                 pass
 
+    def forget_setups(self, tags) -> None:
+        """Drop the records of setups whose files were removed from the data
+        volume (core/strata_cleanup.py), so a new download sets up afresh."""
+        keys = {f"{self.data_mount_source()}|{t}" for t in tags}
+        with _SETUPS_LOCK:
+            data = self._read_setups()
+            if not keys & set(data):
+                return
+            for k in keys:
+                data.pop(k, None)
+            tmp = self._setups_file() + ".tmp"
+            try:
+                with open(tmp, "w") as f:
+                    json.dump(data, f, indent=1, sort_keys=True)
+                os.replace(tmp, self._setups_file())
+            except OSError:
+                pass
+
     # ------------------------------------------------------------ readiness
     def load_timeout(self) -> int:
         from config import STRATA_LOAD_TIMEOUT

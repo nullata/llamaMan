@@ -577,6 +577,14 @@ def api_models_delete():
             "error": "model is being hashed right now - wait for it to finish"
         }), 409
 
+    # Strata setups of the models it holds (read before the files go: an
+    # unsplit GGUF may be told by its architecture); removed after it.
+    from config import STRATA_ENABLED
+    strata_tags = set()
+    if STRATA_ENABLED:
+        from core.strata_cleanup import model_files_under, tags_for_files
+        strata_tags = tags_for_files(model_files_under(resolved))
+
     try:
         if os.path.isdir(resolved):
             shutil.rmtree(resolved)
@@ -591,7 +599,9 @@ def api_models_delete():
     from config import logger
     remove_model_sources_for_path(resolved)
     logger.info("Deleted model: %s", resolved)
-    return jsonify({"status": "deleted"})
+    from core.strata_cleanup import cleanup_after_delete
+    started = cleanup_after_delete(strata_tags)
+    return jsonify({"status": "deleted", "strata_cleanup": sorted(strata_tags) if started else []})
 
 
 @bp.route("/api/model-layers")

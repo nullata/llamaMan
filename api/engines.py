@@ -28,6 +28,23 @@ def api_engines():
     return jsonify(engines_snapshot())
 
 
+@bp.route("/api/engines/strata/cleanup", methods=["POST"])
+def api_strata_cleanup():
+    """Strata data on this node whose model is gone (core/strata_cleanup.py):
+    the packs and run configs of setups whose model files are no longer in
+    the library, and the shared files only they used.
+
+    body: {"apply": false} lists it (with sizes); {"apply": true} removes it.
+    """
+    from core import strata_cleanup
+    body = request.get_json(silent=True) or {}
+    try:
+        result = strata_cleanup.run(orphans=True, apply=bool(body.get("apply")))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(result)
+
+
 @bp.route("/api/engines/<engine>/download", methods=["POST"])
 def api_engine_model_download(engine):
     """Pre-download a virtual model's files with llamaman's downloader.

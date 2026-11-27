@@ -1188,6 +1188,21 @@
                 </div>
                 <div id="strata-build-status" class="hint-text" hidden></div>
               </div>
+              <div class="dl-item strata-image-card">
+                <div class="dl-item-top">
+                  <span class="dl-item-name"><strong>Strata data</strong></span>
+                </div>
+                <p class="hint-text">Packs, run configs and shared files Strata prepared for models that are no longer in the library. Deleting a model removes its own; this finds what is left over from before.</p>
+                <div class="form-actions">
+                  <button class="btn btn-secondary" type="button" id="btn-strata-cleanup-scan">
+                    <i class="fa-solid fa-magnifying-glass"></i> Find unused Strata data
+                  </button>
+                  <button class="btn btn-danger" type="button" id="btn-strata-cleanup-apply" hidden>
+                    <i class="fa-solid fa-trash"></i> <span id="strata-cleanup-apply-label">Remove</span>
+                  </button>
+                </div>
+                <div id="strata-cleanup-status" class="hint-text" hidden></div>
+              </div>
             </div>
           </div>
 

@@ -941,6 +941,70 @@ async function deleteStrataBuild() {
   }
 }
 
+function strataCleanupBytes(n) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  n = Number(n) || 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function showStrataCleanupPlan(plan) {
+  const el = document.getElementById('strata-cleanup-status');
+  const apply = document.getElementById('btn-strata-cleanup-apply');
+  const items = plan.items || [];
+  if (apply) {
+    apply.hidden = plan.applied || !items.length;
+    const label = document.getElementById('strata-cleanup-apply-label');
+    if (label) label.textContent = `Remove ${strataCleanupBytes(plan.bytes)}`;
+  }
+  if (!el) return;
+  let html;
+  if (plan.applied) {
+    html = `Removed ${strataCleanupBytes(plan.bytes)}` + (plan.tags.length ? ` (${plan.tags.map(escHtml).join(', ')})` : '') + '.';
+  } else if (!items.length) {
+    html = 'Nothing to remove: every Strata setup on this node belongs to a model in the library.';
+  } else {
+    html = `${items.length} item${items.length === 1 ? '' : 's'}, ${strataCleanupBytes(plan.bytes)}`
+      + (plan.tags.length ? ` for ${plan.tags.map(escHtml).join(', ')}` : '') + ':<ul>'
+      + items.map(i => `<li><code>${escHtml(i.path)}</code> ${strataCleanupBytes(i.bytes)}</li>`).join('') + '</ul>';
+  }
+  if ((plan.errors || []).length) {
+    html += '<br>Could not remove:<ul>' + plan.errors.map(e => `<li>${escHtml(e)}</li>`).join('') + '</ul>';
+  }
+  el.innerHTML = html;
+  el.hidden = false;
+}
+
+async function strataCleanup(apply) {
+  const scan = document.getElementById('btn-strata-cleanup-scan');
+  const applyBtn = document.getElementById('btn-strata-cleanup-apply');
+  if (apply) {
+    const ok = await showConfirm('Remove unused Strata data',
+      'Delete the listed Strata packs, run configs and shared files on this node? A model downloaded again later is prepared again from scratch.');
+    if (!ok) return;
+  }
+  [scan, applyBtn].forEach(b => { if (b) b.disabled = true; });
+  try {
+    const res = await nodeFetch(getImagesNode(), '/api/engines/strata/cleanup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apply }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(`Strata data: ${data.error}`, 'error');
+      return;
+    }
+    showStrataCleanupPlan(data);
+    if (apply) toast(`Removed ${strataCleanupBytes(data.bytes)} of Strata data`, (data.errors || []).length ? 'error' : 'success');
+  } catch (e) {
+    toast('Error checking Strata data: ' + e.message, 'error');
+  } finally {
+    [scan, applyBtn].forEach(b => { if (b) b.disabled = false; });
+  }
+}
+
 async function saveStrataImageSettings() {
   const auto = document.getElementById('s-strata-auto-update');
   const interval = document.getElementById('s-strata-update-interval');
@@ -1161,6 +1225,10 @@ const btnStrataBuild = document.getElementById('btn-strata-build');
 if (btnStrataBuild) btnStrataBuild.addEventListener('click', startStrataBuild);
 const btnStrataBuildDelete = document.getElementById('btn-strata-build-delete');
 if (btnStrataBuildDelete) btnStrataBuildDelete.addEventListener('click', deleteStrataBuild);
+const btnStrataCleanupScan = document.getElementById('btn-strata-cleanup-scan');
+if (btnStrataCleanupScan) btnStrataCleanupScan.addEventListener('click', () => strataCleanup(false));
+const btnStrataCleanupApply = document.getElementById('btn-strata-cleanup-apply');
+if (btnStrataCleanupApply) btnStrataCleanupApply.addEventListener('click', () => strataCleanup(true));
 const btnSaveStrataImageSettings = document.getElementById('btn-save-strata-image-settings');
 if (btnSaveStrataImageSettings) btnSaveStrataImageSettings.addEventListener('click', saveStrataImageSettings);
 
