@@ -161,16 +161,24 @@ function updateDownloadItem(item, dl) {
   const name = item.querySelector('.dl-item-name');
   name.textContent = label;
   name.title = dl.repo_id;
-  if (clusterActive && dl._node_name) {
-    const badge = document.createElement('span');
-    badge.className = 'node-badge';
-    badge.innerHTML = `<i class="fa-solid fa-server"></i> ${escHtml(dl._node_name)}`;
-    name.appendChild(badge);
-  }
 
   const status = item.querySelector('.dl-status');
   status.textContent = dl.status;
   status.className = `dl-status dl-status-${dl.status}`;
+
+  // Node badge, as a sibling of the name inside .dl-item-top - never inside
+  // .dl-item-name. The name is ellipsized, and a GGUF filename is long enough
+  // to scroll a badge appended inside it out of view, which made downloads on
+  // this node and on a peer look identical. Before the status, so the row
+  // reads: name · node · status.
+  const prevBadge = top.querySelector('.node-badge');
+  if (prevBadge) prevBadge.remove();
+  if (clusterActive && dl._node_name) {
+    const badge = document.createElement('span');
+    badge.className = 'node-badge';
+    badge.innerHTML = `<i class="fa-solid fa-server"></i> ${escHtml(dl._node_name)}`;
+    top.insertBefore(badge, status);
+  }
 
   const actions = item.querySelector('.dl-item-actions');
   actions.innerHTML = '';
