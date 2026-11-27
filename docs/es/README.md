@@ -8,7 +8,7 @@
 
 > **Nota:** esta es una traducción y puede ir por detrás de la [versión en inglés](../../README.md), que es la de referencia.
 
-llamaMan es un motor de orquestación para servidores de inferencia locales. Lanza, pone a dormir, despierta y desaloja containers de [llama.cpp](https://github.com/ggml-org/llama.cpp) y [Strata](STRATA.md) en una o varias máquinas, y los pone todos detrás de un único endpoint compatible con Ollama y OpenAI — manejado desde una UI de navegador y una API REST.
+llamaMan es un motor de orquestación para servidores de inferencia locales. Lanza, pone a dormir, despierta y desaloja containers de [llama.cpp](https://github.com/ggml-org/llama.cpp) y [Strata](STRATA.md) en una o varias máquinas, y los pone todos detrás de un único endpoint compatible con Ollama y OpenAI — manejado desde una UI de navegador y una API REST. Una imagen Docker ya construida está publicada en Docker Hub: **[nullata/llamaman](https://hub.docker.com/r/nullata/llamaman)**.
 
 No tiene código de inferencia ni dependencia de GPU propios: los motores corren como containers hermanos a través del socket de Docker, así que actualizar llama.cpp significa hacer pull de una imagen `server` más reciente. Las peticiones a un modelo que no está corriendo lo arrancan o lo despiertan bajo demanda, y cuando alcanzas tu límite de modelos cargados a la vez, se desaloja el que lleva más tiempo inactivo para hacer sitio. Con el clustering activado, los nodes comparten estado mediante una base de datos común y heartbeats, y una petición para un grupo de cola va al miembro despierto menos cargado de cualquier node — si su cola local se satura, pasa a un peer con capacidad libre.
 

@@ -8,7 +8,7 @@
 
 > **Hinweis:** Dies ist eine Übersetzung und kann hinter der [englischen Fassung](../../README.md) zurückliegen; maßgeblich ist die englische Fassung.
 
-llamaMan ist eine Orchestrierungs-Engine für lokale Inferenz-Server. Es startet [llama.cpp](https://github.com/ggml-org/llama.cpp)- und [Strata](STRATA.md)-Container auf einem oder mehreren Rechnern, legt sie schlafen, weckt und verdrängt sie und stellt sie alle hinter einen einzigen Ollama- und OpenAI-kompatiblen Endpunkt — gesteuert über ein Browser-UI und eine REST-API.
+llamaMan ist eine Orchestrierungs-Engine für lokale Inferenz-Server. Es startet [llama.cpp](https://github.com/ggml-org/llama.cpp)- und [Strata](STRATA.md)-Container auf einem oder mehreren Rechnern, legt sie schlafen, weckt und verdrängt sie und stellt sie alle hinter einen einzigen Ollama- und OpenAI-kompatiblen Endpunkt — gesteuert über ein Browser-UI und eine REST-API. Ein fertiges Docker-Image ist auf Docker Hub veröffentlicht: **[nullata/llamaman](https://hub.docker.com/r/nullata/llamaman)**.
 
 Es enthält selbst keinen Inferenz-Code und hat keine GPU-Abhängigkeit: Engines laufen als Geschwister-Container über den Docker-Socket, ein llama.cpp-Upgrade heißt also nur, ein neueres `server`-Image zu pullen. Anfragen an ein Modell, das nicht läuft, starten oder wecken es bei Bedarf, und ist das Limit gleichzeitig geladener Modelle erreicht, wird das am längsten untätige verdrängt, um Platz zu schaffen. Mit aktiviertem Clustering teilen Nodes ihren Zustand über eine gemeinsame Datenbank und Heartbeats, und eine Anfrage an eine Queue-Gruppe geht an das am wenigsten ausgelastete wache Mitglied auf einem beliebigen Node — staut sich dessen lokale Queue, wandert sie zu einem Peer mit freier Kapazität.
 
