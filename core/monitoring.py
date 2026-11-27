@@ -553,9 +553,16 @@ def _background_poller():
                         auto_restart = bool((inst.get("config") or {}).get("auto_restart_on_crash", False))
                 # Redistribute the dead worker's QUEUED requests to peers instead
                 # of rejecting them (drain, not cancel). Called outside instances_lock
-                # because drain_gate takes it internally.
-                drain_gate(inst_id)
-                save_state()
+                # because drain_gate takes it internally. Guarded like the
+                # download watch below, so nothing in this block can take the
+                # poller thread down (save_state already swallows storage
+                # errors). The status change is already in memory, so the next
+                # tick's health pass repeats this branch if the drain was lost.
+                try:
+                    drain_gate(inst_id)
+                    save_state()
+                except Exception as e:
+                    logger.warning("Death handling for %s failed, retrying next tick: %s", inst_id, e)
                 # Opt-in crash recovery (loop-guarded, off-thread). Only crashes
                 # reach here - user stops and idle-sleep set status before this.
                 if auto_restart:
@@ -636,24 +643,48 @@ def _background_poller():
                             inst_id, int(idle_secs / 60))
 
         # --- Download process monitoring ---
+        # (own function so the per-exit guard is testable; see _watch_downloads)
+        _watch_downloads()
+
+
+def _watch_downloads() -> None:
+    """Poll every active download's subprocess; handle a finished one.
+
+    A download that has exited is handled in _handle_download_exit, which
+    auto-retries it or marks it failed.
+    """
+    with downloads_lock:
+        dl_ids = list(downloads.keys())
+
+    for dl_id in dl_ids:
         with downloads_lock:
-            dl_ids = list(downloads.keys())
-
-        for dl_id in dl_ids:
-            with downloads_lock:
-                dl = downloads.get(dl_id)
-                if dl is None or dl["status"] in ("completed", "failed", "cancelled", "paused"):
-                    continue
-                proc = dl.get("_process")
-
-            if proc is None:
+            dl = downloads.get(dl_id)
+            if dl is None or dl["status"] in ("completed", "failed", "cancelled", "paused"):
                 continue
+            proc = dl.get("_process")
 
-            exit_code = proc.poll()
-            if exit_code is None:
-                continue
+        if proc is None:
+            continue
 
+        exit_code = proc.poll()
+        if exit_code is None:
+            continue
+
+        # Guarded, and deliberately so (issue #122): _handle_download_exit
+        # reads settings from storage before anything else, and the resilient
+        # backend lets a connection error propagate below its breaker
+        # threshold. The same network blip that killed a Hugging Face
+        # download can briefly make the shared DB unreachable exactly as the
+        # downloader exits; unguarded, that exception escapes the poller's
+        # while-True and the thread dies, leaving downloads stuck
+        # "downloading" forever on an otherwise-online node. The download
+        # stays "downloading" here, so the next tick re-detects the exited
+        # process and retries this handler until storage recovers.
+        try:
             _handle_download_exit(dl_id, exit_code)
+        except Exception as e:
+            logger.warning("Download exit handling failed for %s, retrying next tick: %s",
+                           dl_id, e)
 
 
 # The cluster heartbeat runs on its OWN thread, NOT inside the main poller tick.
